@@ -18,10 +18,12 @@ app = typer.Typer(no_args_is_help=True, help="AgentBridge Context Hub 與 Agent 
 project_app = typer.Typer(no_args_is_help=True)
 context_app = typer.Typer(no_args_is_help=True)
 task_app = typer.Typer(no_args_is_help=True)
+workspace_app = typer.Typer(no_args_is_help=True, help="直接編輯原專案：審閱並核准指定檔案差異")
 config_app = typer.Typer(no_args_is_help=True, help="本機設定角色、模型、位置與讀取範圍")
 app.add_typer(project_app, name="project")
 app.add_typer(context_app, name="context")
 app.add_typer(task_app, name="task")
+app.add_typer(workspace_app, name="workspace", hidden=True)
 app.add_typer(config_app, name="config")
 
 
@@ -76,6 +78,18 @@ def project_list(ctx: typer.Context):
     output(bridge(ctx).list_projects())
 
 
+@project_app.command("authorize")
+def project_authorize(ctx: typer.Context, id: str):
+    """一次授權 ChatGPT 直接讀寫指定原專案；無須逐檔設定或建立 Task／PLAN。"""
+    output(bridge(ctx).authorize_project_local(id))
+
+
+@project_app.command("revoke")
+def project_revoke(ctx: typer.Context, id: str):
+    """撤銷專案直接寫入授權，恢復唯讀。"""
+    output(bridge(ctx).revoke_project_local(id))
+
+
 @project_app.command("create")
 def project_create(ctx: typer.Context, id: str, path: Path | None = None):
     """建立新專案與 Git 基準；不搬移或覆寫既有目錄。"""
@@ -109,6 +123,48 @@ def config_read_root(ctx: typer.Context, name: str, path: Path):
 @config_app.command("worktree-dir")
 def config_worktree_dir(ctx: typer.Context, path: Path):
     output(bridge(ctx).configure_worktree_dir(project_id(ctx), path))
+
+
+@config_app.command("write-file", hidden=True)
+def config_write_file(ctx: typer.Context, path: str):
+    """開放一個專案相對檔案的直接編輯提案；每份差異仍須本機核准。"""
+    output(bridge(ctx).configure_write_file(project_id(ctx), path))
+
+
+@config_app.command("revoke-file", hidden=True)
+def config_revoke_file(ctx: typer.Context, path: str):
+    """撤銷一個檔案的直接編輯權；尚未套用的核准也會被擋下。"""
+    output(bridge(ctx).revoke_write_file(project_id(ctx), path))
+
+
+@config_app.command("write-root", hidden=True)
+def config_write_root(ctx: typer.Context, path: Annotated[str, typer.Argument()] = "."):
+    """一次開放專案相對目錄及子目錄；. 代表整個專案，憑證與管理資料仍禁止。"""
+    output(bridge(ctx).configure_write_root(project_id(ctx), path))
+
+
+@config_app.command("revoke-write-root", hidden=True)
+def config_revoke_write_root(ctx: typer.Context, path: Annotated[str, typer.Argument()] = "."):
+    """撤銷目錄寫入範圍；獨立的 write-file 規則仍保留。"""
+    output(bridge(ctx).revoke_write_root(project_id(ctx), path))
+
+
+@config_app.command("workspace-mode", hidden=True)
+def config_workspace_mode(ctx: typer.Context, mode: str):
+    """worktree＝隔離開發；project＝ChatGPT 核准一次任務後直接修改原專案。切換會使舊核准失效。"""
+    output(bridge(ctx).configure_workspace_mode(project_id(ctx), mode))
+
+
+@workspace_app.command("show")
+def workspace_show(ctx: typer.Context, edit_id: str, include_content: bool = False):
+    """查看直接編輯的差異與核准紀錄；--include-content 同時顯示前後全文。"""
+    output(bridge(ctx).get_workspace_edit(project_id(ctx), edit_id, include_content))
+
+
+@workspace_app.command("approve")
+def workspace_approve(ctx: typer.Context, edit_id: str):
+    """在本機審閱並核准 EDIT；核准後由 ChatGPT 呼叫 write_workspace 套用。"""
+    output(bridge(ctx).approve_workspace_edit_local(project_id(ctx), edit_id))
 
 
 @config_app.command("revoke-root")

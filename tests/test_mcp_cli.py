@@ -1,7 +1,7 @@
+import asyncio
 import json
 import os
 import sys
-from datetime import timedelta
 
 import pytest
 from mcp import ClientSession, StdioServerParameters
@@ -112,19 +112,102 @@ async def test_stdio_protocol_initialize_list_and_call(bridge):
         env={**os.environ, "PYTHONIOENCODING": "utf-8"},
     )
     async with stdio_client(parameters) as (reader, writer):
-        async with ClientSession(
-            reader, writer, read_timeout_seconds=timedelta(seconds=10)
-        ) as session:
+        async with ClientSession(reader, writer, read_timeout_seconds=10) as session:
             initialized = await session.initialize()
-            assert initialized.serverInfo.name == "AgentBridge"
+            assert initialized.server_info.name == "AgentBridge"
             assert len((await session.list_tools()).tools) >= 14
             result = await session.call_tool("bootstrap_project", {"project_id": "demo"})
-            assert not result.isError
-            assert result.structuredContent["context_version"] == 1
+            assert not result.is_error
+            assert result.structured_content["context_version"] == 1
             forbidden = await session.call_tool(
                 "get_source_reference", {"project_id": "demo", "path": "../secret"}
             )
-            assert forbidden.isError
+            assert forbidden.is_error
+
+
+async def test_chatgpt_discover_then_list_and_write_without_initialize(bridge, human):
+    """Replay the modern discovery request that ChatGPT sends when refreshing tools."""
+    bridge.authorize_project_local("demo")
+    process = await asyncio.create_subprocess_exec(
+        sys.executable,
+        "-m",
+        "agentbridge_mcp",
+        "--home",
+        str(bridge.home),
+        "serve",
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+    )
+
+    async def exchange(method, params=None):
+        request = {
+            "jsonrpc": "2.0",
+            "id": method,
+            "method": method,
+            "params": {
+                **(params or {}),
+                "_meta": {
+                    "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                    "io.modelcontextprotocol/clientInfo": {"name": "chatgpt-test", "version": "1"},
+                    "io.modelcontextprotocol/clientCapabilities": {},
+                },
+            },
+        }
+        process.stdin.write((json.dumps(request) + "\n").encode())
+        await process.stdin.drain()
+        line = await asyncio.wait_for(process.stdout.readline(), timeout=15)
+        assert line, "MCP server exited without a JSON-RPC response"
+        response = json.loads(line)
+        assert response["id"] == method
+        assert "error" not in response, response
+        return response["result"]
+
+    try:
+        discovered = await exchange("server/discover")
+        assert "2026-07-28" in discovered["supportedVersions"]
+        assert "tools" in discovered["capabilities"]
+        assert discovered["_meta"]["io.modelcontextprotocol/serverInfo"]["name"] == "AgentBridge"
+        listing = await exchange("tools/list")
+        write_tool = next(t for t in listing["tools"] if t["name"] == "write_workspace")
+        assert write_tool["annotations"]["readOnlyHint"] is False
+        assert {"path", "content", "expected_sha256"} <= write_tool["inputSchema"][
+            "properties"
+        ].keys()
+        read = await exchange(
+            "tools/call",
+            {"name": "read_workspace", "arguments": {"project_id": "demo", "path": "app.py"}},
+        )
+        original = read["structuredContent"]
+        written = await exchange(
+            "tools/call",
+            {
+                "name": "write_workspace",
+                "arguments": {
+                    "project_id": "demo",
+                    "path": "app.py",
+                    "content": original["content"] + "\n# discovery regression\n",
+                    "expected_sha256": original["sha256"],
+                },
+            },
+        )
+        assert not written["isError"]
+        assert written["structuredContent"]["status"] == "APPLIED"
+        confirmed = bridge.read_workspace("demo", "app.py")
+        assert confirmed["content"].endswith("# discovery regression")
+        assert confirmed["sha256"] == written["structuredContent"]["sha256"]
+        assert bridge.list_tasks("demo") == []
+    finally:
+        process.stdin.close()
+        try:
+            await asyncio.wait_for(process.wait(), timeout=5)
+        except TimeoutError:
+            process.kill()
+            await process.wait()
+        errors = (await process.stderr.read()).decode(errors="replace")
+    assert process.returncode == 0, errors
+    assert "Failed to validate request" not in errors
 
 
 async def test_stdio_chatgpt_role_roundtrip_without_native_cli(bridge):
@@ -135,15 +218,13 @@ async def test_stdio_chatgpt_role_roundtrip_without_native_cli(bridge):
         env={**os.environ, "PYTHONIOENCODING": "utf-8"},
     )
     async with stdio_client(parameters) as (reader, writer):
-        async with ClientSession(
-            reader, writer, read_timeout_seconds=timedelta(seconds=15)
-        ) as session:
+        async with ClientSession(reader, writer, read_timeout_seconds=15) as session:
             await session.initialize()
             created = await session.call_tool(
                 "create_task",
                 {"project_id": "demo", "requirement": "Analyze source", "acceptance": []},
             )
-            assert not created.isError
+            assert not created.is_error
             queued = await session.call_tool(
                 "dispatch_agent",
                 {
@@ -154,12 +235,14 @@ async def test_stdio_chatgpt_role_roundtrip_without_native_cli(bridge):
                     "instruction": "Read app.py",
                 },
             )
-            assert not queued.isError
-            execution_id = queued.structuredContent["execution_id"]
+            assert not queued.is_error
+            execution_id = queued.structured_content["execution_id"]
             source = await session.call_tool(
                 "read_workspace", {"project_id": "demo", "path": "app.py"}
             )
-            assert not source.isError and "original comment" in source.structuredContent["content"]
+            assert (
+                not source.is_error and "original comment" in source.structured_content["content"]
+            )
             submitted = await session.call_tool(
                 "submit_agent_report",
                 {
@@ -172,7 +255,7 @@ async def test_stdio_chatgpt_role_roundtrip_without_native_cli(bridge):
                     },
                 },
             )
-            assert not submitted.isError
+            assert not submitted.is_error
     assert bridge.task("demo", "TASK-0001")["state"] == "AWAITING_PM_DECISION"
 
 

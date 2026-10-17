@@ -18,7 +18,7 @@ def run_tests_local(bridge, project_id, task_id):
     )
     if not row:
         raise BridgeError("No implementation worktree")
-    cwd = bridge.task_worktree(project_id, task_id)
+    cwd = bridge.execution_workspace(row)
     if Path(row["worktree"]) != cwd:
         raise BridgeError("Invalid worktree")
     identity = confirm_local(

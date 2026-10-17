@@ -15,9 +15,44 @@ CREATE TABLE IF NOT EXISTS project_settings (
  project_id TEXT PRIMARY KEY REFERENCES projects(id), content TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS operator_settings (
  key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS project_access_events (
+ seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL,
+ project_id TEXT NOT NULL REFERENCES projects(id), root TEXT NOT NULL,
+ access TEXT NOT NULL, identity TEXT NOT NULL, created TEXT NOT NULL);
+CREATE TRIGGER IF NOT EXISTS project_access_no_update BEFORE UPDATE ON project_access_events
+ BEGIN SELECT RAISE(ABORT, 'Project access history is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS project_access_no_delete BEFORE DELETE ON project_access_events
+ BEGIN SELECT RAISE(ABORT, 'Project access history is immutable'); END;
+CREATE TABLE IF NOT EXISTS project_write_receipts (
+ edit_id TEXT PRIMARY KEY REFERENCES workspace_edits(id),
+ authorization_id TEXT NOT NULL REFERENCES project_access_events(id));
+CREATE TRIGGER IF NOT EXISTS project_receipt_no_update BEFORE UPDATE ON project_write_receipts
+ BEGIN SELECT RAISE(ABORT, 'Project write receipts are immutable'); END;
+CREATE TRIGGER IF NOT EXISTS project_receipt_no_delete BEFORE DELETE ON project_write_receipts
+ BEGIN SELECT RAISE(ABORT, 'Project write receipts are immutable'); END;
+CREATE TABLE IF NOT EXISTS workspace_edits (
+ id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
+ path TEXT NOT NULL, before_content TEXT, before_sha256 TEXT,
+ content TEXT NOT NULL, sha256 TEXT NOT NULL, diff TEXT NOT NULL,
+ comment_check TEXT NOT NULL, status TEXT NOT NULL,
+ identity TEXT, created TEXT NOT NULL, approved_at TEXT, applied_at TEXT);
+CREATE TRIGGER IF NOT EXISTS workspace_edit_content_immutable
+ BEFORE UPDATE OF project_id,path,before_content,before_sha256,content,sha256,diff,comment_check
+ ON workspace_edits
+ BEGIN SELECT RAISE(ABORT, 'Workspace edit proposals are immutable'); END;
+CREATE TRIGGER IF NOT EXISTS workspace_edits_no_delete BEFORE DELETE ON workspace_edits
+ BEGIN SELECT RAISE(ABORT, 'Workspace edit history is immutable'); END;
 CREATE TABLE IF NOT EXISTS projects (
  id TEXT PRIMARY KEY, root TEXT UNIQUE NOT NULL, name TEXT NOT NULL,
  created TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS workspace_batches (
+ id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id), edits TEXT NOT NULL,
+ status TEXT NOT NULL, identity TEXT, created TEXT NOT NULL, approved_at TEXT, applied_at TEXT);
+CREATE TRIGGER IF NOT EXISTS workspace_batch_members_immutable
+ BEFORE UPDATE OF project_id,edits ON workspace_batches
+ BEGIN SELECT RAISE(ABORT, 'Workspace batch members are immutable'); END;
+CREATE TRIGGER IF NOT EXISTS workspace_batches_no_delete BEFORE DELETE ON workspace_batches
+ BEGIN SELECT RAISE(ABORT, 'Workspace batch history is immutable'); END;
 CREATE TABLE IF NOT EXISTS context_versions (
  project_id TEXT NOT NULL REFERENCES projects(id), version INTEGER NOT NULL,
  snapshot TEXT NOT NULL, metadata TEXT NOT NULL, created TEXT NOT NULL,

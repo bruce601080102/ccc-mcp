@@ -1,8 +1,46 @@
 # 驗證紀錄
 
-日期：2026-10-17（Asia/Taipei）。此檔僅列實際執行的驗證與限制。
+日期：2026-10-18（Asia/Taipei）。此檔僅列實際執行的驗證與限制。
 
-## 可設定角色與 ChatGPT 接手驗證（同日，最新）
+## ChatGPT 工具探索相容性修正（2026-10-18）
+
+- 使用者 Tunnel 原始紀錄顯示 server/discover 被 MCP 1.30.0 判為無效 ClientRequest；先前僅驗證 initialize／tools/list，未覆蓋 ChatGPT 重新整理使用的新探索流程。
+- 依官方 SDK 遷移指南升級為 MCP 2.3.0，使用 MCPServer、蛇形 Python 型別欄位及新的傳輸設定位置；保留既有 HTTP OAuth 與 Host／Origin 驗證。
+- 新增真正 stdio JSON-RPC 回歸：不呼叫 initialize，直接 server/discover → tools/list（包含 write_workspace）→ read_workspace → SHA256 比對寫入 → 讀回核對。寫入僅在臨時測試專案執行。
+- 啟動腳本會在 SDK 過舊時提前提示更新依賴，README 補上更新依賴後重啟 Tunnel 的步驟。
+- 完整回歸測試：167 passed、1 skipped in 95.87s；Ruff、37 個檔案格式檢查與 pip check 通過。跳過項目仍為 Windows symlink 權限限制。ChatGPT 網頁重新整理仍需使用者重啟常駐 Tunnel 後驗證，不宣稱已完成網頁端驗收。
+
+## 單一專案授權與直接讀寫（2026-10-17）
+
+- 完整自動化測試：166 passed, 1 skipped in 82.06s；Ruff 通過，37 個檔案格式檢查通過。
+- 一般入口合併為 project authorize／project revoke。一次本機互動授權後，ChatGPT 使用 write_workspace(path,content,expected_sha256) 直接修改整個註冊專案，不需逐檔設定、Task、PLAN、EDIT 或 BATCH 核准。
+- 新增不可覆寫的專案授權／撤銷歷史，讀寫授權綁定專案根目錄；各次寫入保存前後全文、SHA256 及對應授權來源，不冒充逐檔人工審閱。撤銷會停止直接寫入並清除舊逐檔／目錄權限。
+- 覆蓋一次授權後多檔修改、重複授權不再要求確認、沒有 Git／Task 的一般編輯、唯讀 SA 任務不變但可另行直接編輯、跨專案拒絕、來源變更、原 Python 註解保留、撤銷與中斷恢復、JSON 投影不能授權，以及不能經由舊 EDIT ID 重放已撤銷授權。
+- 真正 stdio MCP 驗證 bootstrap 的 project_access → read_workspace → write_workspace 直接修改原檔，無須建立 Task／PLAN；HTTP 唯讀服務不因專案授權而開放寫入。所有寫入驗證皆在臨時專案執行，沒有替使用者授權 TradeAdvisorv3 或修改其原檔。
+- README 重寫為 100 行、註冊／授權／連線／開始工作四步，舊細項指令從一般 CLI help 隱藏但保留相容性；舊版詳細流程標示為進階用途。
+- 新的 write_workspace 工具參數需重啟 Tunnel 並更新網頁連線才能使用；未宣稱使用者目前對話已完成載入。symlink 測試仍因本機權限跳過一項。
+
+## 專案範圍、批次核准與 ChatGPT 原地任務（同日，先前驗證）
+
+- 完整自動化測試：146 passed, 1 skipped in 70.25s；Ruff 通過，35 個檔案格式檢查通過。
+- 新增 write-root／revoke-write-root，一次開放整個專案或子目錄；既有憑證、管理資料與越界限制保留，獨立 write-file 規則仍相容。
+- 覆蓋多檔 BATCH 只觸發一次本機確認、單檔成員不可分開核准／套用、整批寫入前檢查雜湊及撤銷、重複提案／重試，以及部分寫入中斷後恢復。批次是逐檔原子寫入，並非整批檔案系統交易。
+- 覆蓋 ChatGPT project 模式的一次計畫核准可修改多個原專案檔案；來源雜湊、註解保留、撤銷及唯讀限制保留，不建立 Worktree。原地任務起始須 Git 基準與乾淨業務檔案，後續同任務修訂可接續未提交成果。
+- 覆蓋模式切換使舊核准失效、活動實作禁止切換、原地實作排他、執行模式固定，以及原地模式不會默默開放原生 Codex／Claude CLI 寫根目錄。原生 CLI 實作保留 Worktree。
+- 設定與修改測試皆使用臨時專案，沒有替使用者開放 TradeAdvisorv3 整個專案，也沒有修改其業務檔案或啟動真實模型。symlink 測試仍因主機權限跳過一項。
+- README 改為專案／任務的一次核准示例，單檔精確授權保留為可選流程。新增設定需重啟服務、更新網頁連線後驗證，並未宣稱目前網頁已載入。
+
+## 指定原檔直接編輯驗證（同日，先前驗證）
+
+- 完整自動化測試：127 passed, 1 skipped in 56.36s；Ruff 檢查通過，34 個檔案格式檢查通過。
+- 新增逐檔 write-file／revoke-file、不可變更 EDIT 差異、本機互動式核准、原專案直接套用及前後版本保存。原有 Task／Worktree 核准仍保留。
+- 覆蓋未授權、未核准、原檔過期、審閱時原檔變更、核准後撤銷、跨專案、憑證／路徑越界、二進位／超量內容、Python 原註解保留、重複提案／套用及寫入中斷恢復。
+- 透過真正 MCP stdio 連線驗證 read_workspace → propose_workspace_edit → 未核准拒絕 → 測試用本機核准 → write_workspace → 讀回雜湊一致。核准替身僅用於臨時測試專案，不會呼叫真實模型或修改 TradeAdvisorv3 原檔。
+- Windows 主機不允許建立 symlink，因此一項 symlink 重導測試跳過；路徑檢查沿用現有拒絕 symlink/junction 的 safe_path。不能將跳過視為已完成該主機的重導驗證。
+- 文件補上 ChatGPT 連線安裝、每個新對話選用、實際讀檔驗證，以及原 readme.md 追加 test 的直接編輯範例；已檢查 UTF-8、程式碼區塊及本機連結。
+- 網頁端新增直接編輯工具仍需重啟 Tunnel、更新連線並在新對話實測；本機／stdio 驗證不代表使用者網頁端已完成載入與核准。
+
+## 可設定角色與 ChatGPT 接手驗證（同日，先前驗證）
 
 - 完整測試：99 passed in 52.81s；Ruff 檢查與格式檢查通過。
 - 覆蓋五種角色與三種供應商組合、Codex／Claude 模型及思考參數、依角色維持唯讀／實作權限。

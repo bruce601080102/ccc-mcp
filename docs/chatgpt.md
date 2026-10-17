@@ -16,8 +16,8 @@ bash scripts/connect-chatgpt.sh tunnel_你的實際ID
 
 依提示在終端輸入 runtime key，輸入會隱藏；不要貼到對話。腳本僅將 key 放入本次子程序環境，設定檔只保存 `env:CONTROL_PLANE_API_KEY` 引用。腳本會建立獨立 profile、執行 doctor 並在前景啟動 Tunnel，由它啟動 AgentBridge stdio，不需另外手動執行 `agentbridge serve`。保持終端開啟。
 
-4. 在 [ChatGPT Plugins](https://chatgpt.com/plugins) 新增 custom MCP server，名稱 AgentBridge、Connection 選 Tunnel，選擇同一個 ID。此本機 stdio 端沒有另外實作 OAuth，因此若畫面要求選取 MCP authentication，選擇無驗證；Tunnel 的組織與工作區權限仍必須正確限制存取。建立時審閱實際列出的讀寫工具。
-5. 在新對話啟用 AgentBridge，輸入「請使用 AgentBridge 的 bootstrap_project 恢復 project_id 為 agentbridge 的專案，說明進度與下一步」。
+4. 在 [ChatGPT Plugins](https://chatgpt.com/plugins) 新增 custom MCP server，名稱 AgentBridge、Connection 選 Tunnel，選擇同一個 ID。此本機 stdio 端沒有另外實作 OAuth，因此若畫面要求選取 MCP authentication，選擇無驗證；Tunnel 的組織與工作區權限仍必須正確限制存取。依畫面完成建立；建立表單不一定顯示工具清單，不以此判定連線成功或失敗。
+5. 建立後找到該 plugin 並安裝，在新對話以 `@AgentBridge` 選用。輸入「請使用 AgentBridge 的 bootstrap_project 恢復 project_id 為 agentbridge 的專案，說明進度與下一步」，並另外實測讀檔工具；建立成功不代表目前對話已載入新工具。
 
 若第 1 步顯示 Tunnels access required，或 ChatGPT 沒有新增 custom MCP server 選項，先處理該帳戶的權限；不能靠本機指令繞過。若 doctor 未通過，先查看明確錯誤再繼續。尚未從你的帳戶完成此流程前，不視為 ChatGPT 端到端連線完成。
 
@@ -33,7 +33,21 @@ env -u CONTROL_PLANE_API_KEY -u OPENAI_ADMIN_KEY bash scripts/connect-chatgpt.sh
 
 腳本會先用 runtime key 執行唯讀的 tunnel metadata 存取檢查，失敗就停止，避免直接進入持續 poll。檢查成功仍不代表已通過 ChatGPT 端到端驗收，還需確認 polling 及實際工具呼叫。
 
-## 本機先驗證
+## ChatGPT 說沒有 list_workspace／read_workspace
+
+新版本有註冊 `list_workspace`、`read_workspace`、`write_task_file`、`submit_agent_report`。如果 ChatGPT 能派工卻找不到這些工具，先更新服務與 ChatGPT 端保存的工具清單，而不是再次註冊專案或增加 read-root：
+
+1. 在 AgentBridge 根目錄停止舊 Tunnel，重新執行 `source scripts/enable-real-agents.sh`，再執行 `bash scripts/connect-chatgpt.sh tunnel_你的實際ID`。
+2. 若 plugin 詳細設定有重新整理工具／actions 選項，可用它更新。沒有此入口時，可新增另一個名稱（例如 AgentBridge-v2）的連線，選擇同一個 Tunnel，完成建立並安裝。建立畫面沒有工具清單時，直接進入下一步，不要求在該畫面確認工具數量。
+3. 新開對話，以 `@` 明確選用更新後的 plugin；若新舊連線同時存在，請選新建立的那個。先要求呼叫 `list_workspace(project_id="你的專案ID", root_id="project")`，再用 `read_workspace` 讀實際列出的 README 路徑，回報檔名、SHA256 與少量內容。看到成功的工具呼叫結果才代表本次對話可讀檔；文字宣稱「可以讀」不算驗證。驗證期間不要派工或提交 Context。
+
+若新對話仍表示找不到工具，保留該回覆及其可用工具名稱，繼續核對該對話實際選用的連線與 Tunnel。另一個舊對話的 19／26 等工具數量，不能證明新對話載入了什麼；本機工具註冊成功也不能取代網頁端驗收。
+
+參見 [OpenAI 官方工具更新說明](https://developers.openai.com/api/docs/guides/custom-mcp-server)。
+
+ChatGPT 互動交接期間，應先讀檔並用 `submit_agent_report` 完成該次報告，再由 PM 精修提交 Context。若先提交新版 Context，舊交接就會過期，不能繼續寫檔或提交報告；須保留舊執行紀錄，結束過期執行，再沿用同一任務以目前版本重新交接，不能忽略版本檢查。
+
+## 本機連線探測
 
 ```powershell
 agentbridge init --id my-project
@@ -81,7 +95,7 @@ agentbridge serve --transport streamable-http --host 127.0.0.1 --port 8765 --ena
 
 ## 在 ChatGPT 加入
 
-目前官方流程是在 ChatGPT Plugins 選擇新增自訂 MCP server，連線方法選 HTTPS URL（含 `/mcp`）或 Tunnel，設定驗證後建立並檢查工具。在新對話啟用該 plugin，提出恢復專案的明確要求；更動工具後重新整理 metadata。是否能新增、呼叫寫入工具，取決於帳戶與 workspace 政策，不能由本機測試推定。[官方連線與測試步驟](https://developers.openai.com/plugins/deploy/connect-chatgpt)
+目前官方流程是在 ChatGPT Plugins 選擇新增自訂 MCP server，連線方法選 HTTPS URL（含 `/mcp`）或 Tunnel，設定驗證後建立，再安裝該 plugin。在新對話以 `@` 選用並實際呼叫工具；不要求建立表單一定有工具清單。更動工具後可從帳戶介面提供的詳細設定更新 metadata，再以新對話驗證。是否能新增、呼叫寫入工具，取決於帳戶與 workspace 政策，不能由本機測試推定。[官方連線與測試步驟](https://developers.openai.com/plugins/deploy/connect-chatgpt)
 
 代表性呼叫：`bootstrap_project`，參數 `{"project_id":"my-project"}`。驗證它回傳實際版本、任務與決策後，才算該帳戶端到端連線成功。
 

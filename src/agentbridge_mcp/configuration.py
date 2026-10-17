@@ -77,7 +77,11 @@ class ConfigurationHub:
         }
         return {
             "roles": {**defaults, **settings.get("roles", {})},
+            "project_access": self.get_project_access(project_id),
             "read_roots": settings.get("read_roots", {}),
+            "writable_files": settings.get("writable_files", []),
+            "writable_roots": settings.get("writable_roots", []),
+            "workspace_mode": settings.get("workspace_mode", "worktree"),
             "worktree_dir": settings.get("worktree_dir", str(self.home / "worktrees")),
         }
 
@@ -155,6 +159,37 @@ class ConfigurationHub:
         root.mkdir(parents=True, exist_ok=True)
         directory(root)
         return safe_path(root, f"{identifier(project_id)}/{identifier(task_id)}")
+
+    def configure_workspace_mode(self, project_id, mode):
+        if mode not in {"worktree", "project"}:
+            raise BridgeError("Workspace mode must be worktree or project")
+        with self.lock(project_id):
+            settings = self.get_project_settings(project_id)
+            if settings["workspace_mode"] != mode:
+                if self.store.one(
+                    "SELECT id FROM agent_executions WHERE project_id=? "
+                    "AND role NOT IN ('SA','REVIEW') AND status IN ('QUEUED','RUNNING')",
+                    (project_id,),
+                ):
+                    raise BridgeError(
+                        "Wait for active implementation before changing workspace mode"
+                    )
+                settings["workspace_mode"] = mode
+                self.store.execute(
+                    "UPDATE approvals SET status='INVALIDATED' WHERE project_id=? "
+                    "AND status IN ('APPROVED','PENDING')",
+                    (project_id,),
+                )
+                self._save_settings(project_id, settings)
+            return settings
+
+    def execution_workspace(self, row):
+        options = row.get("options") or {}
+        if isinstance(options, str):
+            options = json.loads(options)
+        if options.get("workspace_mode", "worktree") == "project":
+            return Path(self.project(row["project_id"])["root"])
+        return self.task_worktree(row["project_id"], row["task_id"])
 
     def projects_directory(self):
         row = self.store.one("SELECT value FROM operator_settings WHERE key='projects_dir'")

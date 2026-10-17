@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 import sys
@@ -236,13 +237,18 @@ class TaskHub:
 
         # No identity or approved=true argument can bypass the operator terminal ceremony.
         plan = self.plan(project_id, task_id, plan_id)
+        workspace_mode = self.get_project_settings(project_id)["workspace_mode"]
         identity = confirm_local(
             f"核准 {task_id} / {plan_id} v{plan['version']}\n"
+            f"專案：{project_id}　根目錄：{self.project(project_id)['root']}\n"
+            f"修改位置模式：{workspace_mode}（project 為直接修改原專案）\n"
             f"SHA256: {plan['hash']}\n\n{plan['content']}",
             task_id,
         )
         with self.lock(project_id):
             current = self.plan(project_id, task_id, plan_id)
+            if self.get_project_settings(project_id)["workspace_mode"] != workspace_mode:
+                raise VersionConflict("Workspace mode changed while reviewing")
             if current != plan or self.latest(project_id)["version"] != plan["context_version"]:
                 raise VersionConflict("Plan or context changed while reviewing")
             pending = self.store.one(
@@ -413,11 +419,40 @@ class TaskHub:
             self.task(project_id, task_id)
             if self.latest(project_id)["version"] != context_version:
                 raise VersionConflict("Dispatch Context Version is stale")
+            workspace_mode = self.get_project_settings(project_id)["workspace_mode"]
             if role not in {"SA", "REVIEW"}:
                 self.approved_plan(project_id, task_id)
+                if workspace_mode == "project" and agent != "chatgpt":
+                    raise BridgeError(
+                        "Project workspace mode currently requires the ChatGPT provider"
+                    )
+                prior = self.store.one(
+                    "SELECT options FROM agent_executions WHERE project_id=? AND task_id=? "
+                    "AND worktree IS NOT NULL AND role NOT IN ('SA','REVIEW') ORDER BY created DESC LIMIT 1",
+                    (project_id, task_id),
+                )
+                if (
+                    prior
+                    and json.loads(prior["options"]).get("workspace_mode", "worktree")
+                    != workspace_mode
+                ):
+                    raise BridgeError("Existing task workspace mode is pinned; create a new task")
+                live = self.store.all(
+                    "SELECT options FROM agent_executions WHERE project_id=? AND role NOT IN ('SA','REVIEW') "
+                    "AND status IN ('QUEUED','RUNNING')",
+                    (project_id,),
+                )
+                if live and (
+                    workspace_mode == "project"
+                    or any(
+                        json.loads(r["options"]).get("workspace_mode") == "project" for r in live
+                    )
+                ):
+                    raise BridgeError("Project-mode implementation is exclusive within a project")
             package = self.build_handoff(project_id, role, task_id)
             package["target_agent"] = agent
             package["agent_settings"] = settings
+            package["workspace_mode"] = workspace_mode
             execution_id = "EXEC-" + uuid.uuid4().hex[:16]
             state = {"SA": "ANALYZING", "REVIEW": "REVIEWING"}.get(role, "IMPLEMENTING")
             with self.store.transaction() as conn:
@@ -446,6 +481,7 @@ class TaskHub:
                                 "scenario": fake_scenario,
                                 "delay": fake_delay,
                                 "agent_settings": settings,
+                                "workspace_mode": workspace_mode,
                                 "interactive": agent == "chatgpt" and adapter == "real",
                                 "fallback_from": fallback_from,
                             }

@@ -74,12 +74,12 @@ def run_execution(bridge, execution_id):
                 package["repository_reference"] = str(cwd)
             elif row["role"] == "REVIEW":
                 prior = bridge.store.one(
-                    "SELECT worktree FROM agent_executions WHERE project_id=? AND task_id=? "
+                    "SELECT project_id,task_id,options,worktree FROM agent_executions WHERE project_id=? AND task_id=? "
                     "AND worktree IS NOT NULL ORDER BY created DESC LIMIT 1",
                     (project_id, task_id),
                 )
                 if prior:
-                    expected = bridge.task_worktree(project_id, task_id)
+                    expected = bridge.execution_workspace(prior)
                     if Path(prior["worktree"]) != expected:
                         raise BridgeError("Invalid stored worktree path")
                     cwd = expected

@@ -431,6 +431,7 @@ class ContextHub:
                 "validation": drift,
                 "working_context": snapshot,
                 "execution_settings": self.get_project_settings(project_id),
+                "project_access": self.get_project_access(project_id),
                 "pending_chatgpt_handoffs": self.pending_chatgpt_handoffs(project_id),
             }
 

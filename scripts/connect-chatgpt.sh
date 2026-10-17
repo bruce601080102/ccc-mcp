@@ -17,6 +17,13 @@ if [[ ! -f "$client" || ! -f "$python" ]]; then
   exit 1
 fi
 
+# ChatGPT refresh sends server/discover, which requires the MCP 2.x SDK.
+if ! "$python" -c 'from importlib.metadata import version; raise SystemExit(int(version("mcp").split(".")[0]) < 2)'; then
+  printf 'MCP SDK is too old for ChatGPT tool refresh. Run from the AgentBridge folder:\n' >&2
+  printf './.venv/Scripts/python.exe -m pip install -e ".[dev]"\n' >&2
+  exit 1
+fi
+
 if [[ -z "${CONTROL_PLANE_API_KEY:-}" ]]; then
   printf 'Enter the OpenAI runtime API key locally (hidden; do not paste into chat):\n'
   IFS= read -r -s CONTROL_PLANE_API_KEY

@@ -216,13 +216,13 @@ def test_live_streamable_http_transport(bridge):
                 time.sleep(0.1)
 
         async def connect():
-            async with streamable_http_client(url) as (read, write, _):
+            async with streamable_http_client(url) as (read, write):
                 async with ClientSession(read, write) as session:
                     await session.initialize()
                     names = {t.name for t in (await session.list_tools()).tools}
                     assert "dispatch_agent" not in names
                     boot = await session.call_tool("bootstrap_project", {"project_id": "demo"})
-                    assert boot.structuredContent["context_version"] == 1
+                    assert boot.structured_content["context_version"] == 1
 
         asyncio.run(connect())
     finally:

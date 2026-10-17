@@ -67,6 +67,8 @@ def working_snapshot(root):
     )
     result = {}
     for path in filter(None, paths):
+        if path.startswith(".agentbridge/"):
+            continue
         target = safe_path(Path(root), path)
         if target.is_file():
             result[path] = target.read_bytes()
