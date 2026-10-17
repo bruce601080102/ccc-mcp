@@ -2,6 +2,7 @@ import os
 import subprocess
 import sys
 import uuid
+from contextlib import nullcontext
 
 import portalocker
 
@@ -386,20 +387,21 @@ class TaskHub:
         timeout=600,
         fake_scenario="success",
         fake_delay=0.01,
+        model=None,
+        effort=None,
+        fallback_from=None,
     ):
-        if (agent, role) not in {
-            ("codex", "SA"),
-            ("codex", "REVIEW"),
-            ("claude", "SD"),
-            ("claude", "RD"),
-            ("claude", "SD/RD"),
-        }:
-            raise BridgeError("Agent/role mismatch")
+        settings = self.resolve_agent_settings(project_id, role, agent, model, effort)
+        agent = settings["provider"]
         if adapter not in {"real", "fake"} or fake_scenario not in {"success", "revision", "error"}:
             raise BridgeError("Unsupported adapter or fake scenario")
         if not 0.05 <= timeout <= 7200 or not 0 <= fake_delay <= 60:
             raise BridgeError("Timeout/delay outside supported bounds")
-        if adapter == "real" and os.environ.get("AGENTBRIDGE_ENABLE_REAL_AGENTS") != "1":
+        if (
+            adapter == "real"
+            and agent != "chatgpt"
+            and os.environ.get("AGENTBRIDGE_ENABLE_REAL_AGENTS") != "1"
+        ):
             raise PermissionDenied(
                 "Real agents disabled; operator must set AGENTBRIDGE_ENABLE_REAL_AGENTS=1"
             )
@@ -411,6 +413,8 @@ class TaskHub:
             if role not in {"SA", "REVIEW"}:
                 self.approved_plan(project_id, task_id)
             package = self.build_handoff(project_id, role, task_id)
+            package["target_agent"] = agent
+            package["agent_settings"] = settings
             execution_id = "EXEC-" + uuid.uuid4().hex[:16]
             state = {"SA": "ANALYZING", "REVIEW": "REVIEWING"}.get(role, "IMPLEMENTING")
             with self.store.transaction() as conn:
@@ -432,9 +436,16 @@ class TaskHub:
                         role,
                         context_version,
                         instruction,
-                        adapter,
+                        "interactive" if agent == "chatgpt" and adapter == "real" else adapter,
                         canonical(
-                            {"timeout": timeout, "scenario": fake_scenario, "delay": fake_delay}
+                            {
+                                "timeout": timeout,
+                                "scenario": fake_scenario,
+                                "delay": fake_delay,
+                                "agent_settings": settings,
+                                "interactive": agent == "chatgpt" and adapter == "real",
+                                "fallback_from": fallback_from,
+                            }
                         ),
                         "QUEUED",
                         canonical(package),
@@ -442,6 +453,8 @@ class TaskHub:
                     ),
                 )
             self.sync_documents(project_id)
+        if agent == "chatgpt" and adapter == "real":
+            return self.prepare_chatgpt_execution(execution_id)
         try:
             self.spawn_worker(execution_id)
         except Exception:
@@ -487,7 +500,7 @@ class TaskHub:
         with self.lock(project_id):
             self.task(project_id, task_id)
             return [
-                decode(r, "result", "package")
+                decode(r, "result", "package", "options")
                 for r in self.store.all(
                     "SELECT * FROM agent_executions WHERE project_id=? AND task_id=? ORDER BY created",
                     (project_id, task_id),
@@ -506,13 +519,35 @@ class TaskHub:
         return self.dispatch_agent(
             project_id,
             task_id,
-            "codex",
+            "auto",
             "REVIEW",
             context_version,
             instruction,
             adapter,
             fake_scenario=fake_scenario,
         )
+
+    def get_task_usage(self, project_id, task_id):
+        results = self.get_task_result(project_id, task_id)
+        return [
+            {
+                "execution_id": row["id"],
+                "agent": row["agent"],
+                "role": row["role"],
+                "status": row["status"],
+                "invocation": (row.get("result") or {}).get(
+                    "invocation",
+                    {
+                        "cli_invoked": None,
+                        "usage": {
+                            "available": False,
+                            "reason": "Historical execution did not record invocation metadata",
+                        },
+                    },
+                ),
+            }
+            for row in results
+        ]
 
     def cancel_task(self, project_id, task_id):
         with self.lock(project_id):
@@ -527,6 +562,14 @@ class TaskHub:
                     conn, project_id, task_id, "CANCELLED", "PM cancelled task; stop requested"
                 )
             self.sync_documents(project_id)
+        for row in self.store.all(
+            "SELECT id,options FROM agent_executions WHERE project_id=? AND task_id=? "
+            "AND agent='chatgpt' AND adapter='interactive' AND status='RUNNING'",
+            (project_id, task_id),
+        ):
+            self.finish_execution(
+                row["id"], error="Interactive execution cancelled", state="CANCELLED"
+            )
         return {"status": "CANCELLED", "stop_requested": True}
 
     def recover_workers(self, project_id):
@@ -537,6 +580,8 @@ class TaskHub:
             (project_id,),
         )
         for row in rows:
+            if decode(row, "options")["options"].get("interactive"):
+                continue
             lockfile = self.home / "locks" / f"{row['id']}.lock"
             try:
                 with portalocker.Lock(lockfile, timeout=0):
@@ -550,10 +595,12 @@ class TaskHub:
                 pass
         return {"interrupted_executions": recovered, "automatic_replay": False}
 
-    def finish_execution(self, execution_id, report=None, error=None, state=None, extras=None):
+    def finish_execution(
+        self, execution_id, report=None, error=None, state=None, extras=None, locked=False
+    ):
         row = self.store.one("SELECT * FROM agent_executions WHERE id=?", (execution_id,))
         project_id, task_id = row["project_id"], row["task_id"]
-        with self.lock(project_id):
+        with nullcontext() if locked else self.lock(project_id):
             with self.store.transaction() as conn:
                 current = conn.execute(
                     "SELECT * FROM agent_executions WHERE id=?", (execution_id,)
@@ -574,6 +621,26 @@ class TaskHub:
                     )
                 )
                 if report:
+                    self.save_artifact(
+                        conn,
+                        project_id,
+                        task_id,
+                        "CONTEXT-UPDATES.md",
+                        execution_id,
+                        "# Proposed context updates — PM review required\n\n"
+                        + canonical(
+                            {
+                                "context_version": row["context_version"],
+                                "role": row["role"],
+                                "summary": report["summary"],
+                                "updates": report.get("context_updates", []),
+                                "findings": report.get("findings", []),
+                                "risks": report.get("risks", []),
+                                "next_action": report["next_action"],
+                            }
+                        )
+                        + "\n",
+                    )
                     name = {"SA": "SA-REPORT.md", "REVIEW": "REVIEW.md"}.get(
                         row["role"], "IMPLEMENTATION.md"
                     )
@@ -604,6 +671,15 @@ class TaskHub:
                             + canonical((extras or {}).get("test_evidence", []))
                             + "\n",
                         )
+                if extras and extras.get("invocation"):
+                    self.save_artifact(
+                        conn,
+                        project_id,
+                        task_id,
+                        "INVOCATION.json",
+                        execution_id,
+                        canonical(extras["invocation"]) + "\n",
+                    )
                 result = {"report": report, **(extras or {})} if report else extras
                 conn.execute(
                     "UPDATE agent_executions SET status=?,result=?,error=?,finished=? WHERE id=?",

@@ -46,30 +46,31 @@ agentbridge_enable_real_agents() {
     printf 'Missing AgentBridge Python virtual environment.\n' >&2
     return 1
   fi
-  if ! codex_dir="$(PYTHONIOENCODING=utf-8 agentbridge_find_cli_dir "$bridge_python" codex)"; then
-    printf 'Codex native CLI not found; install the official CLI first.\n' >&2
-    return 1
+  export PATH="$bridge_root/.venv/Scripts:$PATH"
+  if codex_dir="$(PYTHONIOENCODING=utf-8 agentbridge_find_cli_dir "$bridge_python" codex)"; then
+    codex_dir="${codex_dir//$'\r'/}"
+    export PATH="$(cygpath -u "$codex_dir"):$PATH"
+    hash -r
+    if codex login status >/dev/null 2>&1; then
+      printf 'Codex native CLI found; login available.\n'
+    else
+      printf 'Codex found; finish login with: codex login\n'
+    fi
+  else
+    printf 'Codex unavailable; configure roles to use Claude or ChatGPT if needed.\n'
   fi
-  codex_dir="${codex_dir//$'\r'/}"
-  export PATH="$(cygpath -u "$codex_dir"):$PATH"
-  hash -r
-  if ! codex login status >/dev/null 2>&1; then
-    printf 'Codex is installed but login is unavailable. Run: codex login\n' >&2
-    return 1
-  fi
-  printf 'SA: Codex native CLI found; login available.\n'
 
   if claude_dir="$(PYTHONIOENCODING=utf-8 agentbridge_find_cli_dir "$bridge_python" claude)"; then
     claude_dir="${claude_dir//$'\r'/}"
     export PATH="$(cygpath -u "$claude_dir"):$PATH"
     hash -r
     if claude auth status --text >/dev/null 2>&1; then
-      printf 'SD/RD: Claude Code native CLI found; login available.\n'
+      printf 'Claude Code native CLI found; login available.\n'
     else
-      printf 'SD/RD: Claude found; finish login with: claude auth login\n'
+      printf 'Claude found; finish login with: claude auth login\n'
     fi
   else
-    printf 'SD/RD: Claude Code native CLI was not found; real SD/RD dispatch remains unavailable.\n'
+    printf 'Claude unavailable; configure roles to use Codex or ChatGPT if needed.\n'
   fi
   export AGENTBRIDGE_ENABLE_REAL_AGENTS=1
   printf 'Real dispatch enabled for programs started from this terminal. No model task was started.\n'

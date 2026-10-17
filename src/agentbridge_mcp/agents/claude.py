@@ -3,6 +3,7 @@ import json
 from ..errors import AgentProcessError, BridgeError
 from ..models import AgentReport
 from ..security import redact
+from ..telemetry import record_output
 from .base import BaseAgentAdapter, parse_report, probe, run_process
 
 
@@ -24,8 +25,10 @@ def error_detail(stdout):
 
 class ClaudeCodeAdapter(BaseAgentAdapter):
     def run(self, package, instruction, cwd, timeout, cancelled):
-        if package["role"] not in {"SD", "RD", "SD/RD"}:
-            raise BridgeError("Claude adapter requires an implementation role")
+        if package["role"] not in {"SA", "REVIEW", "SD", "RD", "SD/RD"}:
+            raise BridgeError("Unsupported Claude role")
+        readonly = package["role"] in {"SA", "REVIEW"}
+        options = package.get("agent_settings", {})
         executable = probe(
             "claude",
             [],
@@ -58,15 +61,21 @@ class ClaudeCodeAdapter(BaseAgentAdapter):
             "--json-schema",
             json.dumps(AgentReport.model_json_schema()),
             "--permission-mode",
-            "acceptEdits",
+            "plan" if readonly else "acceptEdits",
             "--tools",
-            "Read,Edit,Write,Glob,Grep",
+            "Read,Glob,Grep" if readonly else "Read,Edit,Write,Glob,Grep",
         ]
+        if options.get("model"):
+            argv += ["--model", options["model"]]
+        if options.get("effort"):
+            argv += ["--effort", options["effort"]]
         try:
-            stdout, _ = run_process(
+            stdout, stderr = run_process(
                 argv, cwd, self.prompt(package, instruction), timeout, cancelled
             )
+            record_output("claude", stdout, stderr)
         except AgentProcessError as exc:
+            record_output("claude", exc.stdout, exc.stderr)
             detail = redact(exc.stderr.strip())[:1500] or error_detail(exc.stdout)
             raise BridgeError(f"Claude exited {exc.returncode}: {detail}") from None
         try:

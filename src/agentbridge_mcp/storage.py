@@ -11,6 +11,10 @@ def now() -> str:
 
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS project_settings (
+ project_id TEXT PRIMARY KEY REFERENCES projects(id), content TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS operator_settings (
+ key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS projects (
  id TEXT PRIMARY KEY, root TEXT UNIQUE NOT NULL, name TEXT NOT NULL,
  created TEXT NOT NULL);

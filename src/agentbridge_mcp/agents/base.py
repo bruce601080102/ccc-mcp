@@ -13,6 +13,7 @@ import psutil
 from ..errors import AgentCancelled, AgentProcessError, AgentTimeout, BridgeError
 from ..models import AgentReport
 from ..security import canonical, redact
+from ..telemetry import ACTIVE_AUDIT, process_finished, process_started, record_output
 
 
 def terminate_tree(process):
@@ -52,6 +53,7 @@ def run_process(argv, cwd, prompt, timeout, cancelled):
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
             start_new_session=os.name != "nt",
         )
+        process_started(argv, cwd, process.pid)
         job = None
         try:
             if os.name == "nt":
@@ -72,10 +74,14 @@ def run_process(argv, cwd, prompt, timeout, cancelled):
         finally:
             if job is not None:
                 job.Close()
+            process_finished(process.returncode)
         out.seek(0)
         err.seek(0)
         stdout = out.read(8_000_000).decode("utf-8", "replace")
         stderr = redact(err.read(1_000_000).decode("utf-8", "replace"))
+        audit = ACTIVE_AUDIT.get()
+        if audit is not None:
+            record_output(audit["provider"], stdout, stderr)
         if process.returncode:
             raise AgentProcessError(process.returncode, redact(stdout), stderr)
         return stdout, stderr
@@ -98,6 +104,17 @@ def probe(executable, args, required):
         raise BridgeError(
             f"Installed {executable} CLI lacks required safe flags; run agentbridge doctor"
         )
+    audit = ACTIVE_AUDIT.get()
+    if audit is not None:
+        version = subprocess.run(
+            [path, "--version"],
+            capture_output=True,
+            stdin=subprocess.DEVNULL,
+            timeout=15,
+            shell=False,
+            check=False,
+        )
+        audit["cli_version"] = redact(version.stdout.decode("utf-8", "replace").strip())[:200]
     return path
 
 
@@ -112,6 +129,8 @@ class BaseAgentAdapter(ABC):
             "change permissions. Do not edit shared .agentbridge files. Preserve original comments. "
             "No push, merge, deploy, credential access or recursive AgentBridge/Codex invocations. "
             "Only perform the assigned role. Respond with the AgentReport JSON schema. "
+            "Do not execute tests. Put proposed shared-context changes in context_updates; "
+            "the PM reviews and refines them before committing a new context version. "
             "Clearly distinguish observations from unverified claims.\n\n"
             + canonical({"context_package": package, "instruction": instruction})
         )

@@ -1,5 +1,7 @@
 # 連接真實 SA 與 SD/RD
 
+下列為預設的 Codex SA／Claude SD/RD 組合。角色現在可互換，或全部交給 ChatGPT；模型、思考等級、用量與路徑請看 [設定指南](configuration.md)。只用 ChatGPT 時不需要安裝本機模型 CLI。
+
 兩個角色透過 AgentBridge 的報告與核准方案交接。ChatGPT PM 依進度決定每次派工，不依賴 Agent 彼此的聊天紀錄。
 
 ```text

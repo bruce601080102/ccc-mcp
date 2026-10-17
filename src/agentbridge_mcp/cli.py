@@ -18,9 +18,11 @@ app = typer.Typer(no_args_is_help=True, help="AgentBridge Context Hub 與 Agent 
 project_app = typer.Typer(no_args_is_help=True)
 context_app = typer.Typer(no_args_is_help=True)
 task_app = typer.Typer(no_args_is_help=True)
+config_app = typer.Typer(no_args_is_help=True, help="本機設定角色、模型、位置與讀取範圍")
 app.add_typer(project_app, name="project")
 app.add_typer(context_app, name="context")
 app.add_typer(task_app, name="task")
+app.add_typer(config_app, name="config")
 
 
 @app.callback()
@@ -72,6 +74,51 @@ def project_add(
 @project_app.command("list")
 def project_list(ctx: typer.Context):
     output(bridge(ctx).list_projects())
+
+
+@project_app.command("create")
+def project_create(ctx: typer.Context, id: str, path: Path | None = None):
+    """建立新專案與 Git 基準；不搬移或覆寫既有目錄。"""
+    output(bridge(ctx).create_project(id, path))
+
+
+@config_app.command("show")
+def config_show(ctx: typer.Context):
+    output(bridge(ctx).get_project_settings(project_id(ctx)))
+
+
+@config_app.command("role")
+def config_role(
+    ctx: typer.Context,
+    role: str,
+    provider: str,
+    model: str | None = None,
+    effort: str | None = None,
+    quota_fallback: str | None = None,
+):
+    output(
+        bridge(ctx).configure_role(project_id(ctx), role, provider, model, effort, quota_fallback)
+    )
+
+
+@config_app.command("read-root")
+def config_read_root(ctx: typer.Context, name: str, path: Path):
+    output(bridge(ctx).configure_read_root(project_id(ctx), name, path))
+
+
+@config_app.command("worktree-dir")
+def config_worktree_dir(ctx: typer.Context, path: Path):
+    output(bridge(ctx).configure_worktree_dir(project_id(ctx), path))
+
+
+@config_app.command("revoke-root")
+def config_revoke_root(ctx: typer.Context, name: str):
+    output(bridge(ctx).revoke_read_root(project_id(ctx), name))
+
+
+@config_app.command("projects-dir")
+def config_projects_dir(ctx: typer.Context, path: Path):
+    output(bridge(ctx).set_projects_directory(path))
 
 
 @context_app.command("show")
@@ -163,6 +210,12 @@ def task_result(ctx: typer.Context, task_id: str):
     output(bridge(ctx).get_task_result(project_id(ctx), task_id))
 
 
+@task_app.command("usage")
+def task_usage(ctx: typer.Context, task_id: str):
+    """只顯示各次執行的 CLI、模型設定與可取得的用量；舊紀錄標示未知。"""
+    output(bridge(ctx).get_task_usage(project_id(ctx), task_id))
+
+
 @task_app.command("dispatch")
 def task_dispatch(
     ctx: typer.Context,
@@ -173,10 +226,21 @@ def task_dispatch(
     version: Annotated[int, typer.Option()],
     adapter: str = "real",
     timeout: float = 600,
+    model: str | None = None,
+    effort: str | None = None,
 ):
     output(
         bridge(ctx).dispatch_agent(
-            project_id(ctx), task_id, agent, role, version, instruction, adapter, timeout
+            project_id(ctx),
+            task_id,
+            agent,
+            role,
+            version,
+            instruction,
+            adapter,
+            timeout,
+            model=model,
+            effort=effort,
         )
     )
 

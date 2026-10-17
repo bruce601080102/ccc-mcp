@@ -7,8 +7,9 @@ import portalocker
 from .agents import ClaudeCodeAdapter, CodexAdapter, FakeAgentAdapter
 from .errors import AgentCancelled, AgentTimeout, BridgeError
 from .git import git, tracked_snapshot, working_snapshot, worktree
-from .security import comment_check, redact, reject_secrets, safe_path, same_text_content
+from .security import comment_check, redact, reject_secrets, same_text_content
 from .service import AgentBridge
+from .telemetry import audit_scope, is_quota_error
 
 
 def run_execution(bridge, execution_id):
@@ -28,6 +29,13 @@ def run_execution(bridge, execution_id):
                 return
             row = dict(row)
             conn.execute("UPDATE agent_executions SET status='RUNNING' WHERE id=?", (execution_id,))
+        audit = {
+            "provider": row["agent"],
+            "source": "native_cli" if row["adapter"] == "real" else "fake",
+            "cli_invoked": False,
+            "requested": json.loads(row["options"]).get("agent_settings", {}),
+            "usage": {"available": False, "reason": "No CLI usage metadata returned"},
+        }
         try:
             project_id, task_id = row["project_id"], row["task_id"]
             package = json.loads(row["package"])
@@ -52,7 +60,13 @@ def run_execution(bridge, execution_id):
             before = {}
             if implementation:
                 bridge.approved_plan(project_id, task_id)
-                cwd = worktree(bridge.home, root, project_id, task_id)
+                cwd = worktree(
+                    bridge.home,
+                    root,
+                    project_id,
+                    task_id,
+                    bridge.get_project_settings(project_id)["worktree_dir"],
+                )
                 before = tracked_snapshot(cwd)
                 bridge.store.execute(
                     "UPDATE agent_executions SET worktree=? WHERE id=?", (str(cwd), execution_id)
@@ -65,7 +79,7 @@ def run_execution(bridge, execution_id):
                     (project_id, task_id),
                 )
                 if prior:
-                    expected = safe_path(bridge.home, f"worktrees/{project_id}/{task_id}")
+                    expected = bridge.task_worktree(project_id, task_id)
                     if Path(prior["worktree"]) != expected:
                         raise BridgeError("Invalid stored worktree path")
                     cwd = expected
@@ -73,9 +87,13 @@ def run_execution(bridge, execution_id):
                 adapter = FakeAgentAdapter(options["scenario"], options["delay"])
             else:
                 adapter = CodexAdapter() if row["agent"] == "codex" else ClaudeCodeAdapter()
-            report = adapter.run(package, row["instruction"], cwd, options["timeout"], cancelled)
+            with audit_scope(audit):
+                report = adapter.run(
+                    package, row["instruction"], cwd, options["timeout"], cancelled
+                )
             reject_secrets(report)
             extras = {
+                "invocation": audit,
                 "log": {
                     "adapter": row["adapter"],
                     "role": row["role"],
@@ -124,15 +142,48 @@ def run_execution(bridge, execution_id):
                     extras["context_changed_during_execution"] = True
             bridge.finish_execution(execution_id, report=report, state=state, extras=extras)
         except AgentCancelled as exc:
-            bridge.finish_execution(execution_id, error=str(exc), state="CANCELLED")
+            bridge.finish_execution(
+                execution_id, error=str(exc), state="CANCELLED", extras={"invocation": audit}
+            )
         except AgentTimeout as exc:
             bridge.finish_execution(
-                execution_id, error=str(exc), state="FAILED", extras={"failure_kind": "TIMEOUT"}
+                execution_id,
+                error=str(exc),
+                state="FAILED",
+                extras={"failure_kind": "TIMEOUT", "invocation": audit},
             )
         except Exception as exc:
+            quota = is_quota_error(str(exc) + " " + getattr(exc, "stdout", ""))
             bridge.finish_execution(
-                execution_id, error=redact(f"{type(exc).__name__}: {exc}")[:2000], state="FAILED"
+                execution_id,
+                error=redact(f"{type(exc).__name__}: {exc}")[:2000],
+                state="FAILED",
+                extras={
+                    "invocation": audit,
+                    "failure_kind": "QUOTA_EXHAUSTED" if quota else "ERROR",
+                },
             )
+            fallback = json.loads(row["options"]).get("agent_settings", {}).get("quota_fallback")
+            if (
+                quota
+                and fallback
+                and fallback != row["agent"]
+                and not json.loads(row["options"]).get("fallback_from")
+            ):
+                try:
+                    bridge.dispatch_agent(
+                        row["project_id"],
+                        row["task_id"],
+                        fallback,
+                        row["role"],
+                        row["context_version"],
+                        row["instruction"],
+                        "real",
+                        fallback_from=execution_id,
+                    )
+                except BridgeError:
+                    # Keep the failed execution; stale context/approval must not be bypassed.
+                    pass
     finally:
         lease.release()
 

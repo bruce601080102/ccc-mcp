@@ -71,6 +71,8 @@ async def test_mcp_tool_schemas_and_no_fake_human_approval(bridge):
     read_only = create_server(bridge.home, http=True)
     readonly_names = {t.name for t in await read_only.list_tools()}
     assert "dispatch_agent" not in readonly_names
+    assert {"read_workspace", "list_workspace", "get_project_settings"} <= readonly_names
+    assert not {"write_task_file", "submit_agent_report", "create_managed_project"} & readonly_names
     assert "bootstrap_project" in readonly_names
 
 
@@ -94,6 +96,55 @@ async def test_stdio_protocol_initialize_list_and_call(bridge):
                 "get_source_reference", {"project_id": "demo", "path": "../secret"}
             )
             assert forbidden.isError
+
+
+async def test_stdio_chatgpt_role_roundtrip_without_native_cli(bridge):
+    bridge.configure_role("demo", "SA", "chatgpt")
+    parameters = StdioServerParameters(
+        command=sys.executable,
+        args=["-m", "agentbridge_mcp", "--home", str(bridge.home), "serve"],
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+    )
+    async with stdio_client(parameters) as (reader, writer):
+        async with ClientSession(
+            reader, writer, read_timeout_seconds=timedelta(seconds=15)
+        ) as session:
+            await session.initialize()
+            created = await session.call_tool(
+                "create_task",
+                {"project_id": "demo", "requirement": "Analyze source", "acceptance": []},
+            )
+            assert not created.isError
+            queued = await session.call_tool(
+                "dispatch_agent",
+                {
+                    "project_id": "demo",
+                    "task_id": "TASK-0001",
+                    "role": "SA",
+                    "context_version": 1,
+                    "instruction": "Read app.py",
+                },
+            )
+            assert not queued.isError
+            execution_id = queued.structuredContent["execution_id"]
+            source = await session.call_tool(
+                "read_workspace", {"project_id": "demo", "path": "app.py"}
+            )
+            assert not source.isError and "original comment" in source.structuredContent["content"]
+            submitted = await session.call_tool(
+                "submit_agent_report",
+                {
+                    "project_id": "demo",
+                    "execution_id": execution_id,
+                    "report": {
+                        "summary": "Read app.py",
+                        "next_action": "PM refine",
+                        "context_updates": ["Observed value function"],
+                    },
+                },
+            )
+            assert not submitted.isError
+    assert bridge.task("demo", "TASK-0001")["state"] == "AWAITING_PM_DECISION"
 
 
 def test_http_auth_required_for_remote_and_writes(bridge):

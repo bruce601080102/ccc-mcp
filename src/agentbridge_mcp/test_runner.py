@@ -6,7 +6,7 @@ from .agents.base import run_process
 from .approval import confirm_local
 from .errors import AgentProcessError, BridgeError
 from .git import revision
-from .security import canonical, redact, safe_path
+from .security import canonical, redact
 
 
 def run_tests_local(bridge, project_id, task_id):
@@ -18,7 +18,7 @@ def run_tests_local(bridge, project_id, task_id):
     )
     if not row:
         raise BridgeError("No implementation worktree")
-    cwd = safe_path(bridge.home, f"worktrees/{project_id}/{task_id}")
+    cwd = bridge.task_worktree(project_id, task_id)
     if Path(row["worktree"]) != cwd:
         raise BridgeError("Invalid worktree")
     identity = confirm_local(

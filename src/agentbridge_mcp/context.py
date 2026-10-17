@@ -430,6 +430,8 @@ class ContextHub:
                 "source_references": snapshot["source_document_refs"] + evidence,
                 "validation": drift,
                 "working_context": snapshot,
+                "execution_settings": self.get_project_settings(project_id),
+                "pending_chatgpt_handoffs": self.pending_chatgpt_handoffs(project_id),
             }
 
     def build_handoff(self, project_id, role="PM", task_id=None, token_budget=None):
@@ -439,6 +441,7 @@ class ContextHub:
         snapshot = latest["snapshot"]
         root = Path(self.project(project_id)["root"])
         content = {
+            "shared_context": snapshot,
             "purpose": snapshot["purpose"],
             "invariants": snapshot["invariants"],
             "next_action": snapshot["next_action"],
@@ -494,7 +497,9 @@ class ContextHub:
             "project_id": project_id,
             "context_version": latest["version"],
             "task_id": task_id,
-            "target_agent": {"SA": "codex", "REVIEW": "codex", "PM": "chatgpt"}.get(role, "claude"),
+            "target_agent": "chatgpt"
+            if role == "PM"
+            else self.get_project_settings(project_id)["roles"][role]["provider"],
             "role": role,
             "source_document_refs": refs,
             "git_revision": self.git_revision(root),

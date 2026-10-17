@@ -57,7 +57,7 @@ def test_codex_adapter_uses_readonly_structured_stdin_outside_git(
         == "stubbed CLI"
     )
     with pytest.raises(BridgeError):
-        CodexAdapter().run({"role": "RD"}, "", Path.cwd(), 10, lambda: False)
+        CodexAdapter().run({"role": "UNKNOWN"}, "", Path.cwd(), 10, lambda: False)
 
 
 def test_claude_adapter_disables_shell_and_repository_configuration(monkeypatch):

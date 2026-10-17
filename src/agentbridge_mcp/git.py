@@ -29,8 +29,10 @@ def revision(root):
     return result.stdout.decode().strip() if result.returncode == 0 else "UNBORN"
 
 
-def worktree(home, root, project_id, task_id):
-    target = safe_path(home, f"worktrees/{project_id}/{task_id}")
+def worktree(home, root, project_id, task_id, worktree_root=None):
+    target = safe_path(
+        Path(worktree_root) if worktree_root else home / "worktrees", f"{project_id}/{task_id}"
+    )
     target.parent.mkdir(parents=True, exist_ok=True)
     if revision(root) == "UNBORN":
         raise BridgeError("Implementation requires an initial Git commit")

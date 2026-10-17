@@ -2,6 +2,8 @@
 
 [返回快速上手](../README.md)。以下指令都在 AgentBridge 專案根目錄執行。
 
+角色／模型／思考等級、ChatGPT 接手、指定讀取目錄與執行稽核的最新操作，請看 [設定指南](configuration.md)。本頁保留完整 CLI 與協作背景。
+
 以 Python 建立的 Context Hub 與 MCP 協調層，讓 ChatGPT PM、Codex SA、Claude Code SD/RD 能在沒有彼此聊天歷史的情況下，透過版本化記憶、原始證據與角色交接持續協作。
 
 目前為可執行的單機 MVP。核心、Fake Agent、stdio 與 Streamable HTTP 均有自動化測試；真實模型執行與 ChatGPT 帳戶連線需使用者完成官方安裝、登入及權限設定。
@@ -191,7 +193,7 @@ $env:AGENTBRIDGE_ENABLE_REAL_AGENTS = "1"
 agentbridge task dispatch TASK-0001 codex SA "分析需求" --version 1
 ```
 
-Codex 使用 `exec --sandbox read-only` 與 JSON Schema；Review 同樣以唯讀 exec 處理。Claude 使用 print/JSON、`--safe-mode` 保留訂閱登入並停用自訂載入，另以空設定來源與空 MCP 清單隔離專案設定。工具只允許 Read/Edit/Write/Glob/Grep，沒有 Bash、MCP 或子任務工具。其參數依 [Claude Code 官方 CLI 文件](https://code.claude.com/docs/en/cli-reference) 建立；真實執行結果應依個別任務的原始報告與測試證據判定。
+Codex 依角色使用 `read-only` 或 `workspace-write` sandbox 與 JSON Schema。Claude 使用 print/JSON、`--safe-mode` 保留訂閱登入並停用自訂載入，另以空設定來源與空 MCP 清單隔離專案設定；SA/Review 僅 Read/Glob/Grep，實作角色另有 Edit/Write。角色可由設定選擇供應商，真實執行結果與用量應依個別任務的原始報告及 INVOCATION.json 判定。
 
 實際測試另以 `agentbridge task test TASK-0001` 由本機操作者確認後，在 Worktree 執行固定的 `python -m pytest -q`。Agent 聲稱的 tests 與 host 實際測試證據分開保存。Repo 測試本身可執行程式碼，請先審閱後授權。
 

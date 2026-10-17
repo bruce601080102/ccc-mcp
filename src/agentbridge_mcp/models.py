@@ -59,3 +59,4 @@ class AgentReport(StrictModel):
     tests: list[TestClaim] = Field(default_factory=list)
     needs_revision: bool = False
     simulated: bool = False
+    context_updates: list[str] = Field(default_factory=list)

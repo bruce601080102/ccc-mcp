@@ -2,6 +2,18 @@
 
 日期：2026-10-17（Asia/Taipei）。此檔僅列實際執行的驗證與限制。
 
+## 可設定角色與 ChatGPT 接手驗證（同日，最新）
+
+- 完整測試：99 passed in 52.81s；Ruff 檢查與格式檢查通過。
+- 覆蓋五種角色與三種供應商組合、Codex／Claude 模型及思考參數、依角色維持唯讀／實作權限。
+- 覆蓋 ChatGPT 核准後寫檔、SHA256 比對、禁止越界與憑證路徑、Context 過期拒絕寫入、取消與重新載入接手工作。
+- 額度錯誤以測試替身驗證：保留失敗紀錄並建立 ChatGPT 接手；登入錯誤不觸發接手，Context 過期不略過驗證。
+- 透過真正 MCP stdio 連線驗證 ChatGPT 讀檔與提交報告；本機 Python 子程序驗證 PID、程式路徑、時間、退出碼與原生用量解析的保存機制，不呼叫真實模型。
+- 已安裝 CLI 的 help 確認 Codex --model/--config/--sandbox、Claude --model/--effort；本次未額外消耗模型額度。不同模型／帳戶的實際支援仍由 CLI 執行時驗證。
+- 實讀既有 agentbridge Context v3：SA／SD／RD 取得相同的正式 shared_context；測試覆蓋 Agent context_updates → PM 精修提交 → 下一輪取得新版本。
+- 現有 agentbridge 與 hello-world 根目錄保留；新專案位置、Worktree 位置及額外讀取目錄可由本機設定。README 已縮為 49 行。
+- 舊執行沒有回填當時未保存的 Token／PID；ChatGPT 網頁模型與 Token 用量未宣稱可由 MCP 獨立觀測。
+
 ## 後續整合驗證補充（同日）
 
 - 完整自動化測試：61 passed in 29.67s；本次變動檔案的 Ruff 檢查與格式檢查通過。
