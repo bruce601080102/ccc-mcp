@@ -1,0 +1,69 @@
+# CLI 參數與 ChatGPT 工具用語
+
+先照 [Hello World 教學](../README.md) 跑完一輪，再用這份文件調整角色與派工方式。以下 `demo-app` 是專案 ID 範例，請換成自己的 ID。
+
+## 角色與參數
+
+設定格式（`ROLE`、`PROVIDER` 是要替換的欄位）：
+
+```text
+agentbridge --project 專案ID config role ROLE PROVIDER [--model 模型ID] [--effort 等級] [--quota-fallback 執行者]
+```
+
+| `ROLE`（大小寫照寫） | 工作 | 限制 |
+|---|---|---|
+| `SA` | 系統分析，讀需求與程式並提出方案 | 唯讀 |
+| `SD` | 系統設計 | 須本機核准計畫 |
+| `RD` | 程式實作 | 須本機核准計畫 |
+| `SD/RD` | 同一次工作一起設計與實作，本範例使用此角色 | 須本機核准計畫 |
+| `REVIEW` | 審查成果與問題 | 唯讀 |
+
+五種角色**各自獨立設定**；設定 `SD/RD` 不會同時修改 `SD`、`RD`。每種角色都可選 `codex`、`claude` 或 `chatgpt`，也可全部選同一種。
+
+| 參數 | 意思與可填內容 |
+|---|---|
+| `--project` | 已註冊的專案 ID，例如 `demo-app`；放在子命令前面 |
+| `PROVIDER` | `codex`＝本機 Codex CLI；`claude`＝本機 Claude Code CLI；`chatgpt`＝目前網頁對話接手 |
+| `--model` | CLI 模型 ID／別名；省略時不傳模型參數，使用 CLI 預設，不保證和 IDE 選擇相同 |
+| `--effort` | 思考等級；可先用 `high` 或 `medium`，仍須模型支援，並非 token 上限 |
+| `--quota-fallback` | 額度不足時接手的執行者：`codex`、`claude`、`chatgpt`；省略則不設定自動接手 |
+| `project create --path` | 新專案根目錄；不是實作 Worktree 的位置 |
+
+**每次 `config role` 都會整組替換該角色設定**：要保留的 model、effort、fallback 須一起填，省略會清空。設定只影響後續派工，不會啟動模型或修改歷史紀錄。
+
+## 模型有哪些？
+
+- **Codex**：依 CLI 版本、登入方式與帳號而異。可自行開啟 `codex`，輸入 `/model` 查看選單，再把要用的模型 ID 填入 `--model`。本範例省略模型，先用 CLI 預設。見 [OpenAI 官方模型說明](https://learn.chatgpt.com/docs/models)。
+- **Claude Code**：常用別名為 `sonnet`、`opus`、`haiku`，也可使用完整模型 ID。可開啟 `claude`，輸入 `/model` 查看帳號選項；別名對應版本可能更新。見 [Claude 官方模型說明](https://code.claude.com/docs/en/model-config)。
+- **ChatGPT**：在網頁選擇模型與思考模式，不能透過這裡的 `--model`／`--effort` 切換。
+
+以下是 AgentBridge 目前接受的 effort 值，**不代表你的 CLI／模型全部支援**。不支援時會失敗，不會當成額度不足而自動接手。
+
+| 執行者 | AgentBridge 接受的 `--effort` |
+|---|---|
+| Codex | `minimal`、`low`、`medium`、`high`、`xhigh`、`max`、`ultra` |
+| Claude | `low`、`medium`、`high`、`xhigh`、`max`、`ultracode` |
+
+全部交給 ChatGPT 可改用：
+
+```bash
+for role in SA SD RD SD/RD REVIEW; do
+  agentbridge --project demo-app config role "$role" chatgpt
+done
+```
+
+## ChatGPT 需要固定 Prompt 嗎？
+
+**不需要固定咒語或逐字照抄**，你可以用自然語言描述需求。範例裡的詞語有以下作用：
+
+| 詞語 | 實際作用 | 是否要手打？ |
+|---|---|---|
+| `project_id=demo-app` | 選擇專案，任務編號只在該專案內有意義 | 請明確說出專案 ID，避免選錯 |
+| `bootstrap_project` | 工具名稱，載入目前 Context、任務與待接手工作 | 不必打工具名，說「恢復 demo-app」也可以；由 ChatGPT 呼叫 |
+| `agent=auto` | 派工工具參數，依角色設定選擇執行者 | 工具預設 auto；明說可避免 ChatGPT 自行指定其他執行者 |
+| `role=SA`／`SD/RD` | 本次派工的角色 | 可說「先分析，再一起設計與實作」；工具須使用正確角色值 |
+| `adapter=real` | 真實執行流程；`fake` 只模擬 | 工具預設 real；fake 結果不代表真實開發 |
+| `Context Version` | 派工使用的共享上下文版本 | 不必背數字，由 ChatGPT 查詢目前版本 |
+| `PLAN-A`、`TASK-0001` | 計畫與任務 ID，本範例名稱 | 以實際回覆為準，不要求所有任務都叫這些名稱 |
+
+ChatGPT 透過 MCP 工具操作，不是看到單字就必然執行。請確認回覆有實際任務／執行 ID 與原始結果；若只提供一般建議，可說「請實際呼叫 AgentBridge 工具」。

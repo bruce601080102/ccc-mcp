@@ -65,6 +65,10 @@ agentbridge --project new-project config worktree-dir "D:/AgentBridgeWorktrees"
 
 `project create` 建立 README、gitignore 與 Git 初始 commit，不產生業務程式。ChatGPT 的 `create_managed_project` 工具只能在本機設定的預設目錄下建立新專案，不能指定任意電腦路徑。
 
+專案根目錄與程式開發位置不同。現在所有實作都在獨立 Worktree，沒有直接寫回專案根目錄或指定任意單一輸出資料夾的模式。例如 `config worktree-dir "D:/Work"` 的實際任務目錄是 `D:/Work/專案ID/任務ID`，不會直接寫到 `D:/Work`。
+
+已有程式可用 `agentbridge project add "D:/Projects/existing-app" --id existing-app` 註冊，由 SA 分析現有架構；ChatGPT 可透過 `root_id=project` 讀取，不必另設 read-root。實作時從已提交的 HEAD 建立 Worktree，未提交／未追蹤檔案不會自動帶入；須有初始 commit 才能實作。註冊會新增 `.agentbridge` 管理文件，不會重新產生既有業務程式。
+
 未設定新專案目錄時，預設為 AgentBridge home 同層的 `AgentBridgeProjects`；Worktree 預設在 AgentBridge home 的 `worktrees/專案ID/任務ID`。設定 Worktree 位置後，實作位於所選目錄下的 `專案ID/任務ID`。已有實作 Worktree 時會拒絕改位置；不自動搬移、合併或覆寫現有成果。
 
 ## 讓 ChatGPT 讀取指定資料夾
@@ -78,6 +82,8 @@ agentbridge --project my-project config revoke-root reference
 告訴 ChatGPT：「使用 root_id=reference 讀取需求文件。」工具只接受該目錄下的相對路徑，可分頁列檔與讀取 UTF-8 文字；不是開放整台電腦。憑證、`.git`、受管 `.agentbridge` 及 symlink/junction 路徑不透過檔案工具開放。原始報告使用既有的任務查詢工具讀取。
 
 額外資料夾只有讀取權；ChatGPT 寫檔限於有效核准、目前 Context 的任務 Worktree，且 SA／Review 不能寫檔。
+
+`read-root` 授權的是 ChatGPT 的 MCP 檔案工具，不會自動把外部目錄加入 Codex／Claude CLI 的允許範圍或交接包。可先由 ChatGPT 閱讀外部資料，將相關內容整理進共享 Context，再提供給 CLI Agent。
 
 ## 執行與 Token 證據
 
@@ -109,6 +115,8 @@ PM 已精修的 Context vN
 ```
 
 Agent 的原始更新是待 PM 審閱的資料，不直接覆寫正式 Context。精修保留原始報告、引用與版本歷史；程式不會自行呼叫 ChatGPT 摘要。PM 要先提交精修版，再針對新版本提出與核准後續實作計畫。
+
+同一輪實作完成後，先使用仍有效的核准執行本機測試與驗收，再提交結案 Context。若要在 SD 與 RD 之間提交新版 Context，須針對新版重新提出並核准後續計畫；舊核准不會自動沿用到新版。
 
 ## 套用這次更新
 

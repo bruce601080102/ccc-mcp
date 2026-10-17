@@ -218,7 +218,10 @@ class TaskHub:
                 "approval_id": request_id,
                 "plan": plan,
                 "status": "PENDING",
-                "next_action": f"本機終端執行 agentbridge approve {task_id} --plan {plan_id}",
+                "next_action": (
+                    f"本機終端執行 agentbridge --project {project_id} "
+                    f"approve {task_id} --plan {plan_id}"
+                ),
             }
 
     def get_approval_status(self, project_id, task_id):

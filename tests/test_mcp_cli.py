@@ -28,6 +28,8 @@ def test_cli_workflow(tmp_path):
         ["context", "export"],
         ["task", "create", "新增 API", "--acceptance", "回傳 200"],
         ["task", "status", "TASK-0001"],
+        ["task", "show", "TASK-0001"],
+        ["task", "show"],
         ["task", "list"],
         ["doctor"],
     ]:
@@ -44,6 +46,33 @@ def test_cli_workflow(tmp_path):
     imported = runner.invoke(app, commands + ["context", "import-patch", str(patch)])
     assert imported.exit_code == 0, imported.output
     assert json.loads(imported.output)["context_version"] == 2
+
+
+def test_task_show_infers_project_but_refuses_ambiguous_task(bridge, monkeypatch):
+    from conftest import dispatch
+
+    from agentbridge_mcp.worker import run_execution
+
+    bridge.create_task("demo", "Analyze repository")
+    execution = dispatch(bridge)
+    run_execution(bridge, execution["execution_id"])
+    monkeypatch.chdir(bridge.project("demo")["root"])
+    runner = CliRunner()
+    args = ["--home", str(bridge.home), "task", "show"]
+    before = bridge.get_task_result("demo", "TASK-0001")
+    shown = runner.invoke(app, args)
+    assert shown.exit_code == 0, shown.output
+    for expected in ("demo", "TASK-0001", execution["execution_id"], "codex", "SA", "fake"):
+        assert expected in shown.output
+    assert bridge.get_task_result("demo", "TASK-0001") == before
+
+    bridge.create_task("demo", "Another task")
+    ambiguous = runner.invoke(app, args)
+    assert ambiguous.exit_code != 0
+    assert "task list" in ambiguous.output
+    explicit = runner.invoke(app, args + ["TASK-0001"])
+    assert explicit.exit_code == 0, explicit.output
+    assert execution["execution_id"] in explicit.output
 
 
 async def test_mcp_tool_schemas_and_no_fake_human_approval(bridge):

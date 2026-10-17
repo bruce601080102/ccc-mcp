@@ -207,7 +207,50 @@ def task_status(ctx: typer.Context, task_id: str):
 
 @task_app.command("result")
 def task_result(ctx: typer.Context, task_id: str):
+    """查詢完整執行資料；一般查看成果可用 task show。"""
     output(bridge(ctx).get_task_result(project_id(ctx), task_id))
+
+
+@task_app.command("show")
+def task_show(ctx: typer.Context, task_id: Annotated[str | None, typer.Argument()] = None):
+    """合併顯示任務狀態、結果摘要、Worktree 與用量；只有一個任務時可省略編號。"""
+    service = bridge(ctx)
+    project = project_id(ctx)
+    if task_id is None:
+        tasks = service.list_tasks(project)
+        if len(tasks) != 1:
+            raise typer.BadParameter(
+                "請用 task list 查看編號，再執行 task show TASK-xxxx；只有一個任務時才能省略編號。"
+            )
+        task_id = tasks[0]["id"]
+    task = service.task(project, task_id)
+    typer.echo(f"專案：{project}　任務：{task_id}　狀態：{task['state']}")
+    rows = service.get_task_result(project, task_id)
+    if not rows:
+        typer.echo("尚無 Agent 執行紀錄。")
+    for row in rows:
+        typer.echo(f"\n{row['id']}　{row['agent']} / {row['role']}　{row['status']}")
+        typer.echo(f"執行模式：{row['adapter']}")
+        result = row.get("result") or {}
+        report = result.get("report") or {}
+        if report:
+            typer.echo(f"摘要：{report['summary']}")
+            typer.echo(f"需要修訂：{report.get('needs_revision', '未知')}")
+        if row.get("error"):
+            typer.echo(f"錯誤：{row['error']}")
+        if row.get("worktree"):
+            typer.echo(f"程式位置：{row['worktree']}")
+        invocation = result.get("invocation") or {}
+        typer.echo(f"CLI 呼叫：{invocation.get('cli_invoked', '未知')}")
+        usage = invocation.get("usage") or {}
+        models = usage.get("reported_models") or []
+        if models:
+            typer.echo("CLI 回報模型：" + ", ".join(models))
+        if usage.get("available"):
+            typer.echo("Token：" + json.dumps(usage.get("tokens", {}), ensure_ascii=False))
+        else:
+            typer.echo("Token：未提供，無法確認")
+    typer.echo("\n以上為執行摘要；是否通過測試請另查看 task test 產生的測試報告。")
 
 
 @task_app.command("usage")
