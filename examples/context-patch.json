@@ -1,0 +1,13 @@
+{
+  "base_context_version": 1,
+  "changes": {
+    "summary": "PM 已整理新成果；此範例未宣稱任何未驗證架構事實。",
+    "status": "Awaiting technical analysis",
+    "next_action": "讀取實際 SA Report，將其不可變執行路徑與 SHA256 加入 source_document_refs。"
+  },
+  "source_task_ids": [],
+  "source_document_refs": [],
+  "update_reason": "PM 整理工作摘要；原始需求、報告與決策仍保存在資料庫。",
+  "author_role": "PM",
+  "semantic_review_ack": true
+}
