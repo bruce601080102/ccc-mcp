@@ -7,7 +7,7 @@ import portalocker
 from .agents import ClaudeCodeAdapter, CodexAdapter, FakeAgentAdapter
 from .errors import AgentCancelled, AgentTimeout, BridgeError
 from .git import git, tracked_snapshot, working_snapshot, worktree
-from .security import comment_check, redact, reject_secrets, safe_path
+from .security import comment_check, redact, reject_secrets, safe_path, same_text_content
 from .service import AgentBridge
 
 
@@ -98,7 +98,14 @@ def run_execution(bridge, execution_id):
                     "utf-8", "replace"
                 )
                 extras["untracked_files"] = [p for p in after if p not in before]
-                extras["changed_files"] = [p for p in before if before[p] != after.get(p)]
+                extras["changed_files"] = [
+                    p for p in before if not same_text_content(before[p], after.get(p))
+                ]
+                extras["line_ending_only_files"] = [
+                    p
+                    for p in before
+                    if before[p] != after.get(p) and same_text_content(before[p], after.get(p))
+                ]
                 reject_secrets(diff)
                 with bridge.store.transaction() as conn:
                     path = bridge.save_artifact(

@@ -38,11 +38,15 @@ bash scripts/connect-chatgpt.sh tunnel_你的實際ID
 
 缺少 Claude 時仍可先連接 SA；SD/RD 要等 Claude 安裝及登入完成。實際派工前 Adapter 也會檢查 CLI 必要參數。
 
+Claude Adapter 使用 `--safe-mode` 保留官方訂閱登入，同時停用自訂載入；另外停用使用者／專案設定來源並指定空的 MCP 清單。工具仍限於 Read/Edit/Write/Glob/Grep。不要改回 `--bare` 來搭配 `claude auth login`：依 [官方程式化執行文件](https://code.claude.com/docs/en/headless)，bare 模式不讀取訂閱 OAuth 憑證。CLI 非零退出時，Adapter 會擷取並遮罩 stderr 或 stdout 的錯誤摘要。
+
 Windows 的 Codex Adapter 會明確傳入 `-c windows.sandbox="elevated"`，同時保留 `--ignore-user-config`、`--sandbox read-only` 與 `-a never`。忽略使用者設定時，若沒有指定 Windows 沙箱，可能導致所有讀檔命令都被政策拒絕。這使用 [OpenAI 官方 Windows 沙箱](https://learn.chatgpt.com/docs/windows/windows-sandbox)；本機必須已完成所需的沙箱設定。
 
 受限 CLI 不一定提供目前 IDE 的 MCP 工具，也可能無法讀取沙箱外的技能檔案。SA 應記錄這些限制，繼續使用被允許的專案唯讀查詢；不得重試被拒絕的路徑、變更權限或宣稱完成圖譜驗證。
 
 執行狀態 `SUCCEEDED` 表示 CLI 已正常回傳結構化報告，不代表需求驗收通過。PM 必須讀取報告的 `needs_revision`、`findings` 與證據，再決定下一步；若報告表示無法讀取程式碼，不能當成分析成功。
+
+Windows Git 的 LF/CRLF 自動轉換不應被誤判為註解修改。Worker 將僅換行不同的 UTF-8 文字檔列在 `line_ending_only_files`，其餘實質變更仍照原本規則檢查；二進位或無法解碼為 UTF-8 的內容不做這項放寬。
 
 ## 3. 準備被開發專案的 Git 基準
 
@@ -81,3 +85,9 @@ SA 完成後，PM 用 propose_plan 提出具體方案，request_approval 建立 
 核准後，PM 再派 SD/RD：`agent=claude`、`role=SD/RD`、`adapter=real`，Context Version 必須與核准紀錄相符。AgentBridge 自動建立含 SA 報告與核准方案的交接套件；Claude 在獨立 Worktree 執行。
 
 目前的實作使用獨立 CLI 程序。結果存於 AgentBridge，可由網頁工具或 CLI 查詢；未與目前 VS Code Codex 對話視窗同步。
+
+## 操作與核准規則
+
+真實 SD/RD 派工前必須有本機人工核准。相同計畫與 Context Version 的有效核准可供重試使用，不需要每次派工重複核准；計畫內容、計畫版本或 Context Version 改變時，原核准不再適用。
+
+`bootstrap_project` 用來恢復專案，不是必須逐字寫在每則聊天訊息中的指令，也不是 dispatch 的唯一前置讀取方式。PM 必須取得正確專案與目前 Context Version；新對話或切換專案時適合先 bootstrap。使用者可以直接說「請繼續 hello-world 已核准的任務，完成後回報」，讓 PM 選擇適當工具。

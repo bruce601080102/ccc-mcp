@@ -2,6 +2,17 @@
 
 日期：2026-10-17（Asia/Taipei）。此檔僅列實際執行的驗證與限制。
 
+## 後續整合驗證補充（同日）
+
+- 完整自動化測試：61 passed in 29.67s；本次變動檔案的 Ruff 檢查與格式檢查通過。
+- 真實 Codex SA：agentbridge / TASK-0002 / EXEC-0ed64a53a8a54a79 已完成靜態分析，原始報告 needs_revision=false、simulated=false；未執行專案測試。
+- 真實 Claude Code 2.1.302：hello-world / TASK-0001 / EXEC-a4a7f1127a2b4515 已建立 hello.py 與 tests/test_hello.py；Claude 當次未執行測試。
+- Hello World 後續本機測試：TEST-64cfa0b36bb74e69 的原始 TEST-RESULT.md 記錄 executed_by_host=true、passed=true，實際輸出為 1 passed in 0.06s；此項已讀取原始證據核對。
+- Claude 訂閱登入相容性：由不讀取 OAuth 憑證的 --bare 改為 --safe-mode，保留受限工具、空設定來源及空 MCP 清單；錯誤摘要可擷取 stdout 並遮罩。
+- Windows Git 換行：已重現並修正 LF/CRLF 造成的誤判；換行差異另行記錄，不放寬實質註解或二進位變更檢查。
+
+以下其餘段落保留初次 MVP 交付時的環境與驗證紀錄，當時尚未安裝或執行真實 Claude。
+
 ## 環境
 
 | 項目 | 本次環境 |

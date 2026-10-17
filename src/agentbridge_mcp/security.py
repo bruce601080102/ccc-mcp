@@ -81,12 +81,28 @@ def reject_secrets(value) -> None:
         raise BridgeError("Possible secret detected; remove credentials before saving")
 
 
+def same_text_content(old: bytes, new: bytes | None) -> bool:
+    """Match bytes or UTF-8 text differing only in Windows line endings."""
+    if new is None:
+        return False
+    if old == new:
+        return True
+    if b"\0" in old or b"\0" in new:
+        return False
+    try:
+        old.decode("utf-8")
+        new.decode("utf-8")
+    except UnicodeError:
+        return False
+    return old.replace(b"\r\n", b"\n") == new.replace(b"\r\n", b"\n")
+
+
 def comment_check(before: dict[str, bytes], after: dict[str, bytes]) -> dict:
     """Exact Python comment tokens; other changed languages require human review."""
     violations, uncertain = [], []
     for path, old in before.items():
         new = after.get(path, b"")
-        if old == new:
+        if same_text_content(old, new):
             continue
         if Path(path).suffix != ".py":
             uncertain.append(path)

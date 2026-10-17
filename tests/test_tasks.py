@@ -191,8 +191,9 @@ def test_observed_test_results_persist(bridge, human):
         "AND path='.agentbridge/tasks/TASK-0001/TEST-RESULT.md'"
     )
     assert '"executed_by_host":true' in artifact["content"]
+    # Change the source size so a same-second edit invalidates Python's bytecode cache.
     (worktree / "test_health.py").write_text(
-        "from app import value\ndef test_value():\n    assert value() == 2\n"
+        "from app import value\ndef test_value():\n    assert value() == 999\n"
     )
     failed = run_tests_local(bridge, "demo", "TASK-0001")
     assert not failed["passed"] and "FAILED" in failed["stdout"]

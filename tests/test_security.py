@@ -91,6 +91,16 @@ def test_comment_preservation():
     assert comment_check({"x.js": b"// keep\n"}, {"x.js": b"// change\n"})["requires_human_review"]
 
 
+def test_comment_check_handles_git_text_line_endings():
+    assert comment_check({"README.md": b"# keep\n"}, {"README.md": b"# keep\r\n"})["ok"]
+    assert comment_check({"x.js": b"// keep\r\n"}, {"x.js": b"// keep\n"})["ok"]
+    assert comment_check({"x.js": b"// keep\n"}, {"x.js": b"// changed\r\n"})[
+        "requires_human_review"
+    ]
+    assert comment_check({"x.bin": b"\0a\n"}, {"x.bin": b"\0a\r\n"})["requires_human_review"]
+    assert comment_check({"x.bin": b"\xff\n"}, {"x.bin": b"\xff\r\n"})["requires_human_review"]
+
+
 def test_immutable_decisions_database(bridge, human):
     bridge.create_task("demo", "requirement")
     approve(bridge)
