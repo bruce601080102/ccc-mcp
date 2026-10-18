@@ -4,7 +4,6 @@ import argparse
 import asyncio
 import json
 import sys
-from datetime import timedelta
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -12,13 +11,13 @@ from mcp.client.streamable_http import streamable_http_client
 
 
 async def probe(read, write, project):
-    async with ClientSession(read, write, read_timeout_seconds=timedelta(seconds=20)) as session:
+    async with ClientSession(read, write, read_timeout_seconds=20) as session:
         await session.initialize()
         tools = await session.list_tools()
         print(json.dumps({"tools": [t.name for t in tools.tools]}, ensure_ascii=False, indent=2))
         result = await session.call_tool("bootstrap_project", {"project_id": project})
         print(json.dumps(result.model_dump(mode="json"), ensure_ascii=False, indent=2))
-        if result.isError:
+        if result.is_error:
             raise SystemExit(1)
 
 
@@ -29,10 +28,10 @@ async def main():
     parser.add_argument("--project", required=True)
     args = parser.parse_args()
     if args.url:
-        async with streamable_http_client(args.url) as (read, write, _):
+        async with streamable_http_client(args.url) as (read, write):
             await probe(read, write, args.project)
     else:
-        options = ["-m", "agentbridge_mcp"]
+        options = ["-m", "ccc_mcp"]
         if args.home:
             options += ["--home", args.home]
         async with stdio_client(

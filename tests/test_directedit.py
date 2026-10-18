@@ -5,10 +5,10 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from agentbridge_mcp.cli import app
-from agentbridge_mcp.errors import BridgeError, PermissionDenied, VersionConflict
-from agentbridge_mcp.server import create_server
-from agentbridge_mcp.service import AgentBridge
+from ccc_mcp.cli import app
+from ccc_mcp.errors import BridgeError, PermissionDenied, VersionConflict
+from ccc_mcp.server import create_server
+from ccc_mcp.service import CCCMCP
 
 
 def target(bridge):
@@ -46,7 +46,7 @@ def test_direct_edit_requires_allowlist_and_exact_local_approval(bridge, human):
     assert receipt["approved_at"] and receipt["applied_at"]
     assert file.read_bytes() == content.encode()
     assert bridge.read_workspace("demo", "readme.md")["sha256"] == receipt["sha256"]
-    archive = AgentBridge(bridge.home).get_workspace_edit("demo", edit["id"], True)
+    archive = CCCMCP(bridge.home).get_workspace_edit("demo", edit["id"], True)
     assert archive["before_content"] == "original\r\n"
     assert archive["content"] == content
     assert bridge.latest("demo")["version"] == 1
@@ -85,7 +85,7 @@ def test_changed_during_local_review_is_rejected(bridge, monkeypatch):
         target(bridge).write_text("changed during review", encoding="utf-8")
         return "test-principal"
 
-    monkeypatch.setattr("agentbridge_mcp.approval.confirm_local", confirm)
+    monkeypatch.setattr("ccc_mcp.approval.confirm_local", confirm)
     with pytest.raises(VersionConflict):
         bridge.approve_workspace_edit_local("demo", edit["id"])
     assert bridge.get_workspace_edit("demo", edit["id"])["status"] == "PENDING"
@@ -94,7 +94,7 @@ def test_changed_during_local_review_is_rejected(bridge, monkeypatch):
 def test_allowlist_is_exact_persistent_and_revocable(bridge, human):
     edit = proposal(bridge)
     bridge.configure_role("demo", "SA", "chatgpt")
-    assert AgentBridge(bridge.home).get_project_settings("demo")["writable_files"] == ["readme.md"]
+    assert CCCMCP(bridge.home).get_project_settings("demo")["writable_files"] == ["readme.md"]
     with pytest.raises(PermissionDenied):
         bridge.propose_workspace_edit("demo", "other/readme.md", "new")
     bridge.approve_workspace_edit_local("demo", edit["id"])
@@ -111,7 +111,7 @@ def test_allowlist_is_exact_persistent_and_revocable(bridge, human):
         "C:/outside.md",
         ".env",
         ".git/config",
-        ".agentbridge/CONTEXT.md",
+        ".ccc-mcp/CONTEXT.md",
         ".ssh/id_rsa",
     ],
 )
@@ -197,7 +197,7 @@ def test_proposal_and_application_are_idempotent_without_overwriting_later_edits
 
 @pytest.mark.parametrize("replace_before_crash", [False, True])
 def test_retry_recovers_write_interruption(bridge, human, monkeypatch, replace_before_crash):
-    from agentbridge_mcp.security import atomic_write
+    from ccc_mcp.security import atomic_write
 
     edit = proposal(bridge)
     bridge.approve_workspace_edit_local("demo", edit["id"])
@@ -207,12 +207,12 @@ def test_retry_recovers_write_interruption(bridge, human, monkeypatch, replace_b
             atomic_write(path, content)
         raise OSError("simulated interruption")
 
-    monkeypatch.setattr("agentbridge_mcp.directedit.atomic_write", interrupted)
+    monkeypatch.setattr("ccc_mcp.directedit.atomic_write", interrupted)
     with pytest.raises(OSError):
         bridge.write_workspace("demo", edit["id"])
     assert bridge.get_workspace_edit("demo", edit["id"])["status"] == "APPLYING"
-    monkeypatch.setattr("agentbridge_mcp.directedit.atomic_write", atomic_write)
-    receipt = AgentBridge(bridge.home).write_workspace("demo", edit["id"])
+    monkeypatch.setattr("ccc_mcp.directedit.atomic_write", atomic_write)
+    receipt = CCCMCP(bridge.home).write_workspace("demo", edit["id"])
     assert receipt["status"] == "APPLIED"
     assert target(bridge).read_bytes() == b"original\ntest\n"
 
@@ -285,7 +285,7 @@ async def test_stdio_direct_edit_roundtrip_with_real_files(bridge, human):
     bridge.configure_write_file("demo", "readme.md")
     params = StdioServerParameters(
         command=sys.executable,
-        args=["-m", "agentbridge_mcp", "--home", str(bridge.home), "serve"],
+        args=["-m", "ccc_mcp", "--home", str(bridge.home), "serve"],
         env={**os.environ, "PYTHONIOENCODING": "utf-8"},
     )
     async with stdio_client(params) as (reader, writer):

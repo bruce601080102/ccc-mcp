@@ -12,9 +12,9 @@ import typer
 from .errors import BridgeError
 from .models import ContextPatch
 from .security import atomic_write, redact
-from .service import AgentBridge
+from .service import CCCMCP
 
-app = typer.Typer(no_args_is_help=True, help="AgentBridge Context Hub 與 Agent 協作工具")
+app = typer.Typer(no_args_is_help=True, help="ccc-mcp Context Hub 與 Agent 協作工具")
 project_app = typer.Typer(no_args_is_help=True)
 context_app = typer.Typer(no_args_is_help=True)
 task_app = typer.Typer(no_args_is_help=True)
@@ -30,7 +30,7 @@ app.add_typer(config_app, name="config")
 @app.callback()
 def options(ctx: typer.Context, home: Path | None = None, project: str | None = None):
     """--home 指定資料庫位置；--project 指定已註冊專案。"""
-    bridge = AgentBridge(home)
+    bridge = CCCMCP(home)
     ctx.obj = {"bridge": bridge, "project": project}
 
 
@@ -59,7 +59,7 @@ def init(
     id: str | None = None,
     purpose: str = "協作開發與維護此專案",
 ):
-    """註冊專案並產生 .agentbridge 共用記憶。"""
+    """註冊專案並產生 .ccc-mcp 共用記憶。"""
     output(bridge(ctx).register_project(path, id, purpose))
 
 

@@ -7,7 +7,7 @@
 設定格式（`ROLE`、`PROVIDER` 是要替換的欄位）：
 
 ```text
-agentbridge --project 專案ID config role ROLE PROVIDER [--model 模型ID] [--effort 等級] [--quota-fallback 執行者]
+ccc-mcp --project 專案ID config role ROLE PROVIDER [--model 模型ID] [--effort 等級] [--quota-fallback 執行者]
 ```
 
 | `ROLE`（大小寫照寫） | 工作 | 限制 |
@@ -37,9 +37,9 @@ agentbridge --project 專案ID config role ROLE PROVIDER [--model 模型ID] [--e
 - **Claude Code**：常用別名為 `sonnet`、`opus`、`haiku`，也可使用完整模型 ID。可開啟 `claude`，輸入 `/model` 查看帳號選項；別名對應版本可能更新。見 [Claude 官方模型說明](https://code.claude.com/docs/en/model-config)。
 - **ChatGPT**：在網頁選擇模型與思考模式，不能透過這裡的 `--model`／`--effort` 切換。
 
-以下是 AgentBridge 目前接受的 effort 值，**不代表你的 CLI／模型全部支援**。不支援時會失敗，不會當成額度不足而自動接手。
+以下是 ccc-mcp 目前接受的 effort 值，**不代表你的 CLI／模型全部支援**。不支援時會失敗，不會當成額度不足而自動接手。
 
-| 執行者 | AgentBridge 接受的 `--effort` |
+| 執行者 | ccc-mcp 接受的 `--effort` |
 |---|---|
 | Codex | `minimal`、`low`、`medium`、`high`、`xhigh`、`max`、`ultra` |
 | Claude | `low`、`medium`、`high`、`xhigh`、`max`、`ultracode` |
@@ -48,7 +48,7 @@ agentbridge --project 專案ID config role ROLE PROVIDER [--model 模型ID] [--e
 
 ```bash
 for role in SA SD RD SD/RD REVIEW; do
-  agentbridge --project demo-app config role "$role" chatgpt
+  ccc-mcp --project demo-app config role "$role" chatgpt
 done
 ```
 
@@ -66,4 +66,4 @@ done
 | `Context Version` | 派工使用的共享上下文版本 | 不必背數字，由 ChatGPT 查詢目前版本 |
 | `PLAN-A`、`TASK-0001` | 計畫與任務 ID，本範例名稱 | 以實際回覆為準，不要求所有任務都叫這些名稱 |
 
-ChatGPT 透過 MCP 工具操作，不是看到單字就必然執行。請確認回覆有實際任務／執行 ID 與原始結果；若只提供一般建議，可說「請實際呼叫 AgentBridge 工具」。
+ChatGPT 透過 MCP 工具操作，不是看到單字就必然執行。請確認回覆有實際任務／執行 ID 與原始結果；若只提供一般建議，可說「請實際呼叫 ccc-mcp 工具」。

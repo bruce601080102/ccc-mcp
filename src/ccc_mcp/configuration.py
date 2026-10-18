@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+from .config import metadata_name
 from .context import identifier
 from .errors import BridgeError
 from .git import git
@@ -92,7 +93,10 @@ class ConfigurationHub:
             (project_id, canonical(settings)),
         )
         atomic_write(
-            safe_path(Path(self.project(project_id)["root"]), ".agentbridge/settings.json"),
+            safe_path(
+                Path(self.project(project_id)["root"]),
+                metadata_name(self.project(project_id)["root"]) + "/settings.json",
+            ),
             json.dumps(settings, ensure_ascii=False, indent=2) + "\n",
         )
         return settings
@@ -107,9 +111,7 @@ class ConfigurationHub:
                 "Effort not supported by this provider; model-specific support is checked by its CLI"
             )
         if provider == "chatgpt" and model:
-            raise BridgeError(
-                "Choose the ChatGPT web model in the conversation UI, not in AgentBridge"
-            )
+            raise BridgeError("Choose the ChatGPT web model in the conversation UI, not in ccc-mcp")
         if model and (len(model) > 160 or model.startswith("-") or any(c.isspace() for c in model)):
             raise BridgeError("Invalid model identifier")
         if quota_fallback not in {None, *PROVIDERS}:
@@ -193,7 +195,7 @@ class ConfigurationHub:
 
     def projects_directory(self):
         row = self.store.one("SELECT value FROM operator_settings WHERE key='projects_dir'")
-        return Path(row["value"]) if row else self.home.parent / "AgentBridgeProjects"
+        return Path(row["value"]) if row else self.home.parent / "ccc-mcpProjects"
 
     def set_projects_directory(self, path):
         root = directory(path, create=True)
@@ -222,18 +224,16 @@ class ConfigurationHub:
         except FileExistsError:
             raise BridgeError("Project directory already exists") from None
         root = directory(target)
-        atomic_write(root / "README.md", f"# {project_id}\n\nProject managed by AgentBridge.\n")
-        atomic_write(
-            root / ".gitignore", ".agentbridge/\n.env\n.venv/\n__pycache__/\n.pytest_cache/\n"
-        )
+        atomic_write(root / "README.md", f"# {project_id}\n\nProject managed by CCCMCP.\n")
+        atomic_write(root / ".gitignore", ".ccc-mcp/\n.env\n.venv/\n__pycache__/\n.pytest_cache/\n")
         git(root, "init")
         git(root, "add", "--", "README.md", ".gitignore")
         git(
             root,
             "-c",
-            "user.name=AgentBridge",
+            "user.name=ccc-mcp",
             "-c",
-            "user.email=agentbridge@localhost",
+            "user.email=ccc-mcp@localhost",
             "-c",
             "commit.gpgsign=false",
             "commit",

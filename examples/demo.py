@@ -6,7 +6,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from agentbridge_mcp.service import AgentBridge
+from ccc_mcp.service import CCCMCP
 
 
 def wait(bridge, execution):
@@ -22,7 +22,7 @@ def wait(bridge, execution):
                 raise SystemExit(row["error"])
             return
         time.sleep(0.1)
-    raise SystemExit("Worker timeout; inspect agentbridge task status")
+    raise SystemExit("Worker timeout; inspect ccc-mcp task status")
 
 
 def main():
@@ -31,7 +31,7 @@ def main():
     parser.add_argument("--directory", type=Path, help="另選新的示範資料夾；不會刪除既有資料")
     args = parser.parse_args()
     folder = (args.directory or Path(__file__).resolve().parent.parent / ".demo").resolve()
-    bridge = AgentBridge(folder / "hub")
+    bridge = CCCMCP(folder / "hub")
     if args.stage == "prepare":
         repo = folder / "project"
         if repo.exists():
@@ -50,7 +50,7 @@ def main():
                 ["add", "app.py"],
                 [
                     "-c",
-                    "user.name=AgentBridge Demo",
+                    "user.name=CCCMCP Demo",
                     "-c",
                     "user.email=demo@example.invalid",
                     "commit",
@@ -77,7 +77,7 @@ def main():
         )
         wait(bridge, queued["execution_id"])
         ref = bridge.source_ref(
-            "demo", f".agentbridge/tasks/TASK-0001/executions/{queued['execution_id']}/SA-REPORT.md"
+            "demo", f".ccc-mcp/tasks/TASK-0001/executions/{queued['execution_id']}/SA-REPORT.md"
         )
         proposal = bridge.propose_context_patch(
             "demo",
@@ -99,7 +99,7 @@ def main():
         bridge.propose_plan("demo", "TASK-0001", "PLAN-A", plan, 2)
         bridge.request_approval("demo", "TASK-0001", "PLAN-A")
         print(
-            "Prepared. Review and run: agentbridge --home .demo/hub --project demo approve TASK-0001 --plan PLAN-A"
+            "Prepared. Review and run: ccc-mcp --home .demo/hub --project demo approve TASK-0001 --plan PLAN-A"
         )
     elif args.stage == "implement":
         version = bridge.latest("demo")["version"]

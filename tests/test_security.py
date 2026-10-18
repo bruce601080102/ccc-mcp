@@ -7,11 +7,11 @@ import time
 import pytest
 from conftest import approve, dispatch
 
-from agentbridge_mcp.agents.base import parse_report, run_process
-from agentbridge_mcp.approval import confirm_local
-from agentbridge_mcp.errors import AgentCancelled, AgentTimeout, BridgeError, PermissionDenied
-from agentbridge_mcp.security import atomic_write, comment_check, redact, safe_path
-from agentbridge_mcp.worker import run_execution
+from ccc_mcp.agents.base import parse_report, run_process
+from ccc_mcp.approval import confirm_local
+from ccc_mcp.errors import AgentCancelled, AgentTimeout, BridgeError, PermissionDenied
+from ccc_mcp.security import atomic_write, comment_check, redact, safe_path
+from ccc_mcp.worker import run_execution
 
 
 @pytest.mark.parametrize(
@@ -76,7 +76,7 @@ def test_atomic_write_does_not_destroy_old_file(tmp_path, monkeypatch):
     def interrupted(*args):
         raise OSError("interrupted")
 
-    monkeypatch.setattr("agentbridge_mcp.security.os.replace", interrupted)
+    monkeypatch.setattr("ccc_mcp.security.os.replace", interrupted)
     with pytest.raises(OSError):
         atomic_write(target, "new")
     assert target.read_text() == "old"

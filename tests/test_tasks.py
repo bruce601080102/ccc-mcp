@@ -4,9 +4,9 @@ from pathlib import Path
 import pytest
 from conftest import approve, dispatch
 
-from agentbridge_mcp.errors import BridgeError, PermissionDenied, VersionConflict
-from agentbridge_mcp.service import AgentBridge
-from agentbridge_mcp.worker import run_execution
+from ccc_mcp.errors import BridgeError, PermissionDenied, VersionConflict
+from ccc_mcp.service import CCCMCP
+from ccc_mcp.worker import run_execution
 
 
 def test_sd_handoff_contains_approved_plan_and_current_version(bridge, human):
@@ -110,7 +110,7 @@ def test_worker_restart_blocks_without_replaying(bridge):
     bridge.store.execute(
         "UPDATE agent_executions SET status='RUNNING' WHERE id=?", (queued["execution_id"],)
     )
-    fresh = AgentBridge(bridge.home)
+    fresh = CCCMCP(bridge.home)
     assert fresh.recover_workers("demo")["interrupted_executions"] == [queued["execution_id"]]
     assert fresh.task("demo", "TASK-0001")["state"] == "BLOCKED"
     run_execution(fresh, queued["execution_id"])
@@ -129,7 +129,7 @@ def test_duplicate_dispatch_and_illegal_transition(bridge):
 
 def test_asynchronous_detached_worker_returns_before_result(bridge, monkeypatch):
     bridge.create_task("demo", "分析")
-    monkeypatch.setattr(bridge, "spawn_worker", AgentBridge.spawn_worker.__get__(bridge))
+    monkeypatch.setattr(bridge, "spawn_worker", CCCMCP.spawn_worker.__get__(bridge))
     started = time.monotonic()
     queued = dispatch(bridge, fake_delay=1)
     assert time.monotonic() - started < 1
@@ -174,7 +174,7 @@ def test_append_decisions_and_reject_plan(bridge, human):
 
 
 def test_observed_test_results_persist(bridge, human):
-    from agentbridge_mcp.test_runner import run_tests_local
+    from ccc_mcp.test_runner import run_tests_local
 
     bridge.create_task("demo", "需求")
     approve(bridge)
@@ -188,7 +188,7 @@ def test_observed_test_results_persist(bridge, human):
     assert result["passed"] and result["executed_by_host"]
     artifact = bridge.store.one(
         "SELECT content FROM artifacts WHERE project_id='demo' "
-        "AND path='.agentbridge/tasks/TASK-0001/TEST-RESULT.md'"
+        "AND path='.ccc-mcp/tasks/TASK-0001/TEST-RESULT.md'"
     )
     assert '"executed_by_host":true' in artifact["content"]
     # Change the source size so a same-second edit invalidates Python's bytecode cache.

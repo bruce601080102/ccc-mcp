@@ -76,7 +76,7 @@ class ProjectAccessHub:
         access = self.get_project_access(project_id)
         if access["mode"] != "read-write":
             raise PermissionDenied(
-                f"Project is read-only. Run agentbridge project authorize {project_id} locally once."
+                f"Project is read-only. Run ccc-mcp project authorize {project_id} locally once."
             )
         return access
 

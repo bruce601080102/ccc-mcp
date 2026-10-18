@@ -6,12 +6,12 @@ from pathlib import Path
 import pytest
 from conftest import approve, dispatch
 
-from agentbridge_mcp.agents import ClaudeCodeAdapter, CodexAdapter
-from agentbridge_mcp.agents.base import schema_file
-from agentbridge_mcp.errors import AgentProcessError, BridgeError
-from agentbridge_mcp.git import git
-from agentbridge_mcp.models import AgentReport
-from agentbridge_mcp.worker import run_execution
+from ccc_mcp.agents import ClaudeCodeAdapter, CodexAdapter
+from ccc_mcp.agents.base import schema_file
+from ccc_mcp.errors import AgentProcessError, BridgeError
+from ccc_mcp.git import git
+from ccc_mcp.models import AgentReport
+from ccc_mcp.worker import run_execution
 
 
 def report():
@@ -27,8 +27,8 @@ def test_codex_adapter_uses_readonly_structured_stdin_outside_git(
         assert "--skip-git-repo-check" in required
         return "codex.exe"
 
-    monkeypatch.setattr("agentbridge_mcp.agents.codex.probe", probe)
-    monkeypatch.setattr("agentbridge_mcp.agents.codex.platform.system", lambda: system)
+    monkeypatch.setattr("ccc_mcp.agents.codex.probe", probe)
+    monkeypatch.setattr("ccc_mcp.agents.codex.platform.system", lambda: system)
 
     def run(argv, cwd, prompt, timeout, cancelled):
         assert argv[argv.index("--sandbox") + 1] == "read-only"
@@ -49,7 +49,7 @@ def test_codex_adapter_uses_readonly_structured_stdin_outside_git(
         Path(argv[argv.index("--output-last-message") + 1]).write_text(report(), encoding="utf-8")
         return "", ""
 
-    monkeypatch.setattr("agentbridge_mcp.agents.codex.run_process", run)
+    monkeypatch.setattr("ccc_mcp.agents.codex.run_process", run)
     assert (
         CodexAdapter().run(
             {"role": role, "context_version": 1}, "Analyze", tmp_path, 10, lambda: False
@@ -61,7 +61,7 @@ def test_codex_adapter_uses_readonly_structured_stdin_outside_git(
 
 
 def test_claude_adapter_disables_shell_and_repository_configuration(monkeypatch):
-    monkeypatch.setattr("agentbridge_mcp.agents.claude.probe", lambda *args: "claude.exe")
+    monkeypatch.setattr("ccc_mcp.agents.claude.probe", lambda *args: "claude.exe")
 
     def run(argv, cwd, prompt, timeout, cancelled):
         assert "--safe-mode" in argv
@@ -74,7 +74,7 @@ def test_claude_adapter_disables_shell_and_repository_configuration(monkeypatch)
         assert "--dangerously-skip-permissions" not in argv
         return json.dumps({"structured_output": json.loads(report())}), ""
 
-    monkeypatch.setattr("agentbridge_mcp.agents.claude.run_process", run)
+    monkeypatch.setattr("ccc_mcp.agents.claude.run_process", run)
     result = ClaudeCodeAdapter().run({"role": "RD"}, "Implement", Path.cwd(), 10, lambda: False)
     assert result["summary"] == "stubbed CLI"
 
@@ -90,18 +90,18 @@ def test_claude_adapter_disables_shell_and_repository_configuration(monkeypatch)
     ],
 )
 def test_claude_preserves_stdout_failure_diagnostics(monkeypatch, stdout, stderr, expected):
-    monkeypatch.setattr("agentbridge_mcp.agents.claude.probe", lambda *args: "claude.exe")
+    monkeypatch.setattr("ccc_mcp.agents.claude.probe", lambda *args: "claude.exe")
 
     def fail(*args):
         raise AgentProcessError(1, stdout, stderr)
 
-    monkeypatch.setattr("agentbridge_mcp.agents.claude.run_process", fail)
+    monkeypatch.setattr("ccc_mcp.agents.claude.run_process", fail)
     with pytest.raises(BridgeError, match=expected):
         ClaudeCodeAdapter().run({"role": "RD"}, "Implement", Path.cwd(), 10, lambda: False)
 
 
 def test_claude_stdout_failure_diagnostics_redact_secrets(monkeypatch):
-    monkeypatch.setattr("agentbridge_mcp.agents.claude.probe", lambda *args: "claude.exe")
+    monkeypatch.setattr("ccc_mcp.agents.claude.probe", lambda *args: "claude.exe")
     secret = "sk-" + "x" * 32
 
     def fail(*args):
@@ -109,7 +109,7 @@ def test_claude_stdout_failure_diagnostics_redact_secrets(monkeypatch):
             1, json.dumps({"is_error": True, "result": "Bad key " + secret}), ""
         )
 
-    monkeypatch.setattr("agentbridge_mcp.agents.claude.run_process", fail)
+    monkeypatch.setattr("ccc_mcp.agents.claude.run_process", fail)
     with pytest.raises(BridgeError) as caught:
         ClaudeCodeAdapter().run({"role": "RD"}, "Implement", Path.cwd(), 10, lambda: False)
     assert "Bad key" in str(caught.value)
@@ -130,7 +130,7 @@ def test_comment_change_blocks_and_does_not_touch_main(bridge, human, monkeypatc
         (cwd / "app.py").write_text("# changed comment\ndef value():\n    return 2\n")
         return json.loads(report())
 
-    monkeypatch.setattr("agentbridge_mcp.agents.fake.FakeAgentAdapter.run", corrupt)
+    monkeypatch.setattr("ccc_mcp.agents.fake.FakeAgentAdapter.run", corrupt)
     queued = dispatch(bridge, "RD")
     run_execution(bridge, queued["execution_id"])
     assert bridge.task("demo", "TASK-0001")["state"] == "BLOCKED"
@@ -160,7 +160,7 @@ def test_windows_git_checkout_line_endings_do_not_block_implementation(bridge, h
     bridge.create_task("demo", "Check checkout line endings")
     approve(bridge)
     monkeypatch.setattr(
-        "agentbridge_mcp.agents.fake.FakeAgentAdapter.run",
+        "ccc_mcp.agents.fake.FakeAgentAdapter.run",
         lambda *args: json.loads(report()),
     )
     queued = dispatch(bridge, "RD")
@@ -189,7 +189,7 @@ def test_live_streamable_http_transport(bridge):
         [
             sys.executable,
             "-m",
-            "agentbridge_mcp",
+            "ccc_mcp",
             "--home",
             str(bridge.home),
             "serve",

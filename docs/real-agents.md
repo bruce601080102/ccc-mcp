@@ -2,7 +2,7 @@
 
 下列為預設的 Codex SA／Claude SD/RD 組合。角色現在可互換，或全部交給 ChatGPT；模型、思考等級、用量與路徑請看 [設定指南](configuration.md)。只用 ChatGPT 時不需要安裝本機模型 CLI。
 
-兩個角色透過 AgentBridge 的報告與核准方案交接。ChatGPT PM 依進度決定每次派工，不依賴 Agent 彼此的聊天紀錄。
+兩個角色透過 ccc-mcp 的報告與核准方案交接。ChatGPT PM 依進度決定每次派工，不依賴 Agent 彼此的聊天紀錄。
 
 ```text
 ChatGPT PM → Codex SA → SA-REPORT.md
@@ -23,7 +23,7 @@ Claude Code 請依 [官方安裝文件](https://code.claude.com/docs/en/setup) �
 winget install Anthropic.ClaudeCode
 ```
 
-安裝後開新的 Git Bash，執行 `claude auth login` 完成官方登入。`claude --version` 與 `claude auth status --text` 可確認狀態。AgentBridge 不替代兩個 CLI 各自的登入或模型使用權限；Tunnel runtime key 用途是連接 Tunnel。
+安裝後開新的 Git Bash，執行 `claude auth login` 完成官方登入。`claude --version` 與 `claude auth status --text` 可確認狀態。ccc-mcp 不替代兩個 CLI 各自的登入或模型使用權限；Tunnel runtime key 用途是連接 Tunnel。
 
 若 WinGet 顯示已安裝，但 Git Bash 回報 `claude: command not found`，請先於本專案根目錄執行 `source scripts/enable-real-agents.sh`，再執行 `claude --version` 與 `claude auth login`。設定腳本可直接尋找 WinGet 的 Claude 套件目錄，補入目前終端的 PATH；不必重新安裝。
 
@@ -36,7 +36,7 @@ source scripts/enable-real-agents.sh
 bash scripts/connect-chatgpt.sh tunnel_你的實際ID
 ```
 
-設定腳本只檢查 CLI 路徑與登入狀態，將路徑及 `AGENTBRIDGE_ENABLE_REAL_AGENTS=1` 放入目前終端環境，不執行模型任務。必須使用 **source**，並在同一個終端重新啟動 Tunnel；既有 Server 不會自動取得後來變更的環境變數。
+設定腳本只檢查 CLI 路徑與登入狀態，將路徑及 `CCC_MCP_ENABLE_REAL_AGENTS=1` 放入目前終端環境，不執行模型任務。必須使用 **source**，並在同一個終端重新啟動 Tunnel；既有 Server 不會自動取得後來變更的環境變數。
 
 缺少 Claude 時仍可先連接 SA；SD/RD 要等 Claude 安裝及登入完成。實際派工前 Adapter 也會檢查 CLI 必要參數。
 
@@ -56,7 +56,7 @@ Codex 的唯讀 SA/Review 支援尚未建立 Git 的已註冊專案：Adapter �
 
 實作 Worktree 以已提交的 HEAD 建立。先在要開發的 Repository 中審閱檔案與 `.gitignore`，建立初始 commit，確認要提供給 Agent 的程式已提交。不要將 `.env`、秘密金鑰、`.tunnel/` 或工具資料夾納入提交。
 
-在 AgentBridge 本專案第一次建立 Git 基準，可先 `git init`、以 `git add` 加入你已審閱的原始碼，再 `git commit`。若要開發另一個已有 Git 的專案，改用 `agentbridge project add 路徑 --id 專案ID` 註冊該專案。
+在 ccc-mcp 本專案第一次建立 Git 基準，可先 `git init`、以 `git add` 加入你已審閱的原始碼，再 `git commit`。若要開發另一個已有 Git 的專案，改用 `ccc-mcp project add 路徑 --id 專案ID` 註冊該專案。
 
 ## 4. 在 ChatGPT 發起真實任務
 
@@ -81,12 +81,12 @@ SA 的 `dispatch_agent` 參數：
 SA 完成後，PM 用 propose_plan 提出具體方案，request_approval 建立 PENDING 請求。Context 更新完成後，再針對目前版本提出要核准的方案。你本人在本機審閱後執行：
 
 ```bash
-./.venv/Scripts/agentbridge.exe --project 你的專案ID approve 新任務ID --plan PLAN-A
+./.venv/Scripts/ccc-mcp.exe --project 你的專案ID approve 新任務ID --plan PLAN-A
 ```
 
-核准後，PM 再派 SD/RD：`agent=claude`、`role=SD/RD`、`adapter=real`，Context Version 必須與核准紀錄相符。AgentBridge 自動建立含 SA 報告與核准方案的交接套件；Claude 在獨立 Worktree 執行。
+核准後，PM 再派 SD/RD：`agent=claude`、`role=SD/RD`、`adapter=real`，Context Version 必須與核准紀錄相符。ccc-mcp 自動建立含 SA 報告與核准方案的交接套件；Claude 在獨立 Worktree 執行。
 
-目前的實作使用獨立 CLI 程序。結果存於 AgentBridge，可由網頁工具或 CLI 查詢；未與目前 VS Code Codex 對話視窗同步。
+目前的實作使用獨立 CLI 程序。結果存於 ccc-mcp，可由網頁工具或 CLI 查詢；未與目前 VS Code Codex 對話視窗同步。
 
 ## 操作與核准規則
 

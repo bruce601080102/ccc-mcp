@@ -5,7 +5,7 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   exit 2
 fi
 
-agentbridge_find_cli_dir() {
+ccc_mcp_find_cli_dir() {
   "$1" - "$2" <<'PY'
 import shutil
 import sys
@@ -38,16 +38,16 @@ else:
 PY
 }
 
-agentbridge_enable_real_agents() {
+ccc_mcp_enable_real_agents() {
   local bridge_root bridge_python codex_dir claude_dir
   bridge_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)" || return 1
   bridge_python="$bridge_root/.venv/Scripts/python.exe"
   if [[ ! -f "$bridge_python" ]]; then
-    printf 'Missing AgentBridge Python virtual environment.\n' >&2
+    printf 'Missing ccc-mcp Python virtual environment.\n' >&2
     return 1
   fi
   export PATH="$bridge_root/.venv/Scripts:$PATH"
-  if codex_dir="$(PYTHONIOENCODING=utf-8 agentbridge_find_cli_dir "$bridge_python" codex)"; then
+  if codex_dir="$(PYTHONIOENCODING=utf-8 ccc_mcp_find_cli_dir "$bridge_python" codex)"; then
     codex_dir="${codex_dir//$'\r'/}"
     export PATH="$(cygpath -u "$codex_dir"):$PATH"
     hash -r
@@ -60,7 +60,7 @@ agentbridge_enable_real_agents() {
     printf 'Codex unavailable; configure roles to use Claude or ChatGPT if needed.\n'
   fi
 
-  if claude_dir="$(PYTHONIOENCODING=utf-8 agentbridge_find_cli_dir "$bridge_python" claude)"; then
+  if claude_dir="$(PYTHONIOENCODING=utf-8 ccc_mcp_find_cli_dir "$bridge_python" claude)"; then
     claude_dir="${claude_dir//$'\r'/}"
     export PATH="$(cygpath -u "$claude_dir"):$PATH"
     hash -r
@@ -72,14 +72,14 @@ agentbridge_enable_real_agents() {
   else
     printf 'Claude unavailable; configure roles to use Codex or ChatGPT if needed.\n'
   fi
-  export AGENTBRIDGE_ENABLE_REAL_AGENTS=1
+  export CCC_MCP_ENABLE_REAL_AGENTS=1
   printf 'Real dispatch enabled for programs started from this terminal. No model task was started.\n'
   printf 'Restart scripts/connect-chatgpt.sh from this same terminal to apply the environment.\n'
 }
 
-if agentbridge_enable_real_agents; then
-  unset -f agentbridge_find_cli_dir agentbridge_enable_real_agents
+if ccc_mcp_enable_real_agents; then
+  unset -f ccc_mcp_find_cli_dir ccc_mcp_enable_real_agents
 else
-  unset -f agentbridge_find_cli_dir agentbridge_enable_real_agents
+  unset -f ccc_mcp_find_cli_dir ccc_mcp_enable_real_agents
   return 1
 fi

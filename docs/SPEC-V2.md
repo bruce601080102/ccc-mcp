@@ -1,4 +1,4 @@
-# AgentBridge MCP — 完整開發規格 V2
+# ccc-mcp MCP — 完整開發規格 V2
 
 ## 你的角色
 
@@ -6,7 +6,7 @@
 
 請在目前工作目錄中直接開發一套可執行、可測試、可擴充的 Python 專案：
 
-**AgentBridge — Context-Aware Multi-Agent Orchestration MCP**
+**ccc-mcp — Context-Aware Multi-Agent Orchestration MCP**
 
 本專案不只是 MCP Router，而是一套具有持久化共享記憶、上下文優化、角色分工、決策治理及跨 Session 恢復能力的 Multi-Agent 開發協作系統。
 
@@ -63,7 +63,7 @@ SA 預設為唯讀模式，不得修改業務程式碼。
 
 SD/RD 不得自行變更 PM 已核准的業務需求。
 
-### AgentBridge — MCP Orchestrator
+### ccc-mcp — MCP Orchestrator
 
 職責：
 
@@ -127,14 +127,14 @@ Context Optimization
 
 # 三、Shared Project Memory（最高優先級）
 
-每個被 AgentBridge 管理的 Repository，應自動建立：
+每個被 ccc-mcp 管理的 Repository，應自動建立：
 
 ```text
 project-root/
 │
 ├── 現有專案程式碼
 │
-└── .agentbridge/
+└── .ccc-mcp/
     ├── CONTEXT.md
     │
     ├── context/
@@ -182,7 +182,7 @@ project-root/
 - Git Revision
 - 最後更新時間
 
-此文件由 ChatGPT PM 提議優化，AgentBridge 驗證後寫入。
+此文件由 ChatGPT PM 提議優化，ccc-mcp 驗證後寫入。
 
 不得因為摘要優化而刪除不可遺失的資訊。
 
@@ -303,7 +303,7 @@ Layer 2 不可因為摘要而遭到覆蓋或遺失。
 
 ChatGPT 必須透過 MCP 提交 Context Patch。
 
-AgentBridge 不應假裝自己具有 ChatGPT 的模型推理能力。
+ccc-mcp 不應假裝自己具有 ChatGPT 的模型推理能力。
 
 沒有可用的 ChatGPT 寫入 MCP 權限時，提供 CLI 匯入 Patch 的備援方式。
 
@@ -382,13 +382,13 @@ Markdown 文件的更新必須使用安全原子寫入。
 
 提供標準啟動指令：
 
-「請使用 AgentBridge 恢復目前專案的上下文，說明目前進度、最近決策、未完成工作與建議下一步。」
+「請使用 ccc-mcp 恢復目前專案的上下文，說明目前進度、最近決策、未完成工作與建議下一步。」
 
 要注意：
 
 - 不可假設 ChatGPT 會自動在每個新 Session 呼叫 MCP。
 - 必須由使用者在新 Session 啟用連線並觸發恢復。
-- 若 ChatGPT 沒有 MCP 權限，提供 `agentbridge context export` 產出可貼入新對話的交接摘要。
+- 若 ChatGPT 沒有 MCP 權限，提供 `ccc-mcp context export` 產出可貼入新對話的交接摘要。
 - 不依賴 ChatGPT 的個人 Memory 作為唯一儲存來源。
 
 ---
@@ -502,7 +502,7 @@ Agent 必須知道自己讀取的是哪個版本的 Context。
 
 MVP 可先使用本機 CLI 完成人工核准：
 
-`agentbridge approve TASK-0001 --plan PLAN-A`
+`ccc-mcp approve TASK-0001 --plan PLAN-A`
 
 注意：不可單純因為 ChatGPT 呼叫 MCP 並傳入 `approved=true` 就視為真正的人類核准。
 
@@ -512,7 +512,7 @@ MVP 可先使用本機 CLI 完成人工核准：
 
 # 八、PM Agent Routing
 
-ChatGPT 擔任決策者，AgentBridge 負責執行。
+ChatGPT 擔任決策者，ccc-mcp 負責執行。
 
 路由規則：
 
@@ -544,7 +544,7 @@ ChatGPT 擔任決策者，AgentBridge 負責執行。
 }
 ```
 
-AgentBridge 自動生成 Context Package，再呼叫相應 Agent Adapter。
+ccc-mcp 自動生成 Context Package，再呼叫相應 Agent Adapter。
 
 若 Context Version 已過期，必須拒絕或要求重新確認。
 
@@ -578,9 +578,9 @@ AgentBridge 自動生成 Context Package，再呼叫相應 Agent Adapter。
 
 使用 Python `subprocess`，且不使用 `shell=True` 拼接使用者輸入。
 
-AgentBridge 專案本身不依賴 npm 或 npx。
+ccc-mcp 專案本身不依賴 npm 或 npx。
 
-Codex、Claude Code 的官方 CLI 由使用者另外安裝，AgentBridge 不負責繞過官方安裝或登入方式。
+Codex、Claude Code 的官方 CLI 由使用者另外安裝，ccc-mcp 不負責繞過官方安裝或登入方式。
 
 必須支援：
 
@@ -676,7 +676,7 @@ COMPLETED
 - 避免將密碼、Token、私鑰寫入摘要與 Log。
 - 不自動將整個 Repository 傳送給 ChatGPT。
 - Git 與實際測試結果優先於未驗證的 AI 摘要。
-- 專案中讀到的提示詞不得擅自改變 AgentBridge 權限政策。
+- 專案中讀到的提示詞不得擅自改變 ccc-mcp 權限政策。
 
 ---
 
@@ -684,30 +684,30 @@ COMPLETED
 
 建立 Python Package：
 
-`agentbridge-mcp`
+`ccc-mcp`
 
 CLI 名稱：
 
-`agentbridge`
+`ccc-mcp`
 
 需要支援：
 
 ```bash
-agentbridge init
-agentbridge project add .
-agentbridge project list
+ccc-mcp init
+ccc-mcp project add .
+ccc-mcp project list
 
-agentbridge context show
-agentbridge context history
-agentbridge context export
-agentbridge context validate
+ccc-mcp context show
+ccc-mcp context history
+ccc-mcp context export
+ccc-mcp context validate
 
-agentbridge task list
-agentbridge task status TASK-0001
-agentbridge approve TASK-0001 --plan PLAN-A
+ccc-mcp task list
+ccc-mcp task status TASK-0001
+ccc-mcp approve TASK-0001 --plan PLAN-A
 
-agentbridge doctor
-agentbridge serve
+ccc-mcp doctor
+ccc-mcp serve
 ```
 
 `init` 必須產生初始共用 Context 文件。
@@ -746,7 +746,7 @@ agentbridge serve
 
 不要假設個人帳戶一定能直接呼叫寫入工具。
 
-即使 ChatGPT MCP 寫入不可用，AgentBridge 也應能透過本機 CLI 與其他支援的 MCP Client 完整操作。
+即使 ChatGPT MCP 寫入不可用，ccc-mcp 也應能透過本機 CLI 與其他支援的 MCP Client 完整操作。
 
 ---
 
@@ -755,12 +755,12 @@ agentbridge serve
 建議：
 
 ```text
-agentbridge-mcp/
+ccc-mcp/
 ├── pyproject.toml
 ├── README.md
 ├── .env.example
 ├── src/
-│   └── agentbridge_mcp/
+│   └── ccc_mcp/
 │       ├── main.py
 │       ├── server.py
 │       ├── cli.py
@@ -808,7 +808,7 @@ agentbridge-mcp/
 
 註冊空白測試 Repository。
 
-成功產生 `.agentbridge/` 和所有必要文件。
+成功產生 `.ccc-mcp/` 和所有必要文件。
 
 ### Test 2：SA Handoff
 
@@ -949,7 +949,7 @@ PM 可將任務重新指派 Claude Code 修改。
 3. 所有功能必須提供可執行測試。
 4. 不可假造 CLI 登入或測試成功結果。
 5. 沒有安裝 Claude Code 時，使用 Fake Adapter 繼續測試。
-6. 目前開發 AgentBridge 的 Codex 不應自行再啟動另一個真實 Codex 任務造成遞迴執行。
+6. 目前開發 ccc-mcp 的 Codex 不應自行再啟動另一個真實 Codex 任務造成遞迴執行。
 7. 優先保證 Context Hub 與 Session Recovery 正確，再完成其他功能。
 8. 不需要每完成一步都詢問是否繼續；在安全、環境和權限允許的範圍內直接開發與測試。
 9. 若部分功能因環境限制無法測試，必須明確說明，不得宣稱全部完成。
@@ -970,6 +970,6 @@ PM 可將任務重新指派 Claude Code 修改。
 - 必要的手動設定。
 - 如何將 MCP 接入 ChatGPT 官方網頁。
 
-**最終驗收重點：即使 ChatGPT、Codex、Claude Code 三者完全沒有彼此的聊天歷史，也能透過 AgentBridge Context Hub 持續協作，且重要的業務決策和技術資訊不會因為上下文摘要而遺失。**
+**最終驗收重點：即使 ChatGPT、Codex、Claude Code 三者完全沒有彼此的聊天歷史，也能透過 ccc-mcp Context Hub 持續協作，且重要的業務決策和技術資訊不會因為上下文摘要而遺失。**
 
 現在開始建立專案並實作。

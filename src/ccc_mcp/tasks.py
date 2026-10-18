@@ -7,6 +7,7 @@ from contextlib import nullcontext
 
 import portalocker
 
+from .config import metadata_name, setting_env
 from .context import identifier
 from .errors import BridgeError, PermissionDenied, VersionConflict
 from .security import canonical, digest, reject_secrets
@@ -121,7 +122,7 @@ class TaskHub:
                 artifact(
                     conn,
                     project_id,
-                    f".agentbridge/tasks/{task_id}/REQUIREMENT.md",
+                    f"{metadata_name(self.project(project_id)['root'])}/tasks/{task_id}/REQUIREMENT.md",
                     f"# Requirement\n\n{requirement}\n\n## Acceptance\n{canonical(acceptance or [])}\n",
                 )
             self.sync_documents(project_id)
@@ -220,7 +221,7 @@ class TaskHub:
                 "plan": plan,
                 "status": "PENDING",
                 "next_action": (
-                    f"本機終端執行 agentbridge --project {project_id} "
+                    f"本機終端執行 ccc-mcp --project {project_id} "
                     f"approve {task_id} --plan {plan_id}"
                 ),
             }
@@ -406,13 +407,9 @@ class TaskHub:
             raise BridgeError("Unsupported adapter or fake scenario")
         if not 0.05 <= timeout <= 7200 or not 0 <= fake_delay <= 60:
             raise BridgeError("Timeout/delay outside supported bounds")
-        if (
-            adapter == "real"
-            and agent != "chatgpt"
-            and os.environ.get("AGENTBRIDGE_ENABLE_REAL_AGENTS") != "1"
-        ):
+        if adapter == "real" and agent != "chatgpt" and setting_env("ENABLE_REAL_AGENTS") != "1":
             raise PermissionDenied(
-                "Real agents disabled; operator must set AGENTBRIDGE_ENABLE_REAL_AGENTS=1"
+                "Real agents disabled; operator must set CCC_MCP_ENABLE_REAL_AGENTS=1"
             )
         reject_secrets(instruction)
         with self.lock(project_id):
@@ -507,7 +504,7 @@ class TaskHub:
             [
                 sys.executable,
                 "-m",
-                "agentbridge_mcp.worker",
+                "ccc_mcp.worker",
                 "--home",
                 str(self.home),
                 "--execution",
@@ -533,6 +530,29 @@ class TaskHub:
                 "SELECT * FROM task_events WHERE project_id=? AND task_id=? ORDER BY seq",
                 (project_id, task_id),
             )
+            latest = self.store.one(
+                "SELECT id,agent,role,adapter,status,result,error FROM agent_executions "
+                "WHERE project_id=? AND task_id=? ORDER BY created DESC LIMIT 1",
+                (project_id, task_id),
+            )
+            saved = json.loads(latest["result"]) if latest and latest["result"] else {}
+            report = saved.get("report") or {}
+            task["brief"] = {
+                "task_id": task_id,
+                "state": task["state"],
+                "agent": latest["agent"] if latest else None,
+                "role": latest["role"] if latest else None,
+                "adapter": latest["adapter"] if latest else None,
+                "execution_status": latest["status"] if latest else None,
+                "summary": report.get("summary"),
+                "needs_revision": report.get("needs_revision"),
+                "next_action": report.get("next_action"),
+                "error": latest["error"] if latest else None,
+                "context_version": self.latest(project_id)["version"],
+                "context_refinement_pending": self.context_sync_status(project_id)[
+                    "needs_pm_refinement"
+                ],
+            }
             return task
 
     def get_task_result(self, project_id, task_id):

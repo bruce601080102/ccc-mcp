@@ -1,12 +1,12 @@
 # PM、SA、SD/RD 協作操作
 
-此流程的工作記憶是 SQLite 與 `.agentbridge`，各 Agent 不讀取彼此聊天紀錄。所有 CLI 全域參數放在子命令之前，例如 `agentbridge --project my-project context show`。
+此流程的工作記憶是 SQLite 與 `.ccc-mcp`，各 Agent 不讀取彼此聊天紀錄。所有 CLI 全域參數放在子命令之前，例如 `ccc-mcp --project my-project context show`。
 
 ## 1. PM 建立需求
 
 ```powershell
-agentbridge init --id my-project --purpose "維護服務並保留 API 相容性"
-agentbridge task create "新增健康檢查端點" --acceptance "GET /health 回傳 200" --acceptance "既有 API 不變"
+ccc-mcp init --id my-project --purpose "維護服務並保留 API 相容性"
+ccc-mcp task create "新增健康檢查端點" --acceptance "GET /health 回傳 200" --acceptance "既有 API 不變"
 ```
 
 需求與驗收原件持久保存，Context Patch 沒有更新原件的權限。若需求改變，另建任務並追加決策，保持歷史可追溯。
@@ -34,8 +34,8 @@ SA Context Package 包含需求、驗收、架構與來源驗證、限制、相�
 ## 3. PM 整理成果與提案
 
 ```powershell
-agentbridge context collect
-agentbridge context source .agentbridge/tasks/TASK-0001/executions/EXEC-實際ID/SA-REPORT.md
+ccc-mcp context collect
+ccc-mcp context source .ccc-mcp/tasks/TASK-0001/executions/EXEC-實際ID/SA-REPORT.md
 ```
 
 使用來源工具回傳的 path/sha256，不要自行猜測雜湊。Patch 例如：
@@ -66,9 +66,9 @@ agentbridge context source .agentbridge/tasks/TASK-0001/executions/EXEC-實際ID
 先將預期修改範圍、限制、驗收與測試計畫寫入本機 PLAN-A.md：
 
 ```powershell
-agentbridge task plan TASK-0001 PLAN-A PLAN-A.md --version 2
-agentbridge task request-approval TASK-0001 PLAN-A
-agentbridge approve TASK-0001 --plan PLAN-A
+ccc-mcp task plan TASK-0001 PLAN-A PLAN-A.md --version 2
+ccc-mcp task request-approval TASK-0001 PLAN-A
+ccc-mcp approve TASK-0001 --plan PLAN-A
 ```
 
 核准需操作者本人在終端輸入 Task ID。PM/MCP 呼叫只能建立 PENDING 請求，沒有 `approved=true` 的核准 API。方案 hash、方案版本、Context 版本與本機 OS principal 均留存。
@@ -76,14 +76,14 @@ agentbridge approve TASK-0001 --plan PLAN-A
 若不同意：
 
 ```powershell
-agentbridge reject TASK-0001 --plan PLAN-A --reason "驗收範圍尚未釐清"
+ccc-mcp reject TASK-0001 --plan PLAN-A --reason "驗收範圍尚未釐清"
 ```
 
 重要業務決策可以在本機追加：
 
 ```powershell
-agentbridge task decision TASK-0001 "保留既有回應格式" "避免破壞舊版呼叫端"
-agentbridge task decision TASK-0001 "新決策內容" "取代原因" --status Superseded --supersedes DEC-實際ID
+ccc-mcp task decision TASK-0001 "保留既有回應格式" "避免破壞舊版呼叫端"
+ccc-mcp task decision TASK-0001 "新決策內容" "取代原因" --status Superseded --supersedes DEC-實際ID
 ```
 
 決策追加不會把舊列改掉。SQLite trigger 禁止更新/刪除既有決策與 Context 歷史。當前版本的方案變動或 Context 更新均會使舊核准不再適用，必須再次審閱。
@@ -91,16 +91,16 @@ agentbridge task decision TASK-0001 "新決策內容" "取代原因" --status Su
 ## 5. SD/RD 在獨立 Worktree 工作
 
 ```powershell
-agentbridge task dispatch TASK-0001 claude SD/RD "依 PLAN-A 實作並保留原始註解" --version 2 --adapter fake
-agentbridge task status TASK-0001
-agentbridge task result TASK-0001
+ccc-mcp task dispatch TASK-0001 claude SD/RD "依 PLAN-A 實作並保留原始註解" --version 2 --adapter fake
+ccc-mcp task status TASK-0001
+ccc-mcp task result TASK-0001
 ```
 
 每個 task 使用固定的獨立 Worktree；修訂任務沿用該 Worktree，不會丟失先前修改。Diff 是 Git 實際輸出，新增檔案另列 untracked_files 與可讀內容。模型的 TestClaim 僅是宣稱；由本機操作者授權的 `task test` 才是 host 測試證據。
 
 ```powershell
-agentbridge task test TASK-0001
-agentbridge task review TASK-0001 --version 2 --adapter fake
+ccc-mcp task test TASK-0001
+ccc-mcp task review TASK-0001 --version 2 --adapter fake
 ```
 
 Review 有問題可回到 NEEDS_REVISION，PM 再指派 SD/RD；也可請 SA 再分析。若變更超出原方案，先提出新版本並重新核准。Python 原始註解被改動會 BLOCKED；其他語言或無法判定的修改也要求人工確認，不會自動完成任務。
@@ -108,16 +108,16 @@ Review 有問題可回到 NEEDS_REVISION，PM 再指派 SD/RD；也可請 SA 再
 最後由 PM 與使用者檢查結果：
 
 ```powershell
-agentbridge task accept TASK-0001
-agentbridge context export --out session-handoff.txt
+ccc-mcp task accept TASK-0001
+ccc-mcp context export --out session-handoff.txt
 ```
 
 本工具不合併 Worktree、不推送、不部署。合併前請人工審閱 Diff、註解與實際測試證據。
 
 ## 6. 全新 Session
 
-啟用 AgentBridge 連線並提出：
+啟用 ccc-mcp 連線並提出：
 
-> 請使用 AgentBridge 恢復目前專案的上下文，說明目前進度、最近決策、未完成工作與建議下一步。project_id 是 my-project。
+> 請使用 ccc-mcp 恢復目前專案的上下文，說明目前進度、最近決策、未完成工作與建議下一步。project_id 是 my-project。
 
 只需 `bootstrap_project` 即能取得完整恢復入口。沒有 MCP 時貼入 `context export`。兩種方式都不要求歷史聊天、ChatGPT 個人 Memory 或先前模型 Session ID。

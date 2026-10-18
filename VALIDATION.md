@@ -2,6 +2,14 @@
 
 日期：2026-10-18（Asia/Taipei）。此檔僅列實際執行的驗證與限制。
 
+## ccc-mcp 改名、共享上下文精修與精簡回覆（2026-10-18）
+
+- 套件、指令、Python 模組、MCP 名稱、環境變數、腳本、文件與範例改用 ccc-mcp／ccc_mcp／CCC_MCP；在已搬動的資料夾重新安裝 editable 套件並驗證新指令能啟動。
+- 舊資料目錄與環境變數保留相容讀取，不改寫歷史報告、資料庫引用或授權根目錄。新專案使用 .ccc-mcp。Tunnel 使用新前綴設定檔，啟動時以目前資料夾組出新的 Python／模組路徑。
+- bootstrap／collect_context_updates 回傳 context_locations 與 context_sync。Agent 完整回報先保留為原始證據，PM 使用 source_execution_ids 及原始 SHA256 引用提交 ContextPatch 後，才清除對應待精修狀態；新回報會再次進入待精修。原始來源引用會保留於新版 snapshot 並傳給下一個 Agent。
+- 增加任務 brief 與聊天回覆指示：預設六點內摘要，完整報告留檔。這是模型指示，不能強制聊天前端樣式，也不代表背景自動呼叫 ChatGPT 精修。
+- 完整測試：171 passed、1 skipped in 103.14s；Ruff、43 個檔案格式檢查、pip check 與兩個 Git Bash 腳本語法檢查通過。新增測試使用臨時專案與 fake adapter，沒有啟動真實模型。symlink 測試因 Windows 權限限制跳過。
+
 ## ChatGPT 工具探索相容性修正（2026-10-18）
 
 - 使用者 Tunnel 原始紀錄顯示 server/discover 被 MCP 1.30.0 判為無效 ClientRequest；先前僅驗證 initialize／tools/list，未覆蓋 ChatGPT 重新整理使用的新探索流程。
@@ -48,14 +56,14 @@
 - 額度錯誤以測試替身驗證：保留失敗紀錄並建立 ChatGPT 接手；登入錯誤不觸發接手，Context 過期不略過驗證。
 - 透過真正 MCP stdio 連線驗證 ChatGPT 讀檔與提交報告；本機 Python 子程序驗證 PID、程式路徑、時間、退出碼與原生用量解析的保存機制，不呼叫真實模型。
 - 已安裝 CLI 的 help 確認 Codex --model/--config/--sandbox、Claude --model/--effort；本次未額外消耗模型額度。不同模型／帳戶的實際支援仍由 CLI 執行時驗證。
-- 實讀既有 agentbridge Context v3：SA／SD／RD 取得相同的正式 shared_context；測試覆蓋 Agent context_updates → PM 精修提交 → 下一輪取得新版本。
-- 現有 agentbridge 與 hello-world 根目錄保留；新專案位置、Worktree 位置及額外讀取目錄可由本機設定。README 已縮為 49 行。
+- 實讀既有 ccc-mcp Context v3：SA／SD／RD 取得相同的正式 shared_context；測試覆蓋 Agent context_updates → PM 精修提交 → 下一輪取得新版本。
+- 現有 ccc-mcp 與 hello-world 根目錄保留；新專案位置、Worktree 位置及額外讀取目錄可由本機設定。README 已縮為 49 行。
 - 舊執行沒有回填當時未保存的 Token／PID；ChatGPT 網頁模型與 Token 用量未宣稱可由 MCP 獨立觀測。
 
 ## 後續整合驗證補充（同日）
 
 - 完整自動化測試：61 passed in 29.67s；本次變動檔案的 Ruff 檢查與格式檢查通過。
-- 真實 Codex SA：agentbridge / TASK-0002 / EXEC-0ed64a53a8a54a79 已完成靜態分析，原始報告 needs_revision=false、simulated=false；未執行專案測試。
+- 真實 Codex SA：ccc-mcp / TASK-0002 / EXEC-0ed64a53a8a54a79 已完成靜態分析，原始報告 needs_revision=false、simulated=false；未執行專案測試。
 - 真實 Claude Code 2.1.302：hello-world / TASK-0001 / EXEC-a4a7f1127a2b4515 已建立 hello.py 與 tests/test_hello.py；Claude 當次未執行測試。
 - Hello World 後續本機測試：TEST-64cfa0b36bb74e69 的原始 TEST-RESULT.md 記錄 executed_by_host=true、passed=true，實際輸出為 1 passed in 0.06s；此項已讀取原始證據核對。
 - Claude 訂閱登入相容性：由不讀取 OAuth 憑證的 --bare 改為 --safe-mode，保留受限工具、空設定來源及空 MCP 清單；錯誤摘要可擷取 stdout 並遮罩。
@@ -111,14 +119,14 @@
 
 ## 操作與交付驗證
 
-- 已 editable 安裝 `agentbridge-mcp`。
+- 已 editable 安裝 `ccc-mcp-mcp`。
 - 已執行 `examples/demo.py prepare`，產生 `.demo/project`、版本 2、Fake SA 原件、PM Patch 與 PLAN-A 待核准請求。
 - 已以 `context validate` 確認示範 Context 完整。
 - 已執行 `examples/mcp_probe.py --home .demo/hub --project demo`，透過實際 stdio Client 讀取工具與恢復資料。
 - 已執行 doctor，確認 Codex 可用、Claude 缺少時其他功能仍正常。
-- 可安裝 wheel 位於 `dist/agentbridge_mcp-0.1.0-py3-none-any.whl`。
+- 可安裝 wheel 位於 `dist/ccc_mcp-0.1.0-py3-none-any.whl`。
 - 已將 wheel 安裝至隔離目錄，確認從 wheel 匯入程式並成功註冊 MCP 工具。
-- 完整來源碼、測試、範例與文件亦打包於 `dist/agentbridge-mcp-0.1.0-source.zip`。
+- 完整來源碼、測試、範例與文件亦打包於 `dist/ccc-mcp-mcp-0.1.0-source.zip`。
 - [共用 Context 範例](examples/shared-context/CONTEXT.md) 與 [Session 交接範例](examples/shared-context/SESSION-HANDOFF.md) 來自實際示範資料。
 - 原始使用者規格保存在 [docs/SPEC-V2.md](docs/SPEC-V2.md)。
 

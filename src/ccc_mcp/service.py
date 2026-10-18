@@ -9,9 +9,7 @@ from .tasks import TaskHub
 from .workspace import WorkspaceHub
 
 
-class AgentBridge(
-    ConfigurationHub, WorkspaceHub, DirectEditHub, ProjectAccessHub, ContextHub, TaskHub
-):
+class CCCMCP(ConfigurationHub, WorkspaceHub, DirectEditHub, ProjectAccessHub, ContextHub, TaskHub):
     """The same application service is used by CLI, MCP and independent workers."""
 
     def __init__(self, home=None):

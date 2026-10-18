@@ -39,6 +39,7 @@ class ContextPatch(StrictModel):
     base_context_version: int = Field(ge=1)
     changes: dict = Field(min_length=1)
     source_task_ids: list[str] = Field(default_factory=list)
+    source_execution_ids: list[str] = Field(default_factory=list)
     source_document_refs: list[SourceRef] = Field(default_factory=list)
     update_reason: str = Field(min_length=1)
     author_role: Literal["PM"] = "PM"

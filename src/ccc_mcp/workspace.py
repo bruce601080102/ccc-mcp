@@ -20,6 +20,7 @@ from .storage import decode
 
 DENIED = {
     ".git",
+    ".ccc-mcp",
     ".agentbridge",
     ".ssh",
     ".codex",

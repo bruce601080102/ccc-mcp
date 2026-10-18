@@ -25,7 +25,7 @@ class CodexAdapter(BaseAgentAdapter):
                 "--skip-git-repo-check",
             ],
         )
-        with tempfile.TemporaryDirectory(prefix="agentbridge-codex-") as folder:
+        with tempfile.TemporaryDirectory(prefix="ccc-mcp-codex-") as folder:
             output = Path(folder) / "report.json"
             schema = schema_file(folder)
             argv = [

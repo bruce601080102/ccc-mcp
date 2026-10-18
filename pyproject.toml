@@ -3,7 +3,7 @@ requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
-name = "agentbridge-mcp"
+name = "ccc-mcp"
 version = "0.1.0"
 description = "Persistent context and governed agent orchestration over MCP"
 readme = "README.md"
@@ -17,7 +17,7 @@ dependencies = [
 dev = ["pytest>=8,<10", "pytest-asyncio>=1,<2", "httpx>=0.28,<1", "ruff>=0.13,<1"]
 
 [project.scripts]
-agentbridge = "agentbridge_mcp.cli:main"
+ccc-mcp = "ccc_mcp.cli:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -31,4 +31,4 @@ target-version = "py311"
 select = ["E4", "E7", "E9", "F", "I", "UP", "PLW1510"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/agentbridge_mcp"]
+packages = ["src/ccc_mcp"]

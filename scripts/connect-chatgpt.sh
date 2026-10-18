@@ -19,7 +19,7 @@ fi
 
 # ChatGPT refresh sends server/discover, which requires the MCP 2.x SDK.
 if ! "$python" -c 'from importlib.metadata import version; raise SystemExit(int(version("mcp").split(".")[0]) < 2)'; then
-  printf 'MCP SDK is too old for ChatGPT tool refresh. Run from the AgentBridge folder:\n' >&2
+  printf 'MCP SDK is too old for ChatGPT tool refresh. Run from the ccc-mcp folder:\n' >&2
   printf './.venv/Scripts/python.exe -m pip install -e ".[dev]"\n' >&2
   exit 1
 fi
@@ -52,12 +52,12 @@ if ! MSYS_NO_PATHCONV=1 env -u OPENAI_ADMIN_KEY -u OPENAI_API_KEY \
 fi
 
 python_windows="$("$python" -c 'import sys; from pathlib import Path; print(Path(sys.executable).as_posix())' | tr -d '\r')"
-home_windows="$("$python" -c 'from agentbridge_mcp.config import bridge_home; print(bridge_home().as_posix())' | tr -d '\r')"
+home_windows="$("$python" -c 'from ccc_mcp.config import bridge_home; print(bridge_home().as_posix())' | tr -d '\r')"
 profile_dir="$("$python" -c 'from pathlib import Path; import sys; print((Path(sys.argv[1]) / ".tunnel").as_posix())' "$root" | tr -d '\r')"
-mcp_command="\"$python_windows\" -m agentbridge_mcp --home \"$home_windows\" serve"
+mcp_command="\"$python_windows\" -m ccc_mcp --home \"$home_windows\" serve"
 
 # A profile per tunnel makes reruns safe and avoids replacing an existing profile.
-profile="agentbridge-${tunnel_id#tunnel_}"
+profile="ccc-mcp-${tunnel_id#tunnel_}"
 if [[ ! -f "$root/.tunnel/$profile.yaml" && ! -f "$root/.tunnel/$profile.yml" ]]; then
   MSYS_NO_PATHCONV=1 "$client" init --sample sample_mcp_stdio_local \
     --profile "$profile" --profile-dir "$profile_dir" \
@@ -67,5 +67,5 @@ if [[ ! -f "$root/.tunnel/$profile.yaml" && ! -f "$root/.tunnel/$profile.yml" ]]
 fi
 
 MSYS_NO_PATHCONV=1 "$client" doctor --profile "$profile" --profile-dir "$profile_dir" --explain
-printf '\nKeep this terminal open while ChatGPT uses AgentBridge. Press Ctrl+C to stop.\n'
+printf '\nKeep this terminal open while ChatGPT uses ccc-mcp. Press Ctrl+C to stop.\n'
 MSYS_NO_PATHCONV=1 "$client" run --profile "$profile" --profile-dir "$profile_dir"

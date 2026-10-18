@@ -5,10 +5,10 @@ from pathlib import Path
 import pytest
 from conftest import approve, dispatch
 
-from agentbridge_mcp.context import DOCUMENTS, TASK_DOCUMENTS
-from agentbridge_mcp.errors import BridgeError, VersionConflict
-from agentbridge_mcp.service import AgentBridge
-from agentbridge_mcp.worker import run_execution
+from ccc_mcp.context import DOCUMENTS, TASK_DOCUMENTS
+from ccc_mcp.errors import BridgeError, VersionConflict
+from ccc_mcp.service import CCCMCP
+from ccc_mcp.worker import run_execution
 
 
 def patch(bridge, **changes):
@@ -23,10 +23,10 @@ def patch(bridge, **changes):
 def test_initialization_empty_repository(tmp_path):
     repo = tmp_path / "empty"
     repo.mkdir()
-    bridge = AgentBridge(tmp_path / "home")
+    bridge = CCCMCP(tmp_path / "home")
     bridge.register_project(repo, "demo", "新的專案目標")
     for name in ["CONTEXT.md", "config.yaml", "history/context-events.jsonl", *DOCUMENTS.values()]:
-        assert (repo / ".agentbridge" / name).is_file()
+        assert (repo / ".ccc-mcp" / name).is_file()
     assert bridge.latest("demo")["version"] == 1
     assert bridge.validate_context("demo")["valid"]
     assert bridge.register_project(repo, "demo")["id"] == "demo"
@@ -35,14 +35,12 @@ def test_initialization_empty_repository(tmp_path):
 def test_sa_report_and_optimization_preserves_evidence_and_decisions(bridge, human):
     bridge.create_task("demo", "新增 API", ["保留舊 API"])
     for doc in TASK_DOCUMENTS:
-        assert (
-            Path(bridge.project("demo")["root"]) / ".agentbridge/tasks/TASK-0001" / doc
-        ).exists()
+        assert (Path(bridge.project("demo")["root"]) / ".ccc-mcp/tasks/TASK-0001" / doc).exists()
     queued = dispatch(bridge)
     run_execution(bridge, queued["execution_id"])
     result = bridge.get_task_result("demo", "TASK-0001")[-1]
     assert result["result"]["report"]["simulated"]
-    source_path = f".agentbridge/tasks/TASK-0001/executions/{queued['execution_id']}/SA-REPORT.md"
+    source_path = f".ccc-mcp/tasks/TASK-0001/executions/{queued['execution_id']}/SA-REPORT.md"
     ref = bridge.source_ref("demo", source_path)
     approve(bridge)
     old_decisions = bridge.get_approval_status("demo", "TASK-0001")
@@ -99,7 +97,7 @@ def test_recovery_with_no_chat_history(bridge, human):
     queued = dispatch(bridge)
     run_execution(bridge, queued["execution_id"])
     approve(bridge)
-    restarted = AgentBridge(bridge.home)
+    restarted = CCCMCP(bridge.home)
     boot = restarted.bootstrap_project("demo")
     required = {
         "project_summary",
@@ -145,7 +143,7 @@ def test_architecture_source_drift(bridge):
     drift = bridge.validate_context("demo")
     assert not drift["valid"]
     assert any(i["path"] == "app.py" for i in drift["issues"])
-    architecture = root / ".agentbridge/context/ARCHITECTURE.md"
+    architecture = root / ".ccc-mcp/context/ARCHITECTURE.md"
     architecture.write_text("fabricated architecture")
     assert any(
         "ARCHITECTURE" in i["path"]
@@ -157,7 +155,7 @@ def test_architecture_source_drift(bridge):
 
 
 def test_atomic_projection_crash_recovers_from_committed_db(bridge, monkeypatch):
-    import agentbridge_mcp.context as context_module
+    import ccc_mcp.context as context_module
 
     original = context_module.atomic_write
     proposal = bridge.propose_context_patch("demo", patch(bridge, summary="after crash"))
@@ -173,7 +171,7 @@ def test_atomic_projection_crash_recovers_from_committed_db(bridge, monkeypatch)
     assert not bridge.validate_context("demo")["valid"]
     bridge.recover_context("demo")
     assert bridge.validate_context("demo")["valid"]
-    history = Path(bridge.project("demo")["root"]) / ".agentbridge/history/context-events.jsonl"
+    history = Path(bridge.project("demo")["root"]) / ".ccc-mcp/history/context-events.jsonl"
     assert [
         json.loads(line)["new_context_version"] for line in history.read_text().splitlines()
     ] == [1, 2]

@@ -52,7 +52,7 @@ def tracked_snapshot(root):
     )
     result = {}
     for path in filter(None, paths):
-        if path.startswith(".agentbridge/"):
+        if path.startswith((".ccc-mcp/", ".agentbridge/")):
             continue
         safe_path(Path(root), path)
         result[path] = git(root, "show", f"HEAD:{path}").stdout
@@ -67,7 +67,7 @@ def working_snapshot(root):
     )
     result = {}
     for path in filter(None, paths):
-        if path.startswith(".agentbridge/"):
+        if path.startswith((".ccc-mcp/", ".agentbridge/")):
             continue
         target = safe_path(Path(root), path)
         if target.is_file():

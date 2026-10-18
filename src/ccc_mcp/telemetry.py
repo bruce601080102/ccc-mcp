@@ -5,7 +5,7 @@ from contextvars import ContextVar
 
 from .storage import now
 
-ACTIVE_AUDIT = ContextVar("agentbridge_audit", default=None)
+ACTIVE_AUDIT = ContextVar("ccc_mcp_audit", default=None)
 
 
 @contextmanager

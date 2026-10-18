@@ -8,7 +8,7 @@ from .agents import ClaudeCodeAdapter, CodexAdapter, FakeAgentAdapter
 from .errors import AgentCancelled, AgentTimeout, BridgeError
 from .git import git, tracked_snapshot, working_snapshot, worktree
 from .security import comment_check, redact, reject_secrets, same_text_content
-from .service import AgentBridge
+from .service import CCCMCP
 from .telemetry import audit_scope, is_quota_error
 
 
@@ -103,7 +103,7 @@ def run_execution(bridge, execution_id):
                     "executed_by_host": False,
                     "reason": "Fake simulation"
                     if row["adapter"] == "fake"
-                    else "Tests require separately authorized `agentbridge task test`",
+                    else "Tests require separately authorized `ccc-mcp task test`",
                 },
             }
             state = None
@@ -195,7 +195,7 @@ def main():
     args = parser.parse_args()
     from .context import identifier
 
-    run_execution(AgentBridge(args.home), identifier(args.execution))
+    run_execution(CCCMCP(args.home), identifier(args.execution))
 
 
 if __name__ == "__main__":

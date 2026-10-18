@@ -5,10 +5,10 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from agentbridge_mcp.cli import app
-from agentbridge_mcp.errors import BridgeError, PermissionDenied, VersionConflict
-from agentbridge_mcp.server import create_server
-from agentbridge_mcp.service import AgentBridge
+from ccc_mcp.cli import app
+from ccc_mcp.errors import BridgeError, PermissionDenied, VersionConflict
+from ccc_mcp.server import create_server
+from ccc_mcp.service import CCCMCP
 
 
 def root(bridge):
@@ -30,7 +30,7 @@ def test_default_readonly_and_no_remote_grant(bridge):
 def test_project_authorization_is_local_once_and_persists_for_many_writes(bridge, monkeypatch):
     confirmations = []
     monkeypatch.setattr(
-        "agentbridge_mcp.approval.confirm_local",
+        "ccc_mcp.approval.confirm_local",
         lambda *args: confirmations.append(args) or "test-principal",
     )
     access = bridge.authorize_project_local("demo")
@@ -47,14 +47,12 @@ def test_project_authorization_is_local_once_and_persists_for_many_writes(bridge
         assert "approval_command" not in receipt
         archived = bridge.get_workspace_edit("demo", receipt["id"], True)
         assert archived["content"] == "# preserved text\n"
-    assert AgentBridge(bridge.home).get_project_access("demo") == access
+    assert CCCMCP(bridge.home).get_project_access("demo") == access
     assert bridge.list_tasks("demo") == []
     assert bridge.latest("demo")["version"] == 1
     assert not (bridge.home / "worktrees").exists()
     assert len(confirmations) == 1
-    projection = json.loads(
-        (root(bridge) / ".agentbridge/settings.json").read_text(encoding="utf-8")
-    )
+    projection = json.loads((root(bridge) / ".ccc-mcp/settings.json").read_text(encoding="utf-8"))
     assert projection["project_access"]["mode"] == "read-write"
 
 
@@ -92,7 +90,7 @@ def test_revocation_removes_old_granular_grants_and_blocks_writes(bridge, human,
     bridge.configure_write_file("demo", "another.py")
     bridge.authorize_project_local("demo")
     receipt = write(bridge, "new.py", "value=1\n")
-    monkeypatch.setattr("agentbridge_mcp.approval.local_identity", lambda: "test-principal")
+    monkeypatch.setattr("ccc_mcp.approval.local_identity", lambda: "test-principal")
     assert bridge.revoke_project_local("demo")["mode"] == "read-only"
     assert bridge.get_project_settings("demo")["writable_roots"] == []
     assert bridge.get_project_settings("demo")["writable_files"] == []
@@ -108,7 +106,7 @@ def test_revocation_removes_old_granular_grants_and_blocks_writes(bridge, human,
 
 
 @pytest.mark.parametrize(
-    "path", ["../outside.md", "C:/outside.md", ".env", ".git/config", ".agentbridge/settings.json"]
+    "path", ["../outside.md", "C:/outside.md", ".env", ".git/config", ".ccc-mcp/settings.json"]
 )
 def test_whole_project_authorization_still_bounds_paths(bridge, human, path):
     bridge.authorize_project_local("demo")
@@ -146,7 +144,7 @@ def test_retry_uses_same_receipt_without_duplicate_append(bridge, human):
 
 
 def test_interrupted_authorized_write_can_be_retried(bridge, human, monkeypatch):
-    from agentbridge_mcp.security import atomic_write
+    from ccc_mcp.security import atomic_write
 
     bridge.authorize_project_local("demo")
 
@@ -154,10 +152,10 @@ def test_interrupted_authorized_write_can_be_retried(bridge, human, monkeypatch)
         atomic_write(path, content)
         raise OSError("interrupted after replacement")
 
-    monkeypatch.setattr("agentbridge_mcp.directedit.atomic_write", interrupted)
+    monkeypatch.setattr("ccc_mcp.directedit.atomic_write", interrupted)
     with pytest.raises(OSError):
         write(bridge, "readme.md", "test\n")
-    monkeypatch.setattr("agentbridge_mcp.directedit.atomic_write", atomic_write)
+    monkeypatch.setattr("ccc_mcp.directedit.atomic_write", atomic_write)
     assert write(bridge, "readme.md", "test\n")["status"] == "APPLIED"
     assert (root(bridge) / "readme.md").read_text() == "test\n"
 
@@ -165,7 +163,7 @@ def test_interrupted_authorized_write_can_be_retried(bridge, human, monkeypatch)
 def test_revoke_during_proposal_prevents_write(bridge, human, monkeypatch):
     bridge.authorize_project_local("demo")
     original = bridge.propose_workspace_edit
-    monkeypatch.setattr("agentbridge_mcp.approval.local_identity", lambda: "test-principal")
+    monkeypatch.setattr("ccc_mcp.approval.local_identity", lambda: "test-principal")
 
     def propose(*args, **kwargs):
         result = original(*args, **kwargs)
@@ -179,7 +177,7 @@ def test_revoke_during_proposal_prevents_write(bridge, human, monkeypatch):
 
 
 def test_permission_history_is_not_editable_and_json_is_not_authority(bridge, human):
-    path = root(bridge) / ".agentbridge/settings.json"
+    path = root(bridge) / ".ccc-mcp/settings.json"
     path.write_text('{"project_access":{"mode":"read-write"}}', encoding="utf-8")
     assert bridge.get_project_access("demo")["mode"] == "read-only"
     bridge.authorize_project_local("demo")
@@ -198,7 +196,7 @@ def test_simple_cli_and_hidden_legacy_setup(bridge, human, monkeypatch):
     help_text = runner.invoke(app, args + ["config", "--help"]).output
     for hidden in ("write-root", "write-file", "workspace-mode"):
         assert hidden not in help_text
-    monkeypatch.setattr("agentbridge_mcp.approval.local_identity", lambda: "test-principal")
+    monkeypatch.setattr("ccc_mcp.approval.local_identity", lambda: "test-principal")
     revoked = runner.invoke(app, args + ["project", "revoke", "demo"])
     assert revoked.exit_code == 0, revoked.output
     assert json.loads(revoked.output)["mode"] == "read-only"
@@ -214,7 +212,7 @@ async def test_stdio_simple_authorized_edit_without_task_or_plan(bridge, human):
     bridge.authorize_project_local("demo")
     params = StdioServerParameters(
         command=sys.executable,
-        args=["-m", "agentbridge_mcp", "--home", str(bridge.home), "serve"],
+        args=["-m", "ccc_mcp", "--home", str(bridge.home), "serve"],
         env={**os.environ, "PYTHONIOENCODING": "utf-8"},
     )
     async with stdio_client(params) as (reader, writer):

@@ -2,7 +2,7 @@ import subprocess
 
 import pytest
 
-from agentbridge_mcp.service import AgentBridge
+from ccc_mcp.service import CCCMCP
 
 
 @pytest.fixture
@@ -26,7 +26,7 @@ def bridge(tmp_path, monkeypatch):
         ],
     ]:
         subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True)
-    service = AgentBridge(tmp_path / "home")
+    service = CCCMCP(tmp_path / "home")
     service.register_project(repo, "demo", "建立可跨 Session 恢復的測試專案")
     monkeypatch.setattr(service, "spawn_worker", lambda execution_id: None)
     return service
@@ -35,7 +35,7 @@ def bridge(tmp_path, monkeypatch):
 @pytest.fixture
 def human(monkeypatch):
     # Tests substitute the operator ceremony, never a production approved=true API.
-    monkeypatch.setattr("agentbridge_mcp.approval.confirm_local", lambda *args: "test-principal")
+    monkeypatch.setattr("ccc_mcp.approval.confirm_local", lambda *args: "test-principal")
 
 
 def approve(bridge, task="TASK-0001", plan="PLAN-A"):

@@ -8,9 +8,9 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from typer.testing import CliRunner
 
-from agentbridge_mcp.cli import app
-from agentbridge_mcp.errors import BridgeError
-from agentbridge_mcp.server import JWTVerifier, create_server
+from ccc_mcp.cli import app
+from ccc_mcp.errors import BridgeError
+from ccc_mcp.server import JWTVerifier, create_server
 
 
 def test_cli_workflow(tmp_path):
@@ -51,7 +51,7 @@ def test_cli_workflow(tmp_path):
 def test_task_show_infers_project_but_refuses_ambiguous_task(bridge, monkeypatch):
     from conftest import dispatch
 
-    from agentbridge_mcp.worker import run_execution
+    from ccc_mcp.worker import run_execution
 
     bridge.create_task("demo", "Analyze repository")
     execution = dispatch(bridge)
@@ -108,13 +108,13 @@ async def test_mcp_tool_schemas_and_no_fake_human_approval(bridge):
 async def test_stdio_protocol_initialize_list_and_call(bridge):
     parameters = StdioServerParameters(
         command=sys.executable,
-        args=["-m", "agentbridge_mcp", "--home", str(bridge.home), "serve"],
+        args=["-m", "ccc_mcp", "--home", str(bridge.home), "serve"],
         env={**os.environ, "PYTHONIOENCODING": "utf-8"},
     )
     async with stdio_client(parameters) as (reader, writer):
         async with ClientSession(reader, writer, read_timeout_seconds=10) as session:
             initialized = await session.initialize()
-            assert initialized.server_info.name == "AgentBridge"
+            assert initialized.server_info.name == "ccc-mcp"
             assert len((await session.list_tools()).tools) >= 14
             result = await session.call_tool("bootstrap_project", {"project_id": "demo"})
             assert not result.is_error
@@ -131,7 +131,7 @@ async def test_chatgpt_discover_then_list_and_write_without_initialize(bridge, h
     process = await asyncio.create_subprocess_exec(
         sys.executable,
         "-m",
-        "agentbridge_mcp",
+        "ccc_mcp",
         "--home",
         str(bridge.home),
         "serve",
@@ -168,7 +168,7 @@ async def test_chatgpt_discover_then_list_and_write_without_initialize(bridge, h
         discovered = await exchange("server/discover")
         assert "2026-07-28" in discovered["supportedVersions"]
         assert "tools" in discovered["capabilities"]
-        assert discovered["_meta"]["io.modelcontextprotocol/serverInfo"]["name"] == "AgentBridge"
+        assert discovered["_meta"]["io.modelcontextprotocol/serverInfo"]["name"] == "ccc-mcp"
         listing = await exchange("tools/list")
         write_tool = next(t for t in listing["tools"] if t["name"] == "write_workspace")
         assert write_tool["annotations"]["readOnlyHint"] is False
@@ -214,7 +214,7 @@ async def test_stdio_chatgpt_role_roundtrip_without_native_cli(bridge):
     bridge.configure_role("demo", "SA", "chatgpt")
     parameters = StdioServerParameters(
         command=sys.executable,
-        args=["-m", "agentbridge_mcp", "--home", str(bridge.home), "serve"],
+        args=["-m", "ccc_mcp", "--home", str(bridge.home), "serve"],
         env={**os.environ, "PYTHONIOENCODING": "utf-8"},
     )
     async with stdio_client(parameters) as (reader, writer):

@@ -1,6 +1,6 @@
 # 角色、模型、路徑與共享 Context 設定
 
-一般使用請先看 [README](../README.md)。指定專案讀寫只需 `agentbridge project authorize 專案ID`：在本機確認一次後，ChatGPT 直接使用 write_workspace 讀改原專案，不需要 write-file、write-root、workspace-mode 或 Task／PLAN／EDIT／BATCH。授權會保存到本機資料庫，`project revoke 專案ID` 恢復唯讀。
+一般使用請先看 [README](../README.md)。指定專案讀寫只需 `ccc-mcp project authorize 專案ID`：在本機確認一次後，ChatGPT 直接使用 write_workspace 讀改原專案，不需要 write-file、write-root、workspace-mode 或 Task／PLAN／EDIT／BATCH。授權會保存到本機資料庫，`project revoke 專案ID` 恢復唯讀。
 
 `bootstrap_project.project_access` 和 `get_project_settings.project_access` 回傳本次專案的實際授權。mode=read-write 時，使用 `read_workspace(project_id,path)` 取得現有 SHA256，再呼叫 `write_workspace(project_id,path,content,expected_sha256)`；新增檔案預期 SHA256 為 null。返回的 EDIT 編號只是修改紀錄，不需要另外核准它。保存完整原文／新文、雜湊與專案授權來源；重試不會重複追加內容，原檔若有其他修改會拒絕覆寫。
 
@@ -8,16 +8,16 @@
 
 以下保留的是 **進階分工及舊版相容流程**。只有明確要派 Codex／Claude、獨立 Worktree 或逐次計畫審核時才需要，普通 ChatGPT 專案編輯不必設定。
 
-以下在 Git Bash 執行，先 `source scripts/enable-real-agents.sh`。設定保存在本機資料庫，專案內的 `.agentbridge/settings.json` 是可閱讀的副本；請使用 CLI 修改。
+以下在 Git Bash 執行，先 `source scripts/enable-real-agents.sh`。設定保存在本機資料庫，專案內的 `.ccc-mcp/settings.json` 是可閱讀的副本；請使用 CLI 修改。
 
 ## 指定每個角色由誰做
 
 可設定的角色：`SA`、`SD`、`RD`、`SD/RD`、`REVIEW`。每個角色可選 `codex`、`claude`、`chatgpt`；相同供應商可擔任全部角色。
 
 ```bash
-agentbridge --project my-project config show
-agentbridge --project my-project config role SA claude --model sonnet --effort high
-agentbridge --project my-project config role SD/RD codex --model YOUR_CODEX_MODEL --effort high
+ccc-mcp --project my-project config show
+ccc-mcp --project my-project config role SA claude --model sonnet --effort high
+ccc-mcp --project my-project config role SD/RD codex --model YOUR_CODEX_MODEL --effort high
 ```
 
 將 `YOUR_CODEX_MODEL` 換成你帳戶可用的模型 ID。SA／Review 不論選誰都維持唯讀；SD／RD 不論選誰都要先有本機計畫核准。`SD`、`RD`、`SD/RD` 是各自獨立的設定。
@@ -26,7 +26,7 @@ agentbridge --project my-project config role SD/RD codex --model YOUR_CODEX_MODE
 
 ```bash
 for role in SA SD RD SD/RD REVIEW; do
-  agentbridge --project my-project config role "$role" chatgpt
+  ccc-mcp --project my-project config role "$role" chatgpt
 done
 ```
 
@@ -38,15 +38,15 @@ Codex 使用 `--model` 與 `-c model_reasoning_effort=...`；Claude 使用 `--mo
 
 未設定時使用 CLI 自己的預設值，不保證與 VS Code／其他聊天視窗選擇相同。Codex 忽略使用者 config，Claude 隔離設定來源；模型支援哪些思考等級，仍由實際 CLI／帳戶檢查，不支援時會明確失敗。
 
-ChatGPT 網頁的模型與思考選項由你在目前對話介面選擇；AgentBridge 不會假裝能從 MCP 切換或獨立驗證它。
+ChatGPT 網頁的模型與思考選項由你在目前對話介面選擇；ccc-mcp 不會假裝能從 MCP 切換或獨立驗證它。
 
 官方參數：[Codex 設定](https://learn.chatgpt.com/docs/config-file/config-reference)、[Claude CLI](https://code.claude.com/docs/en/cli-reference)。
 
 ## 額度不足時轉交 ChatGPT
 
 ```bash
-agentbridge --project my-project config role SA codex --quota-fallback chatgpt
-agentbridge --project my-project config role SD/RD claude --quota-fallback chatgpt
+ccc-mcp --project my-project config role SA codex --quota-fallback chatgpt
+ccc-mcp --project my-project config role SD/RD claude --quota-fallback chatgpt
 ```
 
 只在辨識到額度／用量限制的錯誤時自動建立接手執行，保留先前失敗報告與 Worktree。一般登入、參數、測試錯誤不會當成額度不足。自動接手最多一次；Context 或核准已過期時不會略過檢查。
@@ -55,39 +55,39 @@ agentbridge --project my-project config role SD/RD claude --quota-fallback chatg
 
 這是目前對話接手，不是本機啟動另一個 ChatGPT。網頁對話若已停止，請說「請恢復 my-project，接手已排好的 ChatGPT 工作」；不要重複建立派工。ChatGPT 接手不需本機安裝 Codex 或 Claude，也不會產生 CLI 用量紀錄。
 
-取消接手工作可用 `agentbridge --project my-project task cancel TASK-0001`。
+取消接手工作可用 `ccc-mcp --project my-project task cancel TASK-0001`。
 
 ## 新專案與程式碼位置
 
 ```bash
 # 設定未來新專案的預設目錄，不搬移既有專案
-agentbridge config projects-dir "D:/AgentBridgeProjects"
-agentbridge project create new-project
+ccc-mcp config projects-dir "D:/ccc-mcpProjects"
+ccc-mcp project create new-project
 
 # 單次指定新專案位置；目錄必須尚不存在
-agentbridge project create another-project --path "D:/Projects/another-project"
+ccc-mcp project create another-project --path "D:/Projects/another-project"
 
 # 在首次實作前，指定該專案 Worktree 的存放位置
-agentbridge --project new-project config worktree-dir "D:/AgentBridgeWorktrees"
+ccc-mcp --project new-project config worktree-dir "D:/ccc-mcpWorktrees"
 ```
 
 `project create` 建立 README、gitignore 與 Git 初始 commit，不產生業務程式。ChatGPT 的 `create_managed_project` 工具只能在本機設定的預設目錄下建立新專案，不能指定任意電腦路徑。
 
 專案根目錄與任務開發位置不同。實作任務在獨立 Worktree；例如 `config worktree-dir "D:/Work"` 的實際任務目錄是 `D:/Work/專案ID/任務ID`。若只要原地修改一個檔案，另有下方的直接編輯流程，須逐檔開放並核准具體差異。
 
-已有程式可用 `agentbridge project add "D:/Projects/existing-app" --id existing-app` 註冊，由 SA 分析現有架構；ChatGPT 可透過 `root_id=project` 讀取，不必另設 read-root。實作時從已提交的 HEAD 建立 Worktree，未提交／未追蹤檔案不會自動帶入；須有初始 commit 才能實作。註冊會新增 `.agentbridge` 管理文件，不會重新產生既有業務程式。
+已有程式可用 `ccc-mcp project add "D:/Projects/existing-app" --id existing-app` 註冊，由 SA 分析現有架構；ChatGPT 可透過 `root_id=project` 讀取，不必另設 read-root。實作時從已提交的 HEAD 建立 Worktree，未提交／未追蹤檔案不會自動帶入；須有初始 commit 才能實作。註冊會新增 `.ccc-mcp` 管理文件，不會重新產生既有業務程式。
 
-未設定新專案目錄時，預設為 AgentBridge home 同層的 `AgentBridgeProjects`；Worktree 預設在 AgentBridge home 的 `worktrees/專案ID/任務ID`。設定 Worktree 位置後，實作位於所選目錄下的 `專案ID/任務ID`。已有實作 Worktree 時會拒絕改位置；不自動搬移、合併或覆寫現有成果。
+未設定新專案目錄時，預設為 ccc-mcp home 同層的 `ccc-mcpProjects`；Worktree 預設在 ccc-mcp home 的 `worktrees/專案ID/任務ID`。設定 Worktree 位置後，實作位於所選目錄下的 `專案ID/任務ID`。已有實作 Worktree 時會拒絕改位置；不自動搬移、合併或覆寫現有成果。
 
 ## 讓 ChatGPT 讀取指定資料夾
 
 ```bash
-agentbridge --project my-project config read-root reference "D:/Documents/ProjectReference"
+ccc-mcp --project my-project config read-root reference "D:/Documents/ProjectReference"
 # 日後撤銷
-agentbridge --project my-project config revoke-root reference
+ccc-mcp --project my-project config revoke-root reference
 ```
 
-告訴 ChatGPT：「使用 root_id=reference 讀取需求文件。」工具只接受該目錄下的相對路徑，可分頁列檔與讀取 UTF-8 文字；不是開放整台電腦。憑證、`.git`、受管 `.agentbridge` 及 symlink/junction 路徑不透過檔案工具開放。原始報告使用既有的任務查詢工具讀取。
+告訴 ChatGPT：「使用 root_id=reference 讀取需求文件。」工具只接受該目錄下的相對路徑，可分頁列檔與讀取 UTF-8 文字；不是開放整台電腦。憑證、`.git`、受管 `.ccc-mcp` 及 symlink/junction 路徑不透過檔案工具開放。原始報告使用既有的任務查詢工具讀取。
 
 額外資料夾只有讀取權；任務中的 ChatGPT 使用 `write_task_file` 寫入有效核准、目前 Context 的 Worktree，且 SA／Review 不能用該工具寫檔。直接編輯原檔另用 `propose_workspace_edit`／`write_workspace`，不會沿用或略過任務核准。
 
@@ -101,9 +101,9 @@ agentbridge --project my-project config revoke-root reference
 
 不必建立 Task／Worktree，但保留本機審閱和核准具體差異：
 
-1. 本機 `agentbridge --project my-project config write-file readme.md`，開放精確的專案相對檔案。也可使用 `config write-root .` 開放整個已註冊專案，或 `config write-root src` 開放專案內指定目錄及子目錄。預設 writable_files／writable_roots 都為空；外部目錄與憑證仍不開放。
+1. 本機 `ccc-mcp --project my-project config write-file readme.md`，開放精確的專案相對檔案。也可使用 `config write-root .` 開放整個已註冊專案，或 `config write-root src` 開放專案內指定目錄及子目錄。預設 writable_files／writable_roots 都為空；外部目錄與憑證仍不開放。
 2. ChatGPT 用 `read_workspace(root_id="project")` 讀取檔案，再用 `propose_workspace_edit(project_id, path, content, expected_sha256)` 保存完整新內容與差異，取得 EDIT 編號。原檔尚未寫入；新增檔案 expected_sha256=null。
-3. 本機 `agentbridge --project my-project workspace approve EDIT-...`，審閱差異並輸入該 EDIT 編號。僅互動式本機 CLI 可核准，MCP 不接受 approved=true；核准時再次核對來源雜湊及檔案授權。
+3. 本機 `ccc-mcp --project my-project workspace approve EDIT-...`，審閱差異並輸入該 EDIT 編號。僅互動式本機 CLI 可核准，MCP 不接受 approved=true；核准時再次核對來源雜湊及檔案授權。
 4. ChatGPT 用 `write_workspace(project_id, edit_id)` 套用。工具不接受另傳新內容，只套用資料庫內不可變更的核准提案；寫入前再核對 SHA256 與授權，已過期或被撤銷時拒絕。
 5. 用 `read_workspace` 讀回核對。`get_workspace_edit` 可查差異、前後雜湊、身分及時間；本機 `workspace show EDIT-... --include-content` 可讀到保存的修改前後全文。
 
@@ -130,7 +130,7 @@ ChatGPT 先逐檔讀取 SHA256、呼叫 propose_workspace_edit，再以 `create_
 ## 執行與 Token 證據
 
 ```bash
-agentbridge --project my-project task usage TASK-0001
+ccc-mcp --project my-project task usage TASK-0001
 ```
 
 新的 CLI 執行在 `result.invocation` 及歷次 `executions/EXEC-.../INVOCATION.json` 記錄：
@@ -150,7 +150,7 @@ ChatGPT 網頁執行標示 `source=chatgpt_web`、`cli_invoked=false`，Token �
 PM 已精修的 Context vN
   → SA／SD／RD 取得角色交接包（含完整 shared_context）
   → Agent 回傳原始報告與 context_updates 建議
-  → AgentBridge 保存 CONTEXT-UPDATES.md 與原始引用
+  → ccc-mcp 保存 CONTEXT-UPDATES.md 與原始引用
   → ChatGPT PM collect_context_updates，閱讀來源後精修
   → propose_context_patch → commit_context_patch，產生 vN+1
   → 下一輪 Codex／Claude／ChatGPT 都取得 vN+1
@@ -162,4 +162,4 @@ Agent 的原始更新是待 PM 審閱的資料，不直接覆寫正式 Context�
 
 ## 套用這次更新
 
-重新啟動 Tunnel，並在 ChatGPT 重新整理 AgentBridge 的工具清單，才能使用新增的讀寫與接手工具。既有任務、原始報告、核准與專案位置保留。
+重新啟動 Tunnel，並在 ChatGPT 重新整理 ccc-mcp 的工具清單，才能使用新增的讀寫與接手工具。既有任務、原始報告、核准與專案位置保留。

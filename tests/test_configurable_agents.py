@@ -6,14 +6,14 @@ import pytest
 from conftest import approve
 from typer.testing import CliRunner
 
-from agentbridge_mcp.agents import ClaudeCodeAdapter, CodexAdapter
-from agentbridge_mcp.agents.base import run_process
-from agentbridge_mcp.cli import app
-from agentbridge_mcp.errors import AgentProcessError, BridgeError, PermissionDenied, VersionConflict
-from agentbridge_mcp.models import AgentReport
-from agentbridge_mcp.service import AgentBridge
-from agentbridge_mcp.telemetry import audit_scope, usage_from_output
-from agentbridge_mcp.worker import run_execution
+from ccc_mcp.agents import ClaudeCodeAdapter, CodexAdapter
+from ccc_mcp.agents.base import run_process
+from ccc_mcp.cli import app
+from ccc_mcp.errors import AgentProcessError, BridgeError, PermissionDenied, VersionConflict
+from ccc_mcp.models import AgentReport
+from ccc_mcp.service import CCCMCP
+from ccc_mcp.telemetry import audit_scope, usage_from_output
+from ccc_mcp.worker import run_execution
 
 
 def report(**kwargs):
@@ -35,7 +35,7 @@ def dispatch(bridge, role="SA", **kwargs):
 
 
 def test_role_settings_persist_and_resolve_per_execution(bridge, monkeypatch):
-    monkeypatch.setenv("AGENTBRIDGE_ENABLE_REAL_AGENTS", "1")
+    monkeypatch.setenv("CCC_MCP_ENABLE_REAL_AGENTS", "1")
     bridge.configure_role("demo", "SA", "claude", "sonnet", "high", "chatgpt")
     bridge.create_task("demo", "Analyze")
     queued = dispatch(bridge)
@@ -45,10 +45,7 @@ def test_role_settings_persist_and_resolve_per_execution(bridge, monkeypatch):
     assert row["options"]["agent_settings"]["model"] == "sonnet"
     bridge.configure_role("demo", "SA", "chatgpt")
     assert row["package"]["agent_settings"]["model"] == "sonnet"
-    assert (
-        AgentBridge(bridge.home).get_project_settings("demo")["roles"]["SA"]["provider"]
-        == "chatgpt"
-    )
+    assert CCCMCP(bridge.home).get_project_settings("demo")["roles"]["SA"]["provider"] == "chatgpt"
 
 
 @pytest.mark.parametrize("role", ["SA", "SD", "RD", "SD/RD", "REVIEW"])
@@ -68,7 +65,7 @@ def test_invalid_config_and_chatgpt_model_not_faked(bridge):
 
 
 def test_codex_implementation_model_effort_and_permissions(monkeypatch, tmp_path):
-    monkeypatch.setattr("agentbridge_mcp.agents.codex.probe", lambda *args: "codex.exe")
+    monkeypatch.setattr("ccc_mcp.agents.codex.probe", lambda *args: "codex.exe")
 
     def invoke(argv, cwd, *args):
         assert argv[argv.index("--sandbox") + 1] == "workspace-write"
@@ -77,7 +74,7 @@ def test_codex_implementation_model_effort_and_permissions(monkeypatch, tmp_path
         Path(argv[argv.index("--output-last-message") + 1]).write_text(json.dumps(report()))
         return '{"type":"turn.completed","usage":{"input_tokens":8,"output_tokens":3}}', ""
 
-    monkeypatch.setattr("agentbridge_mcp.agents.codex.run_process", invoke)
+    monkeypatch.setattr("ccc_mcp.agents.codex.run_process", invoke)
     audit = {"provider": "codex"}
     with audit_scope(audit):
         CodexAdapter().run(
@@ -92,7 +89,7 @@ def test_codex_implementation_model_effort_and_permissions(monkeypatch, tmp_path
 
 @pytest.mark.parametrize("role", ["SA", "REVIEW"])
 def test_claude_readonly_role_with_model_and_effort(monkeypatch, tmp_path, role):
-    monkeypatch.setattr("agentbridge_mcp.agents.claude.probe", lambda *args: "claude.exe")
+    monkeypatch.setattr("ccc_mcp.agents.claude.probe", lambda *args: "claude.exe")
 
     def invoke(argv, *args):
         assert argv[argv.index("--permission-mode") + 1] == "plan"
@@ -101,7 +98,7 @@ def test_claude_readonly_role_with_model_and_effort(monkeypatch, tmp_path, role)
         assert argv[argv.index("--effort") + 1] == "high"
         return json.dumps({"structured_output": report()}), ""
 
-    monkeypatch.setattr("agentbridge_mcp.agents.claude.run_process", invoke)
+    monkeypatch.setattr("ccc_mcp.agents.claude.run_process", invoke)
     ClaudeCodeAdapter().run(
         {"role": role, "agent_settings": {"model": "sonnet", "effort": "high"}},
         "Analyze",
@@ -155,7 +152,7 @@ def test_chatgpt_implementation_requires_approval_and_uses_cas(bridge, human):
     execution_id = queued["execution_id"]
     with pytest.raises(VersionConflict):
         bridge.write_task_file("demo", execution_id, "app.py", "changed")
-    for path in ("../escape.py", ".git/config", ".agentbridge/context/PROJECT.md", ".env"):
+    for path in ("../escape.py", ".git/config", ".ccc-mcp/context/PROJECT.md", ".env"):
         with pytest.raises(BridgeError):
             bridge.write_task_file("demo", execution_id, path, "data")
     receipt = bridge.write_task_file("demo", execution_id, "hello.py", 'print("Hello")\n')
@@ -251,7 +248,7 @@ def test_project_output_and_worktree_locations_are_configurable(bridge, human, t
 
 @pytest.mark.parametrize("quota", [True, False])
 def test_quota_fallback_queues_chatgpt_without_reapproval(bridge, human, monkeypatch, quota):
-    monkeypatch.setenv("AGENTBRIDGE_ENABLE_REAL_AGENTS", "1")
+    monkeypatch.setenv("CCC_MCP_ENABLE_REAL_AGENTS", "1")
     bridge.configure_role("demo", "RD", "claude", quota_fallback="chatgpt")
     bridge.create_task("demo", "Implement")
     approve(bridge)
@@ -259,7 +256,7 @@ def test_quota_fallback_queues_chatgpt_without_reapproval(bridge, human, monkeyp
     def fail(*args):
         raise BridgeError("Usage limit reached" if quota else "Not logged in")
 
-    monkeypatch.setattr("agentbridge_mcp.agents.claude.ClaudeCodeAdapter.run", fail)
+    monkeypatch.setattr("ccc_mcp.agents.claude.ClaudeCodeAdapter.run", fail)
     queued = dispatch(bridge, "RD")
     run_execution(bridge, queued["execution_id"])
     results = bridge.get_task_result("demo", "TASK-0001")
@@ -299,7 +296,7 @@ def test_native_audit_records_real_subprocess_without_model(tmp_path):
 
 
 def test_worker_persists_host_process_audit(bridge, monkeypatch):
-    monkeypatch.setenv("AGENTBRIDGE_ENABLE_REAL_AGENTS", "1")
+    monkeypatch.setenv("CCC_MCP_ENABLE_REAL_AGENTS", "1")
     bridge.create_task("demo", "Analyze")
 
     def observed_process(self, package, instruction, cwd, timeout, cancelled):
@@ -311,7 +308,7 @@ def test_worker_persists_host_process_audit(bridge, monkeypatch):
         )
         return report(context_updates=["Observed source"])
 
-    monkeypatch.setattr("agentbridge_mcp.agents.codex.CodexAdapter.run", observed_process)
+    monkeypatch.setattr("ccc_mcp.agents.codex.CodexAdapter.run", observed_process)
     queued = dispatch(bridge)
     run_execution(bridge, queued["execution_id"])
     saved = bridge.get_task_result("demo", "TASK-0001")[-1]["result"]["invocation"]
@@ -321,13 +318,13 @@ def test_worker_persists_host_process_audit(bridge, monkeypatch):
         "SELECT sha256 FROM artifacts WHERE project_id=? AND path=?",
         (
             "demo",
-            f".agentbridge/tasks/TASK-0001/executions/{queued['execution_id']}/INVOCATION.json",
+            f".ccc-mcp/tasks/TASK-0001/executions/{queued['execution_id']}/INVOCATION.json",
         ),
     )
 
 
 def test_quota_fallback_does_not_bypass_stale_context(bridge, monkeypatch):
-    monkeypatch.setenv("AGENTBRIDGE_ENABLE_REAL_AGENTS", "1")
+    monkeypatch.setenv("CCC_MCP_ENABLE_REAL_AGENTS", "1")
     bridge.configure_role("demo", "SA", "codex", quota_fallback="chatgpt")
     bridge.create_task("demo", "Analyze")
 
@@ -344,7 +341,7 @@ def test_quota_fallback_does_not_bypass_stale_context(bridge, monkeypatch):
         bridge.commit_context_patch("demo", patch["patch_id"])
         raise AgentProcessError(1, '{"error":"insufficient_quota"}', "")
 
-    monkeypatch.setattr("agentbridge_mcp.agents.codex.CodexAdapter.run", stale)
+    monkeypatch.setattr("ccc_mcp.agents.codex.CodexAdapter.run", stale)
     queued = dispatch(bridge)
     run_execution(bridge, queued["execution_id"])
     results = bridge.get_task_result("demo", "TASK-0001")

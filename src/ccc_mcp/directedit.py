@@ -160,7 +160,7 @@ class DirectEditHub:
         if not include_content:
             row.pop("before_content")
             row.pop("content")
-        row["approval_command"] = f"agentbridge --project {project_id} workspace approve {edit_id}"
+        row["approval_command"] = f"ccc-mcp --project {project_id} workspace approve {edit_id}"
         row["target"] = str(Path(self.project(project_id)["root"]) / row["path"])
         receipt = self.store.one(
             "SELECT authorization_id FROM project_write_receipts WHERE edit_id=?", (edit_id,)
@@ -301,7 +301,7 @@ class DirectEditHub:
         row["files"] = [
             self.get_workspace_edit(project_id, eid, include_content) for eid in row["edits"]
         ]
-        row["approval_command"] = f"agentbridge --project {project_id} workspace approve {batch_id}"
+        row["approval_command"] = f"ccc-mcp --project {project_id} workspace approve {batch_id}"
         return row
 
     def approve_workspace_batch_local(self, project_id, batch_id):

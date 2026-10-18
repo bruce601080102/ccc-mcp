@@ -33,4 +33,4 @@ Fake SA 已完成交接測試；不代表實際分析完成。
 - context/CURRENT_STATE.md
 - context/CONSTRAINTS.md
 - handoffs/SESSION-HANDOFF.md
-- {"path":".agentbridge/tasks/TASK-0001/executions/EXEC-fcde76fd8b8e4aa0/SA-REPORT.md","sha256":"d4a6bf18e902ab6ee28dad26666dc7950dbc1943422ff9bbd623e0508eb09e3c"}
+- {"path":".ccc-mcp/tasks/TASK-0001/executions/EXEC-fcde76fd8b8e4aa0/SA-REPORT.md","sha256":"d4a6bf18e902ab6ee28dad26666dc7950dbc1943422ff9bbd623e0508eb09e3c"}
