@@ -20,6 +20,15 @@ candidates += [home / '.local/bin' / (name + '.exe'),
                home / 'AppData/Local/Microsoft/WinGet/Links' / (name + '.exe')]
 if name == 'claude':
     local_appdata = Path(os.environ.get('LOCALAPPDATA', home / 'AppData/Local'))
+    roaming_appdata = Path(os.environ.get('APPDATA', home / 'AppData/Roaming'))
+    npm_package = roaming_appdata / 'npm/node_modules/@anthropic-ai/claude-code'
+    candidates += [npm_package / 'bin/claude.exe']
+    if npm_package.is_dir():
+        candidates += sorted(
+            npm_package.glob('node_modules/@anthropic-ai/claude-code-win32-*/claude.exe'),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
     packages = local_appdata / 'Microsoft/WinGet/Packages'
     if packages.is_dir():
         candidates += sorted(packages.glob('Anthropic.ClaudeCode_*/claude.exe'),
@@ -49,7 +58,7 @@ ccc_mcp_enable_real_agents() {
   export PATH="$bridge_root/.venv/Scripts:$PATH"
   if codex_dir="$(PYTHONIOENCODING=utf-8 ccc_mcp_find_cli_dir "$bridge_python" codex)"; then
     codex_dir="${codex_dir//$'\r'/}"
-    export PATH="$(cygpath -u "$codex_dir"):$PATH"
+    export PATH="$(/usr/bin/cygpath.exe -u "$codex_dir"):$PATH"
     hash -r
     if codex login status >/dev/null 2>&1; then
       printf 'Codex native CLI found; login available.\n'
@@ -57,12 +66,13 @@ ccc_mcp_enable_real_agents() {
       printf 'Codex found; finish login with: codex login\n'
     fi
   else
-    printf 'Codex unavailable; configure roles to use Claude or ChatGPT if needed.\n'
+    printf 'Codex unavailable. Run: source scripts/setup-real-agents.sh codex\n'
+    printf 'Or configure roles to use Claude or ChatGPT.\n'
   fi
 
   if claude_dir="$(PYTHONIOENCODING=utf-8 ccc_mcp_find_cli_dir "$bridge_python" claude)"; then
     claude_dir="${claude_dir//$'\r'/}"
-    export PATH="$(cygpath -u "$claude_dir"):$PATH"
+    export PATH="$(/usr/bin/cygpath.exe -u "$claude_dir"):$PATH"
     hash -r
     if claude auth status --text >/dev/null 2>&1; then
       printf 'Claude Code native CLI found; login available.\n'
@@ -70,7 +80,8 @@ ccc_mcp_enable_real_agents() {
       printf 'Claude found; finish login with: claude auth login\n'
     fi
   else
-    printf 'Claude unavailable; configure roles to use Codex or ChatGPT if needed.\n'
+    printf 'Claude unavailable. Run: source scripts/setup-real-agents.sh claude\n'
+    printf 'Or configure roles to use Codex or ChatGPT.\n'
   fi
   export CCC_MCP_ENABLE_REAL_AGENTS=1
   printf 'Real dispatch enabled for programs started from this terminal. No model task was started.\n'

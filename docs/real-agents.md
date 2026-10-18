@@ -15,17 +15,58 @@ ChatGPT PM → Codex SA → SA-REPORT.md
 
 ## 1. 安裝與登入
 
-需要各自的官方原生 CLI 及帳戶登入。已有 VS Code Codex 擴充套件的 Windows 安裝，可由設定腳本找到其隨附的 codex.exe；版本更新後重新 source 腳本即可重新尋找。
-
-Claude Code 請依 [官方安裝文件](https://code.claude.com/docs/en/setup) 安裝原生版本；Windows 可使用官方列出的 WinGet 安裝方式：
+建議直接在專案根目錄使用整合設定腳本。它會建立或更新 `.venv`、安裝 ccc-mcp、安裝缺少的 CLI、引導登入，並在目前 Git Bash 啟用真實派工：
 
 ```bash
-winget install Anthropic.ClaudeCode
+# 預設只準備 Codex
+source scripts/setup-real-agents.sh
+
+# 只準備 Claude Code
+source scripts/setup-real-agents.sh claude
+
+# 同時準備兩個 CLI
+source scripts/setup-real-agents.sh all
+
+# 設定完成後直接啟動 Tunnel
+source scripts/setup-real-agents.sh codex tunnel_你的實際ID
 ```
 
-安裝後開新的 Git Bash，執行 `claude auth login` 完成官方登入。`claude --version` 與 `claude auth status --text` 可確認狀態。ccc-mcp 不替代兩個 CLI 各自的登入或模型使用權限；Tunnel runtime key 用途是連接 Tunnel。
+腳本必須用 `source`，才能讓環境變數留在啟動 Tunnel 的同一個終端。若 Node.js／npm 不存在，腳本會嘗試透過 WinGet 安裝 Node.js LTS；安裝後 PATH 尚未刷新時，只需開新的 Git Bash，再執行同一條設定命令。
+
+以下是需要手動排錯時使用的個別安裝方式。
+
+需要各自的官方原生 CLI 及帳戶登入。已有 VS Code Codex 擴充套件的 Windows 安裝，可由設定腳本找到其隨附的 codex.exe；版本更新後重新 source 腳本即可重新尋找。
+
+Codex CLI 可依 [OpenAI 官方安裝方式](https://developers.openai.com/cookbook/examples/codex/using_goals_in_codex) 使用 npm 安裝或更新：
+
+```bash
+npm install -g @openai/codex@latest
+codex --version
+codex login
+codex login status
+```
+
+若 Git Bash 找不到 `npm`，請先安裝 Node.js，再開新的 Git Bash。若設定腳本已顯示 `Codex found; finish login with: codex login`，代表 CLI 已存在，不必重裝，只要執行 `codex login`。
+
+Claude Code 請依 [Anthropic 官方安裝文件](https://code.claude.com/docs/en/getting-started) 安裝。若操作終端是 Git Bash，使用 npm 版本最直接；需要 Node.js 22 以上：
+
+```bash
+npm install -g @anthropic-ai/claude-code
+claude --version
+claude
+```
+
+安裝後開新的 Git Bash，執行 `claude` 並依瀏覽器提示完成登入；`claude auth status --text` 可進一步確認狀態。ccc-mcp 不替代兩個 CLI 各自的登入或模型使用權限；Tunnel runtime key 用途是連接 Tunnel。
+
+不想使用 npm 時，也可在 Windows PowerShell 或 Git Bash 呼叫 Windows 的 WinGet 作為備選：
+
+```bash
+winget.exe install --id Anthropic.ClaudeCode --exact --source winget
+```
 
 若 WinGet 顯示已安裝，但 Git Bash 回報 `claude: command not found`，請先於本專案根目錄執行 `source scripts/enable-real-agents.sh`，再執行 `claude --version` 與 `claude auth login`。設定腳本可直接尋找 WinGet 的 Claude 套件目錄，補入目前終端的 PATH；不必重新安裝。
+
+若同時啟用了 Conda，npm 產生的 Git Bash `claude` shell shim 可能誤用 Anaconda 的 `cygpath`，形成 `anaconda3/Library/c/Users/...` 之類的錯誤路徑。設定腳本會優先尋找 npm 套件內真正的 `claude.exe` 並加入 PATH，繞過該 shim；重新執行 `source scripts/setup-real-agents.sh claude` 即可，不必重裝套件。
 
 ## 2. 在 Git Bash 啟用真實派工並重啟 Tunnel
 

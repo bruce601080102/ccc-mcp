@@ -12,9 +12,14 @@ if [[ ! "$tunnel_id" =~ ^tunnel_[a-z0-9]{32}$ ]]; then
   printf 'Usage: bash scripts/connect-chatgpt.sh tunnel_YOUR_ID\n' >&2
   exit 2
 fi
-if [[ ! -f "$client" || ! -f "$python" ]]; then
-  printf 'Missing official tunnel-client or Python virtual environment.\n' >&2
+if [[ ! -f "$python" ]]; then
+  printf 'Python virtual environment is missing. Run first:\n' >&2
+  printf 'source scripts/setup-real-agents.sh codex\n' >&2
   exit 1
+fi
+if [[ ! -f "$client" ]]; then
+  printf 'Official tunnel-client is missing; installing the latest verified Windows release...\n'
+  bash "$root/scripts/install-tunnel-client.sh"
 fi
 
 # ChatGPT refresh sends server/discover, which requires the MCP 2.x SDK.
