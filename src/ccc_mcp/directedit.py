@@ -206,11 +206,10 @@ class DirectEditHub:
         self, project_id, edit_id=None, *, path=None, content=None, expected_sha256=None
     ):
         """Write an authorized project file; retain legacy approved-edit compatibility."""
-        if self.get_project_settings(project_id)["workflow_mode"] == "agent-required":
+        if self.get_project_access(project_id)["mode"] == "read-write":
             raise PermissionDenied(
-                "Direct project writes are disabled by agent-required workflow mode. "
-                "Create a Task and dispatch the configured Codex/Claude roles; implementation files "
-                "must be written through an approved execution with write_task_file."
+                "Authorized project writes require the Agent workstream. "
+                "Start a project request; Codex/Claude implementation writes through its execution."
             )
         if path is not None:
             if edit_id is not None or content is None:
@@ -249,7 +248,9 @@ class DirectEditHub:
                 "UPDATE workspace_edits SET status='APPLIED',applied_at=COALESCE(applied_at,?) WHERE id=?",
                 (now(), edit_id),
             )
-            return self.get_workspace_edit(project_id, edit_id)
+            applied = self.get_workspace_edit(project_id, edit_id)
+            self.record_workspace_context_change(project_id, applied)
+            return applied
         if row["status"] == "APPLIED" or actual_sha != row["before_sha256"]:
             raise VersionConflict("Project file changed; refusing to overwrite it")
         self.store.execute("UPDATE workspace_edits SET status='APPLYING' WHERE id=?", (edit_id,))
@@ -257,7 +258,9 @@ class DirectEditHub:
         self.store.execute(
             "UPDATE workspace_edits SET status='APPLIED',applied_at=? WHERE id=?", (now(), edit_id)
         )
-        return self.get_workspace_edit(project_id, edit_id)
+        applied = self.get_workspace_edit(project_id, edit_id)
+        self.record_workspace_context_change(project_id, applied)
+        return applied
 
     def _edit_batch(self, project_id, edit_id):
         return self.store.one(

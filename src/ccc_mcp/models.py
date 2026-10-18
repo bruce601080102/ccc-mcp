@@ -38,6 +38,12 @@ class AgentContextResult(StrictModel):
     review_status: Literal["unreviewed"] = "unreviewed"
 
 
+class WorkspaceChange(StrictModel):
+    edit_id: str = Field(min_length=1)
+    path: str = Field(min_length=1)
+    sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
 class ContextSnapshot(StrictModel):
     project_name: str = Field(min_length=1)
     purpose: str = Field(min_length=1)
@@ -49,6 +55,7 @@ class ContextSnapshot(StrictModel):
     architecture: list[Fact] = Field(default_factory=list)
     source_document_refs: list[SourceRef] = Field(default_factory=list)
     agent_results: list[AgentContextResult] = Field(default_factory=list)
+    workspace_changes: list[WorkspaceChange] = Field(default_factory=list)
 
 
 class ContextPatch(StrictModel):

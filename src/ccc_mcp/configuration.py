@@ -8,6 +8,7 @@ from .git import git
 from .security import atomic_write, canonical, reject_secrets, safe_path
 
 PROVIDERS = {"codex", "claude", "chatgpt"}
+LANGUAGES = {"zh-TW", "ch", "en"}
 ROLES = ("SA", "SD", "RD", "SD/RD", "REVIEW")
 EFFORTS = {
     "codex": {"minimal", "low", "medium", "high", "xhigh", "max", "ultra"},
@@ -76,14 +77,19 @@ class ConfigurationHub:
             }
             for role in ROLES
         }
-        workflow_mode = settings.get("workflow_mode", "direct")
         project_access = self.get_project_access(project_id)
-        if workflow_mode == "agent-required":
+        continuously_authorized = project_access["mode"] == "read-write"
+        workflow_mode = "agent-required" if continuously_authorized else settings.get(
+            "workflow_mode", "direct"
+        )
+        if continuously_authorized:
             project_access = {
                 **project_access,
                 "write_tool": "write_task_file",
                 "requires_task": True,
-                "requires_plan_approval": True,
+                "task_visibility": "internal-workstream",
+                "requires_plan_approval": False,
+                "requires_final_acceptance": False,
                 "requires_context_refinement": True,
                 "direct_write_allowed": False,
             }
@@ -94,11 +100,19 @@ class ConfigurationHub:
             "writable_files": settings.get("writable_files", []),
             "writable_roots": settings.get("writable_roots", []),
             "workflow_mode": workflow_mode,
-            "workspace_mode": settings.get("workspace_mode", "worktree"),
+            "language": settings.get("language", "zh-TW"),
+            "workspace_mode": "project" if continuously_authorized else settings.get(
+                "workspace_mode", "worktree"
+            ),
             "worktree_dir": settings.get("worktree_dir", str(self.home / "worktrees")),
         }
 
     def _save_settings(self, project_id, settings):
+        if self.get_project_access(project_id)["mode"] == "read-write":
+            settings = {
+                k: v for k, v in settings.items()
+                if k not in {"workflow_mode", "workspace_mode"}
+            }
         reject_secrets(settings)
         self.store.execute(
             "INSERT INTO project_settings VALUES(?,?) ON CONFLICT(project_id) DO UPDATE SET content=excluded.content",
@@ -198,12 +212,24 @@ class ConfigurationHub:
             return settings
 
     def configure_workflow_mode(self, project_id, mode):
-        if mode not in {"direct", "agent-required"}:
-            raise BridgeError("Workflow mode must be direct or agent-required")
+        raise BridgeError("Workflow mode selection was removed; project authorization enables the Agent workflow")
+
+    def public_project_settings(self, project_id):
+        settings = self.get_project_settings(project_id)
+        return {
+            key: value for key, value in settings.items()
+            if key not in {"workflow_mode", "workspace_mode", "worktree_dir", "writable_files", "writable_roots"}
+        }
+
+    def configure_language(self, project_id, language):
+        if language not in LANGUAGES:
+            raise BridgeError("Language must be zh-TW, ch or en")
         with self.lock(project_id):
             settings = self.get_project_settings(project_id)
-            settings["workflow_mode"] = mode
-            return self._save_settings(project_id, settings)
+            settings["language"] = language
+            saved = self._save_settings(project_id, settings)
+            self.sync_documents(project_id)
+            return saved
 
     def execution_workspace(self, row):
         options = row.get("options") or {}
@@ -226,7 +252,9 @@ class ConfigurationHub:
         )
         return {"projects_dir": str(root)}
 
-    def create_project(self, project_id, path=None):
+    def create_project(self, project_id, path=None, language="zh-TW"):
+        if language not in LANGUAGES:
+            raise BridgeError("Language must be zh-TW, ch or en")
         identifier(project_id)
         if self.store.one("SELECT id FROM projects WHERE id=?", (project_id,)):
             raise BridgeError("Project ID is already registered")
@@ -244,7 +272,12 @@ class ConfigurationHub:
         except FileExistsError:
             raise BridgeError("Project directory already exists") from None
         root = directory(target)
-        atomic_write(root / "README.md", f"# {project_id}\n\nProject managed by CCCMCP.\n")
+        description = {
+            "zh-TW": "由 ccc-mcp 管理的專案。",
+            "ch": "由 ccc-mcp 管理的项目。",
+            "en": "Project managed by ccc-mcp.",
+        }[language]
+        atomic_write(root / "README.md", f"# {project_id}\n\n{description}\n")
         atomic_write(root / ".gitignore", ".ccc-mcp/\n.env\n.venv/\n__pycache__/\n.pytest_cache/\n")
         git(root, "init")
         git(root, "add", "--", "README.md", ".gitignore")
@@ -260,4 +293,4 @@ class ConfigurationHub:
             "-m",
             "Initialize project baseline",
         )
-        return self.register_project(root, project_id)
+        return self.register_project(root, project_id, language=language)

@@ -1,4 +1,4 @@
-"""One local project authorization for ordinary ChatGPT file editing."""
+"""One local project authorization for the Agent-led project workstream."""
 
 import uuid
 from pathlib import Path
@@ -24,9 +24,10 @@ class ProjectAccessHub:
             "authorization_id": event["id"] if active else None,
             "identity": event["identity"] if active else None,
             "authorized_at": event["created"] if active else None,
-            "write_tool": "write_workspace",
-            "requires_task": False,
+            "write_tool": "write_task_file" if active else None,
+            "requires_task": active,
             "requires_per_file_approval": False if active else None,
+            "direct_write_allowed": False,
         }
 
     def authorize_project_local(self, project_id):
@@ -34,11 +35,16 @@ class ProjectAccessHub:
 
         access = self.get_project_access(project_id)
         if access["mode"] == "read-write":
-            return access
+            with self.lock(project_id):
+                self._save_settings(project_id, self.get_project_settings(project_id))
+            self.reconcile_authorized_workstream(project_id)
+            self.compact_consumed_context(project_id)
+            return self.get_project_settings(project_id)["project_access"]
         project = self.project(project_id)
         identity = confirm_local(
-            f"授權 ChatGPT 讀寫整個專案：{project_id}\n{project['root']}\n\n"
-            "授權後可直接新增、修改此專案內的文字檔，不需逐檔核准或建立 Task／PLAN。\n"
+            f"授權 ccc-mcp 的 Agent 工作串讀寫整個專案：{project_id}\n{project['root']}\n\n"
+            "授權後由設定的 SA／實作／審查 Agent 持續處理需求，不需逐檔核准；"
+            "工作串與 PLAN 由 ccc-mcp 內部管理，不需逐次 approve 或 accept。\n"
             "修改會核對 SHA256 並保存原始內容及紀錄；憑證、管理資料與外部路徑仍不開放。\n"
             "授權持續有效，直到執行 project revoke。",
             project_id,
@@ -52,7 +58,9 @@ class ProjectAccessHub:
                 ("AUTH-" + uuid.uuid4().hex[:16], project_id, project["root"], identity, now()),
             )
             self._save_settings(project_id, self.get_project_settings(project_id))
-        return self.get_project_access(project_id)
+        self.reconcile_authorized_workstream(project_id)
+        self.compact_consumed_context(project_id)
+        return self.get_project_settings(project_id)["project_access"]
 
     def revoke_project_local(self, project_id):
         from .approval import local_identity

@@ -77,7 +77,7 @@ source scripts/enable-real-agents.sh
 bash scripts/connect-chatgpt.sh tunnel_你的實際ID
 ```
 
-設定腳本只檢查 CLI 路徑與登入狀態，將路徑及 `CCC_MCP_ENABLE_REAL_AGENTS=1` 放入目前終端環境，不執行模型任務。必須使用 **source**，並在同一個終端重新啟動 Tunnel；既有 Server 不會自動取得後來變更的環境變數。
+設定腳本檢查 CLI 路徑與登入狀態，並為舊版／未授權派工設定目前終端環境；它本身不執行模型任務。已授權專案不再需要額外的 real-agent 環境開關，但仍需安裝並登入角色所用的 CLI。更新程式後須重啟 Tunnel，讓既有 Server 載入新版本。
 
 缺少 Claude 時仍可先連接 SA；SD/RD 要等 Claude 安裝及登入完成。實際派工前 Adapter 也會檢查 CLI 必要參數。
 

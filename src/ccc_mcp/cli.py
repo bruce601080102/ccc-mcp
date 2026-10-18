@@ -57,10 +57,11 @@ def init(
     ctx: typer.Context,
     path: Annotated[Path, typer.Argument()] = Path("."),
     id: str | None = None,
-    purpose: str = "協作開發與維護此專案",
+    purpose: str | None = None,
+    language: str = "zh-TW",
 ):
     """註冊專案並產生 .ccc-mcp 共用記憶。"""
-    output(bridge(ctx).register_project(path, id, purpose))
+    output(bridge(ctx).register_project(path, id, purpose, language))
 
 
 @project_app.command("add")
@@ -68,9 +69,10 @@ def project_add(
     ctx: typer.Context,
     path: Annotated[Path, typer.Argument()] = Path("."),
     id: str | None = None,
-    purpose: str = "協作開發與維護此專案",
+    purpose: str | None = None,
+    language: str = "zh-TW",
 ):
-    output(bridge(ctx).register_project(path, id, purpose))
+    output(bridge(ctx).register_project(path, id, purpose, language))
 
 
 @project_app.command("list")
@@ -80,7 +82,7 @@ def project_list(ctx: typer.Context):
 
 @project_app.command("authorize")
 def project_authorize(ctx: typer.Context, id: str):
-    """一次授權 ChatGPT 直接讀寫指定原專案；無須逐檔設定或建立 Task／PLAN。"""
+    """持續授權指定專案；後端自動承接 Agent 工作串與計畫。"""
     output(bridge(ctx).authorize_project_local(id))
 
 
@@ -91,14 +93,14 @@ def project_revoke(ctx: typer.Context, id: str):
 
 
 @project_app.command("create")
-def project_create(ctx: typer.Context, id: str, path: Path | None = None):
+def project_create(ctx: typer.Context, id: str, path: Path | None = None, language: str = "zh-TW"):
     """建立新專案與 Git 基準；不搬移或覆寫既有目錄。"""
-    output(bridge(ctx).create_project(id, path))
+    output(bridge(ctx).create_project(id, path, language))
 
 
 @config_app.command("show")
 def config_show(ctx: typer.Context):
-    output(bridge(ctx).get_project_settings(project_id(ctx)))
+    output(bridge(ctx).public_project_settings(project_id(ctx)))
 
 
 @config_app.command("role")
@@ -149,16 +151,10 @@ def config_revoke_write_root(ctx: typer.Context, path: Annotated[str, typer.Argu
     output(bridge(ctx).revoke_write_root(project_id(ctx), path))
 
 
-@config_app.command("workspace-mode", hidden=True)
-def config_workspace_mode(ctx: typer.Context, mode: str):
-    """worktree＝隔離開發；project＝核准後由設定的實作 Agent 修改原專案。切換會使舊核准失效。"""
-    output(bridge(ctx).configure_workspace_mode(project_id(ctx), mode))
-
-
-@config_app.command("workflow-mode")
-def config_workflow_mode(ctx: typer.Context, mode: str):
-    """direct＝允許 ChatGPT 直接寫檔；agent-required＝強制 Task/Agent/Context 證據鏈。"""
-    output(bridge(ctx).configure_workflow_mode(project_id(ctx), mode))
+@config_app.command("language")
+def config_language(ctx: typer.Context, language: str):
+    """設定共用 Context 與 Agent 報告語言：zh-TW（預設）、ch（簡體）或 en。"""
+    output(bridge(ctx).configure_language(project_id(ctx), language))
 
 
 @workspace_app.command("show")
@@ -169,7 +165,7 @@ def workspace_show(ctx: typer.Context, edit_id: str, include_content: bool = Fal
 
 @workspace_app.command("approve")
 def workspace_approve(ctx: typer.Context, edit_id: str):
-    """在本機審閱並核准 EDIT；核准後由 ChatGPT 呼叫 write_workspace 套用。"""
+    """舊版本機逐檔審閱工具；一般專案修改請使用 Agent 工作串。"""
     output(bridge(ctx).approve_workspace_edit_local(project_id(ctx), edit_id))
 
 
@@ -263,14 +259,16 @@ def task_list(ctx: typer.Context):
 
 
 @task_app.command("status")
-def task_status(ctx: typer.Context, task_id: str):
-    output(bridge(ctx).get_task_status(project_id(ctx), task_id))
+def task_status(ctx: typer.Context, task_id: Annotated[str | None, typer.Argument()] = None):
+    service, project = bridge(ctx), project_id(ctx)
+    output(service.get_task_status(project, task_id or service.project_workstream_task(project)))
 
 
 @task_app.command("result")
-def task_result(ctx: typer.Context, task_id: str):
+def task_result(ctx: typer.Context, task_id: Annotated[str | None, typer.Argument()] = None):
     """查詢完整執行資料；一般查看成果可用 task show。"""
-    output(bridge(ctx).get_task_result(project_id(ctx), task_id))
+    service, project = bridge(ctx), project_id(ctx)
+    output(service.get_task_result(project, task_id or service.project_workstream_task(project)))
 
 
 @task_app.command("show")
@@ -280,7 +278,9 @@ def task_show(ctx: typer.Context, task_id: Annotated[str | None, typer.Argument(
     project = project_id(ctx)
     if task_id is None:
         tasks = service.list_tasks(project)
-        if len(tasks) != 1:
+        if service.get_project_access(project)["mode"] == "read-write" and tasks:
+            task_id = tasks[-1]["id"]
+        elif len(tasks) != 1:
             raise typer.BadParameter(
                 "請用 task list 查看編號，再執行 task show TASK-xxxx；只有一個任務時才能省略編號。"
             )
@@ -316,9 +316,10 @@ def task_show(ctx: typer.Context, task_id: Annotated[str | None, typer.Argument(
 
 
 @task_app.command("usage")
-def task_usage(ctx: typer.Context, task_id: str):
+def task_usage(ctx: typer.Context, task_id: Annotated[str | None, typer.Argument()] = None):
     """只顯示各次執行的 CLI、模型設定與可取得的用量；舊紀錄標示未知。"""
-    output(bridge(ctx).get_task_usage(project_id(ctx), task_id))
+    service, project = bridge(ctx), project_id(ctx)
+    output(service.get_task_usage(project, task_id or service.project_workstream_task(project)))
 
 
 @task_app.command("dispatch")
@@ -361,7 +362,7 @@ def task_plan(
     )
 
 
-@task_app.command("request-approval")
+@task_app.command("request-approval", hidden=True)
 def request_approval(ctx: typer.Context, task_id: str, plan: str):
     output(bridge(ctx).request_approval(project_id(ctx), task_id, plan))
 
@@ -383,7 +384,7 @@ def task_recover(ctx: typer.Context):
     output(bridge(ctx).recover_workers(project_id(ctx)))
 
 
-@task_app.command("accept")
+@task_app.command("accept", hidden=True)
 def task_accept(ctx: typer.Context, task_id: str):
     output(bridge(ctx).accept_local(project_id(ctx), task_id))
 
@@ -396,7 +397,7 @@ def task_test(ctx: typer.Context, task_id: str):
     output(run_tests_local(bridge(ctx), project_id(ctx), task_id))
 
 
-@app.command()
+@app.command(hidden=True)
 def approve(ctx: typer.Context, task_id: str, plan: Annotated[str, typer.Option()]):
     output(bridge(ctx).approve_local(project_id(ctx), task_id, plan))
 

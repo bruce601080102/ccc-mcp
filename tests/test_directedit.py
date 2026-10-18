@@ -49,7 +49,10 @@ def test_direct_edit_requires_allowlist_and_exact_local_approval(bridge, human):
     archive = CCCMCP(bridge.home).get_workspace_edit("demo", edit["id"], True)
     assert archive["before_content"] == "original\r\n"
     assert archive["content"] == content
-    assert bridge.latest("demo")["version"] == 1
+    assert bridge.latest("demo")["version"] == 2
+    assert bridge.latest("demo")["snapshot"]["workspace_changes"] == [
+        {"edit_id": edit["id"], "path": "readme.md", "sha256": receipt["sha256"]}
+    ]
     assert bridge.list_tasks("demo") == []
     assert not (bridge.home / "worktrees").exists()
 
@@ -268,13 +271,14 @@ def test_diff_shows_missing_newline_and_cli_commands(bridge, human):
 async def test_direct_edit_tools_respect_http_readonly(bridge):
     mutable = {t.name for t in await create_server(bridge.home).list_tools()}
     readonly = {t.name for t in await create_server(bridge.home, http=True).list_tools()}
-    assert {"propose_workspace_edit", "get_workspace_edit", "write_workspace"} <= mutable
+    assert {"get_workspace_edit", "start_project_request", "write_task_file"} <= mutable
     assert "get_workspace_edit" in readonly
-    assert not {"propose_workspace_edit", "write_workspace"} & readonly
+    assert not {"propose_workspace_edit", "write_workspace"} & mutable
+    assert "start_project_request" not in readonly
     assert not {"approve_workspace_edit", "configure_write_file"} & mutable
 
 
-async def test_stdio_direct_edit_roundtrip_with_real_files(bridge, human):
+async def test_stdio_exposes_read_but_not_direct_edit_tools(bridge, human):
     import os
     import sys
 
@@ -294,30 +298,10 @@ async def test_stdio_direct_edit_roundtrip_with_real_files(bridge, human):
             read = await session.call_tool(
                 "read_workspace", {"project_id": "demo", "path": "readme.md"}
             )
-            proposed = await session.call_tool(
-                "propose_workspace_edit",
-                {
-                    "project_id": "demo",
-                    "path": "readme.md",
-                    "content": "original\ntest\n",
-                    "expected_sha256": read.structured_content["sha256"],
-                },
-            )
-            assert not proposed.is_error
-            edit_id = proposed.structured_content["id"]
-            denied = await session.call_tool(
-                "write_workspace", {"project_id": "demo", "edit_id": edit_id}
-            )
-            assert denied.is_error
+            assert not read.is_error
+            names = {tool.name for tool in (await session.list_tools()).tools}
+            assert "read_workspace" in names
+            assert "write_workspace" not in names
+            assert "propose_workspace_edit" not in names
+            assert "start_project_request" in names
             assert target(bridge).read_text() == "original\n"
-            bridge.approve_workspace_edit_local("demo", edit_id)
-            applied = await session.call_tool(
-                "write_workspace", {"project_id": "demo", "edit_id": edit_id}
-            )
-            assert not applied.is_error
-            assert applied.structured_content["status"] == "APPLIED"
-            read_back = await session.call_tool(
-                "read_workspace", {"project_id": "demo", "path": "readme.md"}
-            )
-            assert read_back.structured_content["content"] == "original\ntest"
-            assert read_back.structured_content["sha256"] == applied.structured_content["sha256"]

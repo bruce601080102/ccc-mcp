@@ -4,13 +4,13 @@
 
 ## 角色與參數
 
-若要禁止 ChatGPT 直接改檔並強制保留 Agent／Context 證據鏈，先設定：
+先在本機授權一次專案：
 
 ```text
-ccc-mcp --project 專案ID config workflow-mode agent-required
+ccc-mcp project authorize 專案ID
 ```
 
-可用值為 `direct`（允許授權後直接寫檔）與 `agent-required`（拒絕 `write_workspace`，並在未完成 PM Context 整理時拒絕非 SA 派工）。設定會持久保存，不是 Prompt 規則。
+授權後固定走 Agent／Context 證據鏈，不需選模式。ChatGPT 對一般修改需求呼叫 `start_project_request`，後端會建立或沿用內部工作串並派出設定的 SA；PM 以 `advance_project` 提交有來源的 ContextPatch 後，系統自動派出 SD/RD、REVIEW 並完成本輪。實作 Agent 在原專案寫檔；MCP 不提供直接寫檔捷徑。
 
 設定格式（`ROLE`、`PROVIDER` 是要替換的欄位）：
 
@@ -21,9 +21,9 @@ ccc-mcp --project 專案ID config role ROLE PROVIDER [--model 模型ID] [--effor
 | `ROLE`（大小寫照寫） | 工作 | 限制 |
 |---|---|---|
 | `SA` | 系統分析，讀需求與程式並提出方案 | 唯讀 |
-| `SD` | 系統設計 | 須本機核准計畫 |
-| `RD` | 程式實作 | 須本機核准計畫 |
-| `SD/RD` | 同一次工作一起設計與實作，本範例使用此角色 | 須本機核准計畫 |
+| `SD` | 系統設計 | 專案已授權時自動承接計畫 |
+| `RD` | 程式實作 | 專案已授權時自動承接計畫 |
+| `SD/RD` | 同一次工作一起設計與實作，本範例使用此角色 | 專案已授權時自動承接計畫 |
 | `REVIEW` | 審查成果與問題 | 唯讀 |
 
 五種角色**各自獨立設定**；設定 `SD/RD` 不會同時修改 `SD`、`RD`。每種角色都可選 `codex`、`claude` 或 `chatgpt`，也可全部選同一種。
@@ -35,7 +35,7 @@ ccc-mcp --project 專案ID config role ROLE PROVIDER [--model 模型ID] [--effor
 | `--model` | CLI 模型 ID／別名；省略時不傳模型參數，使用 CLI 預設，不保證和 IDE 選擇相同 |
 | `--effort` | 思考等級；可先用 `high` 或 `medium`，仍須模型支援，並非 token 上限 |
 | `--quota-fallback` | 額度不足時接手的執行者：`codex`、`claude`、`chatgpt`；省略則不設定自動接手 |
-| `project create --path` | 新專案根目錄；不是實作 Worktree 的位置 |
+| `project create --path` | 新專案根目錄；Agent 實作在已授權的原專案進行 |
 
 **每次 `config role` 都會整組替換該角色設定**：要保留的 model、effort、fallback 須一起填，省略會清空。設定只影響後續派工，不會啟動模型或修改歷史紀錄。
 
@@ -72,6 +72,18 @@ done
 | `role=SA`／`SD/RD` | 本次派工的角色 | 可說「先分析，再一起設計與實作」；工具須使用正確角色值 |
 | `adapter=real` | 真實執行流程；`fake` 只模擬 | 工具預設 real；fake 結果不代表真實開發 |
 | `Context Version` | 派工使用的共享上下文版本 | 不必背數字，由 ChatGPT 查詢目前版本 |
-| `PLAN-A`、`TASK-0001` | 計畫與任務 ID，本範例名稱 | 以實際回覆為準，不要求所有任務都叫這些名稱 |
+| `PLAN-A`、`TASK-0001` | 內部稽核 ID | 已授權專案會重用同一工作串；一般使用者不必輸入或管理 |
 
 ChatGPT 透過 MCP 工具操作，不是看到單字就必然執行。請確認回覆有實際任務／執行 ID 與原始結果；若只提供一般建議，可說「請實際呼叫 ccc-mcp 工具」。
+
+## 專案語言
+
+新專案預設為 `zh-TW`（繁體中文）。初始化時可用 `--language ch`（簡體中文）或 `--language en`（英文），既有專案可切換：
+
+```bash
+ccc-mcp --project demo-app config language zh-TW
+ccc-mcp --project demo-app config language ch
+ccc-mcp --project demo-app config language en
+```
+
+這會控制後續產生的共用 Context、投影文件、交接政策與 Agent 報告語言；已儲存的內容不會自動翻譯。

@@ -205,8 +205,6 @@ def test_agent_required_project_mode_allows_approved_native_cli_on_current_state
     bridge, human
 ):
     bridge.authorize_project_local("demo")
-    bridge.configure_workflow_mode("demo", "agent-required")
-    bridge.configure_workspace_mode("demo", "project")
     (root(bridge) / "app.py").write_text(
         "# original comment\ndef value():\n    return 99\n", encoding="utf-8"
     )
@@ -248,8 +246,7 @@ def test_scope_cli_accepts_directory_as_positional_argument(bridge):
 
     runner = CliRunner()
     prefix = ["--home", str(bridge.home), "--project", "demo", "config"]
-    for command in (["write-root", "."], ["workspace-mode", "project"], ["revoke-write-root", "."]):
+    for command in (["write-root", "."], ["revoke-write-root", "."]):
         result = runner.invoke(app, prefix + command)
         assert result.exit_code == 0, result.output
-    assert bridge.get_project_settings("demo")["workspace_mode"] == "project"
     assert bridge.get_project_settings("demo")["writable_roots"] == []

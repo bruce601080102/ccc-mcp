@@ -45,8 +45,8 @@ def test_original_report_then_pm_refinement_then_next_agent(bridge):
         handoff = restored.build_handoff("demo", role)
         assert handoff["context_version"] == 3
         assert handoff["content"]["shared_context"]["summary"].startswith("PM reviewed")
-        assert handoff["content"]["shared_context"]["agent_results"][0]["execution_id"] == execution
-        assert original in handoff["source_document_refs"]
+        assert handoff["content"]["shared_context"]["agent_results"] == []
+        assert original not in handoff["source_document_refs"]
     assert restored.source_ref("demo", source_path) == original
     updates = restored.collect_context_updates("demo")
     assert updates["reports"][0]["result"]["report"]
@@ -59,7 +59,7 @@ def test_original_report_then_pm_refinement_then_next_agent(bridge):
 
 
 def test_agent_required_mode_enforces_refinement_before_implementation(bridge, human):
-    bridge.configure_workflow_mode("demo", "agent-required")
+    bridge.authorize_project_local("demo")
     bridge.create_task("demo", "Analyze and implement a change")
     analysis_execution = dispatch(bridge, role="SA")["execution_id"]
     run_execution(bridge, analysis_execution)
@@ -87,7 +87,9 @@ def test_agent_required_mode_enforces_refinement_before_implementation(bridge, h
     bridge.commit_context_patch("demo", proposal["patch_id"])
     assert not bridge.context_sync_status("demo")["needs_pm_refinement"]
 
-    approve(bridge)
+    bridge.propose_plan(
+        "demo", "TASK-0001", "PLAN-A", "Implement the change", bridge.latest("demo")["version"]
+    )
     implementation = dispatch(bridge, role="SD/RD")
     stored = bridge.store.one(
         "SELECT role, context_version FROM agent_executions WHERE id=?",
@@ -140,6 +142,19 @@ def test_refinement_rejects_missing_or_unrelated_original(bridge):
     patch["source_execution_ids"] = ["EXEC-missing"]
     with pytest.raises(BridgeError, match="saved agent report"):
         bridge.propose_context_patch("demo", patch)
+
+
+def test_invalid_architecture_fact_is_an_actionable_domain_error(bridge):
+    with pytest.raises(BridgeError, match="architecture items must be objects"):
+        bridge.propose_context_patch(
+            "demo",
+            {
+                "base_context_version": 1,
+                "changes": {"architecture": ["GET /hello-words2 returns text"]},
+                "update_reason": "Record route",
+                "semantic_review_ack": True,
+            },
+        )
 
 
 def test_review_uses_the_approved_plan_after_pm_context_refinement(bridge, human):

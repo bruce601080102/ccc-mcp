@@ -184,8 +184,11 @@ def run_execution(bridge, execution_id):
                         "real",
                         fallback_from=execution_id,
                     )
-                except BridgeError:
+                except Exception:
                     # Keep the failed execution; stale context/approval must not be bypassed.
+                    # Catch everything (not just BridgeError): a lock timeout or any other
+                    # failure here must not crash this worker subprocess silently (stdout/stderr
+                    # are discarded) and strand a QUEUED fallback execution nobody can promote.
                     pass
     finally:
         lease.release()

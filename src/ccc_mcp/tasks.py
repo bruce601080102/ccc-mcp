@@ -32,7 +32,12 @@ STATES = {
 TRANSITIONS = {
     "CREATED": {"ANALYZING", "AWAITING_PM_DECISION"},
     "ANALYZING": {"AWAITING_PM_DECISION"},
-    "AWAITING_PM_DECISION": {"ANALYZING", "AWAITING_USER_APPROVAL", "REVIEWING"},
+    "AWAITING_PM_DECISION": {
+        "ANALYZING",
+        "AWAITING_USER_APPROVAL",
+        "APPROVED",
+        "REVIEWING",
+    },
     "AWAITING_USER_APPROVAL": {"APPROVED", "REJECTED", "AWAITING_PM_DECISION"},
     "APPROVED": {"IMPLEMENTING", "ANALYZING", "AWAITING_PM_DECISION"},
     "IMPLEMENTING": {"AWAITING_PM_REVIEW", "REVIEWING"},
@@ -73,6 +78,58 @@ class TaskHub:
             )
         ]
 
+    def project_workstream_task(self, project_id):
+        tasks = self.list_tasks(project_id)
+        if not tasks:
+            raise BridgeError("Project workstream has not started")
+        return tasks[-1]["id"]
+
+    def reconcile_authorized_workstream(self, project_id):
+        """Complete already-refined review rounds without a second user acceptance ceremony."""
+        if self.get_project_access(project_id)["mode"] != "read-write":
+            return {"completed_workstreams": []}
+        pending = {
+            item["execution_id"] for item in self.context_sync_status(project_id)["pending_reports"]
+        }
+        consumed = set()
+        for row in self.store.all(
+            "SELECT metadata FROM context_versions WHERE project_id=?", (project_id,)
+        ):
+            consumed.update(json.loads(row["metadata"]).get("source_execution_ids", []))
+        completed = []
+        with self.lock(project_id):
+            with self.store.transaction() as conn:
+                tasks = conn.execute(
+                    "SELECT id,state FROM tasks WHERE project_id=?", (project_id,)
+                ).fetchall()
+                for task in tasks:
+                    if task["state"] != "AWAITING_PM_REVIEW":
+                        continue
+                    review = conn.execute(
+                        "SELECT id,status,result FROM agent_executions WHERE project_id=? "
+                        "AND task_id=? AND role='REVIEW' ORDER BY created DESC LIMIT 1",
+                        (project_id, task["id"]),
+                    ).fetchone()
+                    saved = json.loads(review["result"]) if review and review["result"] else {}
+                    if (
+                        review
+                        and review["status"] == "SUCCEEDED"
+                        and review["id"] in consumed
+                        and review["id"] not in pending
+                        and not (saved.get("report") or {}).get("needs_revision")
+                    ):
+                        self._transition(
+                            conn,
+                            project_id,
+                            task["id"],
+                            "COMPLETED",
+                            "Existing successful review was already refined into shared Context",
+                        )
+                        completed.append(task["id"])
+            if completed:
+                self.sync_documents(project_id)
+        return {"completed_workstreams": completed}
+
     def _transition(self, conn, project_id, task_id, new_state, reason):
         row = conn.execute(
             "SELECT state FROM tasks WHERE project_id=? AND id=?", (project_id, task_id)
@@ -101,32 +158,185 @@ class TaskHub:
         with self.lock(project_id):
             self.project(project_id)
             existing = self.list_tasks(project_id)
-            task_id = identifier(task_id or f"TASK-{len(existing) + 1:04d}")
-            with self.store.transaction() as conn:
-                if conn.execute(
-                    "SELECT 1 FROM tasks WHERE project_id=? AND id=?", (project_id, task_id)
-                ).fetchone():
-                    raise BridgeError("Task already exists")
-                conn.execute(
-                    "INSERT INTO tasks VALUES(?,?,?,?,?,?)",
-                    (
-                        task_id,
-                        project_id,
-                        requirement,
-                        canonical(acceptance or []),
-                        "CREATED",
-                        now(),
-                    ),
+            continuous = self.get_project_access(project_id)["mode"] == "read-write"
+            reuse = continuous and task_id is None and bool(existing)
+            if reuse and self.context_sync_status(project_id)["pending_reports"]:
+                raise PermissionDenied(
+                    "PM must compact pending agent reports before starting the next project round"
                 )
-                event(conn, project_id, task_id, None, "CREATED", "PM created requirement")
+            task_id = identifier(
+                task_id or (existing[-1]["id"] if reuse else f"TASK-{len(existing) + 1:04d}")
+            )
+            language = self.get_project_settings(project_id)["language"]
+            acceptance = acceptance or []
+            requirement_content = (
+                f"# 需求\n\n{requirement}\n\n## 驗收條件\n{canonical(acceptance)}\n"
+                if language == "zh-TW"
+                else f"# 需求\n\n{requirement}\n\n## 验收条件\n{canonical(acceptance)}\n"
+                if language == "ch"
+                else f"# Requirement\n\n{requirement}\n\n## Acceptance\n{canonical(acceptance)}\n"
+            )
+            with self.store.transaction() as conn:
+                if reuse:
+                    if conn.execute(
+                        "SELECT 1 FROM agent_executions WHERE project_id=? AND task_id=? "
+                        "AND status IN ('QUEUED','RUNNING')",
+                        (project_id, task_id),
+                    ).fetchone():
+                        raise BridgeError("Project workstream already has an active agent")
+                    old_state = existing[-1]["state"]
+                    conn.execute(
+                        "UPDATE tasks SET requirement=?,acceptance=?,state='CREATED',created=? "
+                        "WHERE project_id=? AND id=?",
+                        (requirement, canonical(acceptance), now(), project_id, task_id),
+                    )
+                    conn.execute(
+                        "UPDATE approvals SET status='INVALIDATED' WHERE project_id=? "
+                        "AND task_id=? AND status IN ('APPROVED','PENDING')",
+                        (project_id, task_id),
+                    )
+                    event(
+                        conn,
+                        project_id,
+                        task_id,
+                        old_state,
+                        "CREATED",
+                        "PM started a new project work round",
+                    )
+                else:
+                    if conn.execute(
+                        "SELECT 1 FROM tasks WHERE project_id=? AND id=?", (project_id, task_id)
+                    ).fetchone():
+                        raise BridgeError("Task already exists")
+                    conn.execute(
+                        "INSERT INTO tasks VALUES(?,?,?,?,?,?)",
+                        (task_id, project_id, requirement, canonical(acceptance), "CREATED", now()),
+                    )
+                    event(conn, project_id, task_id, None, "CREATED", "PM created requirement")
+                immutable = (
+                    f"{metadata_name(self.project(project_id)['root'])}/tasks/{task_id}/"
+                    f"requirements/REQ-{uuid.uuid4().hex[:16]}.md"
+                )
                 artifact(
                     conn,
                     project_id,
-                    f"{metadata_name(self.project(project_id)['root'])}/tasks/{task_id}/REQUIREMENT.md",
-                    f"# Requirement\n\n{requirement}\n\n## Acceptance\n{canonical(acceptance or [])}\n",
+                    immutable,
+                    requirement_content,
+                )
+                conn.execute(
+                    "INSERT INTO artifacts VALUES(?,?,?,?,?) ON CONFLICT(project_id,path) DO UPDATE SET "
+                    "content=excluded.content,sha256=excluded.sha256,created=excluded.created",
+                    (
+                        project_id,
+                        f"{metadata_name(self.project(project_id)['root'])}/tasks/{task_id}/REQUIREMENT.md",
+                        requirement_content,
+                        digest(requirement_content.encode()),
+                        now(),
+                    ),
                 )
             self.sync_documents(project_id)
-        return self.task(project_id, task_id)
+        result = self.task(project_id, task_id)
+        result["workstream"] = continuous
+        result["reused"] = reuse
+        return result
+
+    def start_project_request(self, project_id, requirement, acceptance=None):
+        """One user-facing entry point: create/reuse the workstream and dispatch SA."""
+        if self.get_project_access(project_id)["mode"] != "read-write":
+            raise PermissionDenied(
+                f"Project is read-only. Run ccc-mcp project authorize {project_id} locally once."
+            )
+        task = self.create_task(project_id, requirement, acceptance)
+        dispatch = self.dispatch_agent(
+            project_id,
+            task["id"],
+            "auto",
+            "SA",
+            self.latest(project_id)["version"],
+            requirement,
+        )
+        return {"workstream": task, "sa_execution": dispatch}
+
+    def advance_project(
+        self, project_id, patch, plan_content=None, adapter="real", fake_scenario="success"
+    ):
+        """Commit PM refinement and dispatch the next configured role automatically."""
+        if self.get_project_access(project_id)["mode"] != "read-write":
+            raise PermissionDenied("Project authorization is required")
+        source_ids = patch.get("source_execution_ids", [])
+        if len(source_ids) != 1:
+            raise BridgeError("Advancement requires exactly one completed Agent execution")
+        execution = self.store.one(
+            "SELECT id,task_id,role,status FROM agent_executions WHERE project_id=? AND id=?",
+            (project_id, source_ids[0]),
+        )
+        if not execution or execution["status"] != "SUCCEEDED":
+            raise BridgeError("Source Agent execution has not succeeded")
+        pending = {
+            item["execution_id"]
+            for item in self.context_sync_status(project_id)["pending_reports"]
+        }
+        if execution["id"] not in pending:
+            raise BridgeError("Source Agent execution is not awaiting PM refinement")
+        role = execution["role"]
+        if role == "SA" and not (plan_content or "").strip():
+            raise BridgeError("An SA result requires a reviewed implementation plan")
+        if role not in {"SA", "SD", "RD", "SD/RD", "REVIEW"}:
+            raise BridgeError("Unsupported project advancement role")
+        if role != "SA" and plan_content is not None:
+            raise BridgeError("A plan is only accepted after SA")
+        proposed = self.propose_context_patch(project_id, patch)
+        committed = self.commit_context_patch(project_id, proposed["patch_id"])
+        result = {"context": committed, "source_execution_id": execution["id"]}
+        if role == "SA":
+            plan = self.propose_plan(
+                project_id,
+                execution["task_id"],
+                "PLAN-A",
+                plan_content,
+                committed["context_version"],
+            )
+            result["plan"] = plan
+            result["next_execution"] = self.dispatch_agent(
+                project_id,
+                execution["task_id"],
+                "auto",
+                "SD/RD",
+                self.latest(project_id)["version"],
+                plan_content,
+                adapter=adapter,
+                fake_scenario=fake_scenario,
+            )
+        elif role in {"SD", "RD", "SD/RD"}:
+            result["next_execution"] = self.dispatch_agent(
+                project_id,
+                execution["task_id"],
+                "auto",
+                "REVIEW",
+                self.latest(project_id)["version"],
+                "Review the implementation and verify reported evidence",
+                adapter=adapter,
+                fake_scenario=fake_scenario,
+            )
+        else:
+            saved = self.store.one(
+                "SELECT result FROM agent_executions WHERE id=?", (execution["id"],)
+            )
+            report = (json.loads(saved["result"]).get("report") or {}) if saved["result"] else {}
+            if report.get("needs_revision"):
+                result["next_execution"] = self.dispatch_agent(
+                    project_id,
+                    execution["task_id"],
+                    "auto",
+                    "SD/RD",
+                    self.latest(project_id)["version"],
+                    "Revise the implementation to address the latest REVIEW findings",
+                    adapter=adapter,
+                    fake_scenario=fake_scenario,
+                )
+            else:
+                result["completed_workstreams"] = committed["completed_workstreams"]
+        return result
 
     def propose_plan(self, project_id, task_id, plan_id, content, context_version):
         identifier(plan_id)
@@ -166,12 +376,76 @@ class TaskHub:
                         now(),
                     ),
                 )
+                access = self.get_project_access(project_id)
+                if access["mode"] == "read-write":
+                    approval_id = "APP-" + uuid.uuid4().hex[:16]
+                    self._transition(
+                        conn,
+                        project_id,
+                        task_id,
+                        "APPROVED",
+                        "Project authorization automatically authorized the current plan",
+                    )
+                    conn.execute(
+                        "INSERT INTO approvals VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                        (
+                            approval_id,
+                            project_id,
+                            task_id,
+                            plan_id,
+                            version,
+                            plan_hash,
+                            context_version,
+                            "APPROVED",
+                            access["identity"],
+                            now(),
+                            now(),
+                        ),
+                    )
+                    conn.execute(
+                        "INSERT INTO decisions VALUES(?,?,?,?,?,?,?,?,?)",
+                        (
+                            "DEC-" + uuid.uuid4().hex[:16],
+                            project_id,
+                            task_id,
+                            f"Authorized {plan_id} v{version} sha256:{plan_hash}",
+                            f"Ongoing project authorization {access['authorization_id']}",
+                            access["identity"],
+                            "Approved",
+                            context_version,
+                            now(),
+                        ),
+                    )
+                    self.save_artifact(
+                        conn,
+                        project_id,
+                        task_id,
+                        "APPROVED-PLAN.md",
+                        approval_id,
+                        "# Authorized Plan\n\n"
+                        + canonical(
+                            {
+                                "id": plan_id,
+                                "version": version,
+                                "context_version": context_version,
+                                "content": content,
+                                "hash": plan_hash,
+                                "authorization_id": access["authorization_id"],
+                            }
+                        )
+                        + "\n",
+                    )
             self.sync_documents(project_id)
             return {
                 "plan_id": plan_id,
                 "version": version,
                 "hash": plan_hash,
                 "context_version": context_version,
+                "status": (
+                    "APPROVED"
+                    if self.get_project_access(project_id)["mode"] == "read-write"
+                    else "AWAITING_PM_DECISION"
+                ),
             }
 
     def plan(self, project_id, task_id, plan_id):
@@ -188,6 +462,12 @@ class TaskHub:
     def request_approval(self, project_id, task_id, plan_id):
         with self.lock(project_id):
             plan = self.plan(project_id, task_id, plan_id)
+            if self.get_project_access(project_id)["mode"] == "read-write":
+                return {
+                    "plan": plan,
+                    "status": "APPROVED",
+                    "next_action": "Project authorization is active; dispatch implementation.",
+                }
             if plan["context_version"] != self.latest(project_id)["version"]:
                 raise VersionConflict("Plan must be refreshed for the current Context Version")
             request_id = "APP-" + uuid.uuid4().hex[:16]
@@ -237,6 +517,14 @@ class TaskHub:
         from .approval import confirm_local
 
         # No identity or approved=true argument can bypass the operator terminal ceremony.
+        if self.get_project_access(project_id)["mode"] == "read-write":
+            plan = self.approved_plan(project_id, task_id)
+            return {
+                "status": "APPROVED",
+                "identity": self.get_project_access(project_id)["identity"],
+                "plan_hash": plan["hash"],
+                "already_authorized_by_project": True,
+            }
         plan = self.plan(project_id, task_id, plan_id)
         workspace_mode = self.get_project_settings(project_id)["workspace_mode"]
         identity = confirm_local(
@@ -293,6 +581,14 @@ class TaskHub:
         return {"status": "APPROVED", "identity": identity, "plan_hash": plan["hash"]}
 
     def approved_plan(self, project_id, task_id, require_current_context=True):
+        if self.get_project_access(project_id)["mode"] == "read-write":
+            plan = self.store.one(
+                "SELECT * FROM plans WHERE project_id=? AND task_id=? ORDER BY created DESC LIMIT 1",
+                (project_id, task_id),
+            )
+            if plan:
+                return plan
+            raise PermissionDenied("Implementation requires a PM plan")
         approvals = self.get_approval_status(project_id, task_id)
         for approval in approvals:
             if approval["status"] != "APPROVED":
@@ -429,7 +725,12 @@ class TaskHub:
             raise BridgeError("Unsupported adapter or fake scenario")
         if not 0.05 <= timeout <= 7200 or not 0 <= fake_delay <= 60:
             raise BridgeError("Timeout/delay outside supported bounds")
-        if adapter == "real" and agent != "chatgpt" and setting_env("ENABLE_REAL_AGENTS") != "1":
+        if (
+            adapter == "real"
+            and agent != "chatgpt"
+            and self.get_project_access(project_id)["mode"] != "read-write"
+            and setting_env("ENABLE_REAL_AGENTS") != "1"
+        ):
             raise PermissionDenied(
                 "Real agents disabled; operator must set CCC_MCP_ENABLE_REAL_AGENTS=1"
             )
@@ -708,8 +1009,18 @@ class TaskHub:
                     )
                 )
                 if report:
+                    language = self.get_project_settings(project_id)["language"]
+                    headings = {
+                        "zh-TW": ("建議的上下文更新 — 待 PM 審核", "設計", "測試證據"),
+                        "ch": ("建议的上下文更新 — 待 PM 审核", "设计", "测试证据"),
+                        "en": (
+                            "Proposed context updates — PM review required",
+                            "Design",
+                            "Test evidence",
+                        ),
+                    }[language]
                     updates_content = (
-                        "# Proposed context updates — PM review required\n\n"
+                        f"# {headings[0]}\n\n"
                         + canonical(
                             {
                                 "context_version": row["context_version"],
@@ -753,7 +1064,7 @@ class TaskHub:
                             task_id,
                             "SD-DESIGN.md",
                             execution_id,
-                            "# Design\n\n" + canonical(report.get("findings", [])) + "\n",
+                            f"# {headings[1]}\n\n" + canonical(report.get("findings", [])) + "\n",
                         )
                         self.save_artifact(
                             conn,
@@ -761,7 +1072,7 @@ class TaskHub:
                             task_id,
                             "TEST-RESULT.md",
                             execution_id,
-                            "# Test evidence\n\n"
+                            f"# {headings[2]}\n\n"
                             + canonical((extras or {}).get("test_evidence", []))
                             + "\n",
                         )

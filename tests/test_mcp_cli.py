@@ -87,16 +87,17 @@ async def test_mcp_tool_schemas_and_no_fake_human_approval(bridge):
         "get_context_history",
         "build_handoff",
         "list_projects",
+        "start_project_request",
+        "create_task",
+        "advance_project",
         "dispatch_agent",
         "get_task_status",
         "get_task_result",
-        "propose_plan",
         "review_changes",
-        "request_approval",
         "get_approval_status",
     }
     assert required <= names
-    assert "approve" not in names and "register_project" not in names
+    assert not {"approve", "register_project", "propose_plan", "request_approval"} & names
     read_only = create_server(bridge.home, http=True)
     readonly_names = {t.name for t in await read_only.list_tools()}
     assert "dispatch_agent" not in readonly_names
@@ -128,6 +129,7 @@ async def test_stdio_protocol_initialize_list_and_call(bridge):
 async def test_chatgpt_discover_then_list_and_write_without_initialize(bridge, human):
     """Replay the modern discovery request that ChatGPT sends when refreshing tools."""
     bridge.authorize_project_local("demo")
+    bridge.configure_role("demo", "SA", "chatgpt")
     process = await asyncio.create_subprocess_exec(
         sys.executable,
         "-m",
@@ -170,34 +172,32 @@ async def test_chatgpt_discover_then_list_and_write_without_initialize(bridge, h
         assert "tools" in discovered["capabilities"]
         assert discovered["_meta"]["io.modelcontextprotocol/serverInfo"]["name"] == "ccc-mcp"
         listing = await exchange("tools/list")
-        write_tool = next(t for t in listing["tools"] if t["name"] == "write_workspace")
-        assert write_tool["annotations"]["readOnlyHint"] is False
-        assert {"path", "content", "expected_sha256"} <= write_tool["inputSchema"][
-            "properties"
-        ].keys()
+        names = {tool["name"] for tool in listing["tools"]}
+        assert {"start_project_request", "create_task"} <= names
+        assert "write_workspace" not in names
         read = await exchange(
             "tools/call",
             {"name": "read_workspace", "arguments": {"project_id": "demo", "path": "app.py"}},
         )
-        original = read["structuredContent"]
-        written = await exchange(
+        assert "original comment" in read["structuredContent"]["content"]
+        started = await exchange(
             "tools/call",
             {
-                "name": "write_workspace",
+                "name": "create_task",
                 "arguments": {
                     "project_id": "demo",
-                    "path": "app.py",
-                    "content": original["content"] + "\n# discovery regression\n",
-                    "expected_sha256": original["sha256"],
+                    "requirement": "Analyze app.py before changing it",
+                    "acceptance": [],
+                    "task_id": "TASK-legacy-client",
                 },
             },
         )
-        assert not written["isError"]
-        assert written["structuredContent"]["status"] == "APPLIED"
-        confirmed = bridge.read_workspace("demo", "app.py")
-        assert confirmed["content"].endswith("# discovery regression")
-        assert confirmed["sha256"] == written["structuredContent"]["sha256"]
-        assert bridge.list_tasks("demo") == []
+        assert not started["isError"]
+        assert started["structuredContent"]["sa_execution"]["status"] == "AWAITING_CHATGPT"
+        assert started["structuredContent"]["task_id"] == "TASK-0001"
+        assert started["structuredContent"]["requested_task_id_ignored"] == "TASK-legacy-client"
+        assert len(bridge.list_tasks("demo")) == 1
+        assert bridge.read_workspace("demo", "app.py")["content"] == read["structuredContent"]["content"]
     finally:
         process.stdin.close()
         try:
@@ -212,6 +212,11 @@ async def test_chatgpt_discover_then_list_and_write_without_initialize(bridge, h
 
 async def test_stdio_chatgpt_role_roundtrip_without_native_cli(bridge):
     bridge.configure_role("demo", "SA", "chatgpt")
+    bridge.store.execute(
+        "INSERT INTO project_access_events(id,project_id,root,access,identity,created) "
+        "VALUES(?,?,?,'read-write',?,?)",
+        ("AUTH-test", "demo", bridge.project("demo")["root"], "test-principal", "2026-01-01T00:00:00Z"),
+    )
     parameters = StdioServerParameters(
         command=sys.executable,
         args=["-m", "ccc_mcp", "--home", str(bridge.home), "serve"],
@@ -221,22 +226,11 @@ async def test_stdio_chatgpt_role_roundtrip_without_native_cli(bridge):
         async with ClientSession(reader, writer, read_timeout_seconds=15) as session:
             await session.initialize()
             created = await session.call_tool(
-                "create_task",
+                "start_project_request",
                 {"project_id": "demo", "requirement": "Analyze source", "acceptance": []},
             )
             assert not created.is_error
-            queued = await session.call_tool(
-                "dispatch_agent",
-                {
-                    "project_id": "demo",
-                    "task_id": "TASK-0001",
-                    "role": "SA",
-                    "context_version": 1,
-                    "instruction": "Read app.py",
-                },
-            )
-            assert not queued.is_error
-            execution_id = queued.structured_content["execution_id"]
+            execution_id = created.structured_content["sa_execution"]["execution_id"]
             source = await session.call_tool(
                 "read_workspace", {"project_id": "demo", "path": "app.py"}
             )
