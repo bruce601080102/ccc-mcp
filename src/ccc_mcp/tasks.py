@@ -4,6 +4,7 @@ import subprocess
 import sys
 import uuid
 from contextlib import nullcontext
+from datetime import datetime, timezone
 
 import portalocker
 
@@ -12,6 +13,16 @@ from .context import identifier
 from .errors import BridgeError, PermissionDenied, VersionConflict
 from .security import canonical, digest, reject_secrets
 from .storage import artifact, decode, event, now
+
+def attribution(language, agent, role=None):
+    """One readable line so a human opening a saved .md knows who produced it."""
+    who = agent if role is None else f"{agent}（{role}）" if language != "en" else f"{agent} ({role})"
+    return {
+        "zh-TW": f"> 提供者：{who}\n\n",
+        "ch": f"> 提供者：{who}\n\n",
+        "en": f"> Provided by: {who}\n\n",
+    }[language]
+
 
 STATES = {
     "CREATED",
@@ -170,11 +181,11 @@ class TaskHub:
             language = self.get_project_settings(project_id)["language"]
             acceptance = acceptance or []
             requirement_content = (
-                f"# 需求\n\n{requirement}\n\n## 驗收條件\n{canonical(acceptance)}\n"
+                f"# 需求\n\n{attribution(language, 'PM')}{requirement}\n\n## 驗收條件\n{canonical(acceptance)}\n"
                 if language == "zh-TW"
-                else f"# 需求\n\n{requirement}\n\n## 验收条件\n{canonical(acceptance)}\n"
+                else f"# 需求\n\n{attribution(language, 'PM')}{requirement}\n\n## 验收条件\n{canonical(acceptance)}\n"
                 if language == "ch"
-                else f"# Requirement\n\n{requirement}\n\n## Acceptance\n{canonical(acceptance)}\n"
+                else f"# Requirement\n\n{attribution(language, 'PM')}{requirement}\n\n## Acceptance\n{canonical(acceptance)}\n"
             )
             with self.store.transaction() as conn:
                 if reuse:
@@ -423,6 +434,7 @@ class TaskHub:
                         "APPROVED-PLAN.md",
                         approval_id,
                         "# Authorized Plan\n\n"
+                        + attribution(self.get_project_settings(project_id)["language"], "PM")
                         + canonical(
                             {
                                 "id": plan_id,
@@ -575,7 +587,10 @@ class TaskHub:
                     task_id,
                     "APPROVED-PLAN.md",
                     pending["id"],
-                    "# Approved Plan\n\n" + canonical(plan) + "\n",
+                    "# Approved Plan\n\n"
+                    + attribution(self.get_project_settings(project_id)["language"], "Local operator")
+                    + canonical(plan)
+                    + "\n",
                 )
             self.sync_documents(project_id)
         return {"status": "APPROVED", "identity": identity, "plan_hash": plan["hash"]}
@@ -860,12 +875,31 @@ class TaskHub:
                 (project_id, task_id),
             )
             latest = self.store.one(
-                "SELECT id,agent,role,adapter,status,result,error FROM agent_executions "
-                "WHERE project_id=? AND task_id=? ORDER BY created DESC LIMIT 1",
+                "SELECT id,agent,role,adapter,status,result,error,created,options "
+                "FROM agent_executions WHERE project_id=? AND task_id=? ORDER BY created DESC LIMIT 1",
                 (project_id, task_id),
             )
             saved = json.loads(latest["result"]) if latest and latest["result"] else {}
             report = saved.get("report") or {}
+            progress = None
+            if latest and latest["status"] in {"QUEUED", "RUNNING"}:
+                options = json.loads(latest["options"]) if latest["options"] else {}
+                timeout = options.get("timeout")
+                elapsed = (
+                    datetime.now(timezone.utc) - datetime.fromisoformat(latest["created"])
+                ).total_seconds()
+                progress = {
+                    "elapsed_seconds": round(elapsed),
+                    "timeout_seconds": timeout,
+                    "note": (
+                        "Still within the configured timeout; a real Agent CLI call can "
+                        "legitimately take several minutes. Re-check get_task_status later "
+                        "rather than assuming it is stuck."
+                        if timeout is None or elapsed < timeout
+                        else "Elapsed time exceeds the configured timeout but status has not "
+                        "flipped yet; the worker may have crashed. Treat as possibly stuck."
+                    ),
+                }
             task["brief"] = {
                 "task_id": task_id,
                 "state": task["state"],
@@ -873,6 +907,7 @@ class TaskHub:
                 "role": latest["role"] if latest else None,
                 "adapter": latest["adapter"] if latest else None,
                 "execution_status": latest["status"] if latest else None,
+                "progress": progress,
                 "summary": report.get("summary"),
                 "needs_revision": report.get("needs_revision"),
                 "next_action": report.get("next_action"),
@@ -1021,6 +1056,7 @@ class TaskHub:
                     }[language]
                     updates_content = (
                         f"# {headings[0]}\n\n"
+                        + attribution(language, row["agent"], row["role"])
                         + canonical(
                             {
                                 "context_version": row["context_version"],
@@ -1045,7 +1081,11 @@ class TaskHub:
                     name = {"SA": "SA-REPORT.md", "REVIEW": "REVIEW.md"}.get(
                         row["role"], "IMPLEMENTATION.md"
                     )
-                    report_content = f"# {name}\n\n{canonical(report)}\n"
+                    report_content = (
+                        f"# {name}\n\n"
+                        + attribution(language, row["agent"], row["role"])
+                        + f"{canonical(report)}\n"
+                    )
                     report_path = self.save_artifact(
                         conn,
                         project_id,
@@ -1064,7 +1104,10 @@ class TaskHub:
                             task_id,
                             "SD-DESIGN.md",
                             execution_id,
-                            f"# {headings[1]}\n\n" + canonical(report.get("findings", [])) + "\n",
+                            f"# {headings[1]}\n\n"
+                            + attribution(language, row["agent"], row["role"])
+                            + canonical(report.get("findings", []))
+                            + "\n",
                         )
                         self.save_artifact(
                             conn,
@@ -1073,6 +1116,7 @@ class TaskHub:
                             "TEST-RESULT.md",
                             execution_id,
                             f"# {headings[2]}\n\n"
+                            + attribution(language, "ccc-mcp host", row["role"])
                             + canonical((extras or {}).get("test_evidence", []))
                             + "\n",
                         )

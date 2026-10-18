@@ -178,6 +178,16 @@ python "C:/ccc-mcpDemo/hello-demo/hello.py"
 
 預期看到 `Hello, world!`。如果 hello-demo 已註冊，沿用原專案即可，不必再次建立。
 
+## 常見狀況
+
+**ChatGPT 說工具不存在（`Unknown tool: ...`）**：通常是 ChatGPT 端的工具清單沒跟著新版 ccc-mcp 更新，不是伺服器壞了。到 [ChatGPT Plugins](https://chatgpt.com/plugins) 按「重新整理工具」；如果重新整理後問題還在，解除安裝這個連線、用同一個 Tunnel ID 重新安裝一次，再開新對話測試。
+
+**設定 `config role ... --quota-fallback` 之後額度用盡沒有自動切換**：這個設定是每個專案各自獨立的，例如 `ccc-mcp --project A config role SA codex --quota-fallback chatgpt` 只對專案 `A` 生效，不會套用到其他專案。請確認指令裡的 `--project` 是你實際在用的那個專案。
+
+**任務看起來卡住（`RUNNING` 一直沒變）**：真正派工給 Codex／Claude 是背景執行，實際寫程式可能要花數分鐘，這段時間 ChatGPT 無法提前得知結果，只能重新呼叫查詢工具確認。只要還沒超過設定的逾時秒數（`get_task_status` 會顯示已耗時與逾時上限）就是正常現象，過一下子再請它查一次即可。
+
+**任務狀態變成 `BLOCKED`**：不是失敗。系統只能自動驗證 `.py` 檔案的註解有沒有被誤刪，改到其他類型的檔案（例如 `README.md`）會保守地停下來、等 PM 看過內容再繼續，照常請 PM 整理 Context、派下一個角色即可。
+
 ## 撤銷授權
 
 ```bash
