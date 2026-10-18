@@ -62,6 +62,30 @@ class WorkspaceHub:
                 continue
             raise BridgeError("Project mode requires clean committed files; commit changes first")
 
+    def prepare_project_workspace(self, project_id, task_id, execution_id=None):
+        """Validate a task-scoped original-project workspace and return its root."""
+        settings = self.get_project_settings(project_id)
+        if (
+            not settings["writable_roots"]
+            and not settings["writable_files"]
+            and settings["project_access"]["mode"] != "read-write"
+        ):
+            raise PermissionDenied(
+                "Project mode requires project authorization, config write-root, or write-file"
+            )
+        prior = self.store.one(
+            "SELECT id FROM agent_executions WHERE project_id=? AND task_id=? "
+            "AND role NOT IN ('SA','REVIEW') AND worktree IS NOT NULL "
+            "AND (? IS NULL OR id<>?)",
+            (project_id, task_id, execution_id, execution_id),
+        )
+        # In agent-required mode the approved task is intentionally allowed to start from the
+        # operator's current project state. The worker snapshots that state before the agent runs,
+        # so attribution does not depend on a clean Git checkout.
+        if not prior and settings["workflow_mode"] != "agent-required":
+            self._require_clean_project(project_id)
+        return Path(self.project(project_id)["root"])
+
     def pending_chatgpt_handoffs(self, project_id):
         self.project(project_id)
         rows = self.store.all(
@@ -106,22 +130,9 @@ class WorkspaceHub:
                     self.approved_plan(project_id, row["task_id"])
                     options = json.loads(row["options"])
                     if options.get("workspace_mode", "worktree") == "project":
-                        settings = self.get_project_settings(project_id)
-                        if (
-                            not settings["writable_roots"]
-                            and not settings["writable_files"]
-                            and settings["project_access"]["mode"] != "read-write"
-                        ):
-                            raise PermissionDenied(
-                                "Project mode requires config write-root or write-file"
-                            )
-                        prior = self.store.one(
-                            "SELECT id FROM agent_executions WHERE project_id=? AND task_id=? "
-                            "AND role NOT IN ('SA','REVIEW') AND worktree IS NOT NULL AND id<>?",
-                            (project_id, row["task_id"], execution_id),
+                        cwd = self.prepare_project_workspace(
+                            project_id, row["task_id"], execution_id
                         )
-                        if not prior:
-                            self._require_clean_project(project_id)
                     else:
                         cwd = worktree(
                             self.home,

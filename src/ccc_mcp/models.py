@@ -23,6 +23,21 @@ class Fact(StrictModel):
     source_document_refs: list[SourceRef] = Field(min_length=1)
 
 
+class AgentContextResult(StrictModel):
+    execution_id: str = Field(min_length=1)
+    task_id: str = Field(min_length=1)
+    provider: str = Field(min_length=1)
+    role: str = Field(min_length=1)
+    base_context_version: int = Field(ge=1)
+    summary: str
+    findings: list[str] = Field(default_factory=list)
+    risks: list[str] = Field(default_factory=list)
+    next_action: str
+    context_updates: list[str] = Field(default_factory=list)
+    source_document_ref: SourceRef
+    review_status: Literal["unreviewed"] = "unreviewed"
+
+
 class ContextSnapshot(StrictModel):
     project_name: str = Field(min_length=1)
     purpose: str = Field(min_length=1)
@@ -33,6 +48,7 @@ class ContextSnapshot(StrictModel):
     invariants: list[Invariant] = Field(default_factory=list)
     architecture: list[Fact] = Field(default_factory=list)
     source_document_refs: list[SourceRef] = Field(default_factory=list)
+    agent_results: list[AgentContextResult] = Field(default_factory=list)
 
 
 class ContextPatch(StrictModel):

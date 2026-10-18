@@ -60,13 +60,16 @@ def run_execution(bridge, execution_id):
             before = {}
             if implementation:
                 bridge.approved_plan(project_id, task_id)
-                cwd = worktree(
-                    bridge.home,
-                    root,
-                    project_id,
-                    task_id,
-                    bridge.get_project_settings(project_id)["worktree_dir"],
-                )
+                if options.get("workspace_mode", "worktree") == "project":
+                    cwd = bridge.prepare_project_workspace(project_id, task_id, execution_id)
+                else:
+                    cwd = worktree(
+                        bridge.home,
+                        root,
+                        project_id,
+                        task_id,
+                        bridge.get_project_settings(project_id)["worktree_dir"],
+                    )
                 before = tracked_snapshot(cwd)
                 bridge.store.execute(
                     "UPDATE agent_executions SET worktree=? WHERE id=?", (str(cwd), execution_id)

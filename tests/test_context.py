@@ -56,13 +56,13 @@ def test_sa_report_and_optimization_preserves_evidence_and_decisions(bridge, hum
         ),
     )
     assert proposal["diff"]
-    assert bridge.commit_context_patch("demo", proposal["patch_id"])["context_version"] == 2
+    assert bridge.commit_context_patch("demo", proposal["patch_id"])["context_version"] == 3
     assert bridge.commit_context_patch("demo", proposal["patch_id"])["idempotent"]
     assert bridge.source_ref("demo", source_path) == ref
     assert bridge.get_approval_status("demo", "TASK-0001") == old_decisions
     assert "Approved PLAN-A" in bridge.bootstrap_project("demo")["latest_decisions"][0]["content"]
     assert bridge.validate_context("demo")["valid"]
-    assert len(bridge.get_context_history("demo")) == 2
+    assert len(bridge.get_context_history("demo")) == 3
 
 
 def test_version_conflict(bridge):

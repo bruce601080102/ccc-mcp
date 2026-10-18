@@ -151,8 +151,14 @@ def config_revoke_write_root(ctx: typer.Context, path: Annotated[str, typer.Argu
 
 @config_app.command("workspace-mode", hidden=True)
 def config_workspace_mode(ctx: typer.Context, mode: str):
-    """worktree＝隔離開發；project＝ChatGPT 核准一次任務後直接修改原專案。切換會使舊核准失效。"""
+    """worktree＝隔離開發；project＝核准後由設定的實作 Agent 修改原專案。切換會使舊核准失效。"""
     output(bridge(ctx).configure_workspace_mode(project_id(ctx), mode))
+
+
+@config_app.command("workflow-mode")
+def config_workflow_mode(ctx: typer.Context, mode: str):
+    """direct＝允許 ChatGPT 直接寫檔；agent-required＝強制 Task/Agent/Context 證據鏈。"""
+    output(bridge(ctx).configure_workflow_mode(project_id(ctx), mode))
 
 
 @workspace_app.command("show")

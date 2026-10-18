@@ -1,12 +1,25 @@
 # 角色、模型、路徑與共享 Context 設定
 
-一般使用請先看 [README](../README.md)。指定專案讀寫只需 `ccc-mcp project authorize 專案ID`：在本機確認一次後，ChatGPT 直接使用 write_workspace 讀改原專案，不需要 write-file、write-root、workspace-mode 或 Task／PLAN／EDIT／BATCH。授權會保存到本機資料庫，`project revoke 專案ID` 恢復唯讀。
+一般使用請先看 [README](../README.md)。ccc-mcp 提供兩種工作流模式：
+
+- `direct`（預設）：本機授權後，ChatGPT 可直接使用 `write_workspace` 修改原專案。
+- `agent-required`：`write_workspace` 在服務層被拒絕；必須留下 Task、Agent execution、原始報告、PM ContextPatch 與核准紀錄，才能由實作角色寫檔。
+
+切換嚴格模式：
+
+```bash
+ccc-mcp --project my-project config workflow-mode agent-required
+```
+
+這是持久化的後端規則，不依賴聊天 Prompt。SA 完成後若 `context_sync.needs_pm_refinement=true`，所有非 SA 角色的派工都會被拒絕，直到 PM 引用該 execution 的不可變原始報告並提交 ContextPatch。
+
+在 `direct` 模式，指定專案讀寫只需 `ccc-mcp project authorize 專案ID`：在本機確認一次後，ChatGPT 直接使用 write_workspace 讀改原專案，不需要 write-file、write-root、workspace-mode 或 Task／PLAN／EDIT／BATCH。授權會保存到本機資料庫，`project revoke 專案ID` 恢復唯讀。
 
 `bootstrap_project.project_access` 和 `get_project_settings.project_access` 回傳本次專案的實際授權。mode=read-write 時，使用 `read_workspace(project_id,path)` 取得現有 SHA256，再呼叫 `write_workspace(project_id,path,content,expected_sha256)`；新增檔案預期 SHA256 為 null。返回的 EDIT 編號只是修改紀錄，不需要另外核准它。保存完整原文／新文、雜湊與專案授權來源；重試不會重複追加內容，原檔若有其他修改會拒絕覆寫。
 
 這項一次授權僅由本機互動式 CLI 授予，綁定專案根目錄；MCP 沒有授權工具。只開放專案中的 UTF-8 文字檔新增／覆寫，單檔 200 KB，路徑與憑證保護保留；Python 原註解刪除仍會拒絕。撤銷會一併清除舊逐檔／目錄規則，停止後續原檔寫入。設定檔 JSON 只是副本，不能用它替自己開權限。
 
-以下保留的是 **進階分工及舊版相容流程**。只有明確要派 Codex／Claude、獨立 Worktree 或逐次計畫審核時才需要，普通 ChatGPT 專案編輯不必設定。
+以下是角色分工設定。`agent-required` 專案會強制使用此流程；`direct` 專案則只有明確要派 Codex／Claude、獨立 Worktree 或逐次計畫審核時才需要。
 
 以下在 Git Bash 執行，先 `source scripts/enable-real-agents.sh`。設定保存在本機資料庫，專案內的 `.ccc-mcp/settings.json` 是可閱讀的副本；請使用 CLI 修改。
 
@@ -119,13 +132,13 @@ ChatGPT 先逐檔讀取 SHA256、呼叫 propose_workspace_edit，再以 `create_
 
 使用者只執行一次 `workspace approve BATCH-...`，審閱整批差異，之後由 `write_workspace(project_id, edit_id="BATCH-...")` 套用。套用前先檢查所有成員的雜湊與授權，任一過期或被撤銷都在首次寫入前拒絕；批次中的 EDIT 不可另行單檔核准或套用。每檔個別原子寫入，中斷時 BATCH 維持 APPLYING；同一 BATCH 可重試，已寫入的內容不重複追加。檔案系統不提供整批原子交易，因此中斷可能留下部分已套用內容；外部再改動時會拒絕覆寫。
 
-## 整個任務直接開發原專案（ChatGPT）
+## 整個任務直接開發原專案（Codex／Claude／ChatGPT）
 
-設定一次 `config write-root .` 和 `config workspace-mode project`。之後依正常需求／計畫流程，本機核准一次 PLAN，ChatGPT 使用 write_task_file 即可在該次任務內持續修改範圍內的多個檔案，不需每檔再開放或核准 EDIT。每個既有檔案仍須提供剛讀到的 SHA256，Python 原註解刪除會立即拒絕；報告、Git Diff、本機測試與驗收沿用既有任務機制。
+設定一次 `config write-root .`（或執行 `project authorize`）和 `config workspace-mode project`。之後依正常需求／計畫流程，本機核准一次 PLAN，設定的 Codex、Claude 或 ChatGPT 實作角色即可在該次任務內修改原專案。ChatGPT 仍透過 `write_task_file` 接受 SHA256 與路徑檢查；本機 Codex／Claude CLI 則在原專案目錄執行，ccc-mcp 會在執行前後建立快照、檢查 Python 註解並保存差異及 CLI 稽核資料。
 
-預設仍為 worktree。project 模式目前只支援 ChatGPT 實作，不會偷偷把 Codex／Claude 原本的 Worktree 派工改成原地寫入。模式綁定每次執行；舊紀錄缺少欄位時一律視為 worktree。已有實作工作區的同一任務不可換模式，需另開任務；正在實作時不可切換模式，同一專案的 project 模式實作也不可與其他實作並行。
+預設仍為 worktree。`project` 模式會明確套用到該次 Codex／Claude／ChatGPT 執行，不會建立 Worktree。模式綁定每次執行；舊紀錄缺少欄位時一律視為 worktree。已有實作工作區的同一任務不可換模式，需另開任務；正在實作時不可切換模式，同一專案的 project 模式實作也不可與其他實作並行。
 
-切換模式會使該專案既有 APPROVED／PENDING 的計畫核准失效，請在提計畫前設定。第一次原地實作須有初始 Git commit，且業務檔案乾淨；同一任務修訂可沿用未提交成果。task test 依該次執行保存的模式在原專案或 Worktree 測試。`read_workspace(root_id="worktree", execution_id=...)` 在此模式是該次原專案工作目錄的相容別名，回報的 workspace 路徑為準。
+切換模式會使該專案既有 APPROVED／PENDING 的計畫核准失效，請在提計畫前設定。第一次原地實作須有初始 Git commit；一般模式要求業務檔案乾淨，`agent-required` 模式則允許從操作員核准計畫時的現有未提交狀態開始，並以 worker 執行前快照區分本次 Agent 變更。同一任務修訂可沿用未提交成果。task test 依該次執行保存的模式在原專案或 Worktree 測試。`read_workspace(root_id="worktree", execution_id=...)` 在此模式是該次原專案工作目錄的相容別名，回報的 workspace 路徑為準。
 
 ## 執行與 Token 證據
 
@@ -147,16 +160,16 @@ ChatGPT 網頁執行標示 `source=chatgpt_web`、`cli_invoked=false`，Token �
 ## 共用 Context 的完整循環
 
 ```text
-PM 已精修的 Context vN
+Context vN
   → SA／SD／RD 取得角色交接包（含完整 shared_context）
   → Agent 回傳原始報告與 context_updates 建議
-  → ccc-mcp 保存 CONTEXT-UPDATES.md 與原始引用
-  → ChatGPT PM collect_context_updates，閱讀來源後精修
-  → propose_context_patch → commit_context_patch，產生 vN+1
-  → 下一輪 Codex／Claude／ChatGPT 都取得 vN+1
+  → ccc-mcp 原子保存原始報告，並自動追加 unreviewed agent_results
+  → Context 自動成為 vN+1
+  → 下一輪 Codex／Claude／ChatGPT 自動取得 vN+1
+  → PM 可選擇性閱讀來源並以 ContextPatch 提升正式語意欄位
 ```
 
-Agent 的原始更新是待 PM 審閱的資料，不直接覆寫正式 Context。精修保留原始報告、引用與版本歷史；程式不會自行呼叫 ChatGPT 摘要。PM 要先提交精修版，再針對新版本提出與核准後續實作計畫。
+這個接力由程式事件自動完成，不依賴提示詞，也不會自行呼叫 ChatGPT 摘要。Agent 原始更新會進入 `shared_context.agent_results` 並明確標成 `unreviewed`，不會直接冒充已審核的 summary／architecture；PM 精修是可選的語意提升步驟。每筆自動結果保存 provider、role、原始 Context Version、execution/task ID 與不可變原始報告 SHA256。
 
 同一輪實作完成後，先使用仍有效的核准執行本機測試與驗收，再提交結案 Context。若要在 SD 與 RD 之間提交新版 Context，須針對新版重新提出並核准後續計畫；舊核准不會自動沿用到新版。
 

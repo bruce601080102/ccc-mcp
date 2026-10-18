@@ -206,6 +206,12 @@ class DirectEditHub:
         self, project_id, edit_id=None, *, path=None, content=None, expected_sha256=None
     ):
         """Write an authorized project file; retain legacy approved-edit compatibility."""
+        if self.get_project_settings(project_id)["workflow_mode"] == "agent-required":
+            raise PermissionDenied(
+                "Direct project writes are disabled by agent-required workflow mode. "
+                "Create a Task and dispatch the configured Codex/Claude roles; implementation files "
+                "must be written through an approved execution with write_task_file."
+            )
         if path is not None:
             if edit_id is not None or content is None:
                 raise BridgeError(

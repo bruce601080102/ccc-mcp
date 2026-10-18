@@ -4,6 +4,14 @@
 
 ## 角色與參數
 
+若要禁止 ChatGPT 直接改檔並強制保留 Agent／Context 證據鏈，先設定：
+
+```text
+ccc-mcp --project 專案ID config workflow-mode agent-required
+```
+
+可用值為 `direct`（允許授權後直接寫檔）與 `agent-required`（拒絕 `write_workspace`，並在未完成 PM Context 整理時拒絕非 SA 派工）。設定會持久保存，不是 Prompt 規則。
+
 設定格式（`ROLE`、`PROVIDER` 是要替換的欄位）：
 
 ```text

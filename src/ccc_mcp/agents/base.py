@@ -130,7 +130,8 @@ class BaseAgentAdapter(ABC):
             "No push, merge, deploy, credential access or recursive ccc-mcp/Codex invocations. "
             "Only perform the assigned role. Respond with the AgentReport JSON schema. "
             "Do not execute tests. Put proposed shared-context changes in context_updates; "
-            "the PM reviews and refines them before committing a new context version. "
+            "ccc-mcp records the structured result automatically as unreviewed shared Context, "
+            "and the PM may later promote reviewed facts into semantic sections. "
             "Clearly distinguish observations from unverified claims.\n\n"
             + canonical({"context_package": package, "instruction": instruction})
         )

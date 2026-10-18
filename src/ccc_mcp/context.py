@@ -124,7 +124,7 @@ class ContextHub:
 
     def latest(self, project_id):
         self.project(project_id)
-        return decode(
+        row = decode(
             self.store.one(
                 "SELECT * FROM context_versions WHERE project_id=? ORDER BY version DESC LIMIT 1",
                 (project_id,),
@@ -132,6 +132,9 @@ class ContextHub:
             "snapshot",
             "metadata",
         )
+        # Pydantic defaults make snapshots written by older ccc-mcp versions forward-compatible.
+        row["snapshot"] = ContextSnapshot.model_validate(row["snapshot"]).model_dump()
+        return row
 
     def source_ref(self, project_id, path):
         root = Path(self.project(project_id)["root"])
@@ -317,6 +320,7 @@ class ContextHub:
             f"## 必須保留的需求、驗收與限制\n{bullets(required)}\n\n"
             f"## 下一步\n{snapshot['next_action']}\n\n"
             f"## 未決問題\n{bullets(snapshot['unresolved_questions'])}\n\n"
+            f"## Agent 自動回報（未經 PM 語意審核）\n{bullets(snapshot['agent_results'])}\n\n"
             f"## 詳細來源\n{bullets(list(DOCUMENTS.values()))}\n"
             f"{bullets(snapshot['source_document_refs'])}\n"
         )
@@ -339,7 +343,8 @@ class ContextHub:
             + "\n",
             DOCUMENTS[
                 "state"
-            ]: f"# Current State\n\n{bullets(active)}\n\n{snapshot['next_action']}\n",
+            ]: f"# Current State\n\n{bullets(active)}\n\n{snapshot['next_action']}\n\n"
+            f"## Agent 自動回報（未經 PM 語意審核）\n{bullets(snapshot['agent_results'])}\n",
             DOCUMENTS["constraints"]: "# Constraints\n\n" + bullets(required) + "\n",
             DOCUMENTS["handoff"]: handoff,
         }
@@ -398,6 +403,7 @@ class ContextHub:
         refs += [
             r for fact in latest["snapshot"]["architecture"] for r in fact["source_document_refs"]
         ]
+        refs += [result["source_document_ref"] for result in latest["snapshot"]["agent_results"]]
         for ref in refs:
             try:
                 self.verify_refs(project_id, [ref])
@@ -432,6 +438,7 @@ class ContextHub:
                 "SELECT path,sha256 FROM artifacts WHERE project_id=? ORDER BY created DESC LIMIT 100",
                 (project_id,),
             )
+            execution_settings = self.get_project_settings(project_id)
             return {
                 "project_summary": snapshot["purpose"],
                 "context_version": latest["version"],
@@ -448,11 +455,13 @@ class ContextHub:
                 if handoff.exists()
                 else "",
                 "suggested_next_action": snapshot["next_action"],
-                "source_references": snapshot["source_document_refs"] + evidence,
+                "source_references": snapshot["source_document_refs"]
+                + [result["source_document_ref"] for result in snapshot["agent_results"]]
+                + evidence,
                 "validation": drift,
                 "working_context": snapshot,
-                "execution_settings": self.get_project_settings(project_id),
-                "project_access": self.get_project_access(project_id),
+                "execution_settings": execution_settings,
+                "project_access": execution_settings["project_access"],
                 "pending_chatgpt_handoffs": self.pending_chatgpt_handoffs(project_id),
                 "context_sync": self.context_sync_status(project_id),
                 "context_locations": self.context_locations(project_id),
@@ -472,6 +481,7 @@ class ContextHub:
             "next_action": snapshot["next_action"],
         }
         refs = snapshot["source_document_refs"][:]
+        refs += [result["source_document_ref"] for result in snapshot["agent_results"]]
         if role in {"SA", "REVIEW"}:
             content["architecture"] = snapshot["architecture"]
             content["architecture_validation"] = self.validate_context(project_id)
@@ -497,7 +507,11 @@ class ContextHub:
         if task_id:
             content["task"] = self.task(project_id, task_id)
             if role in {"SD", "RD", "SD/RD", "REVIEW"}:
-                content["approved_plan"] = self.approved_plan(project_id, task_id)
+                content["approved_plan"] = self.approved_plan(
+                    project_id,
+                    task_id,
+                    require_current_context=role != "REVIEW",
+                )
             names = {
                 "SA": ["REQUIREMENT.md"],
                 "PM": TASK_DOCUMENTS,
@@ -577,7 +591,8 @@ class ContextHub:
         ):
             metadata = json.loads(row["metadata"])
             consumed.update(metadata.get("source_execution_ids", []))
-            cited_paths.update(ref["path"] for ref in metadata.get("source_document_refs", []))
+            if metadata.get("author_role") != "SYSTEM":
+                cited_paths.update(ref["path"] for ref in metadata.get("source_document_refs", []))
             snapshot = json.loads(row["snapshot"])
             cited_paths.update(ref["path"] for ref in snapshot.get("source_document_refs", []))
             for fact in snapshot.get("architecture", []):
@@ -606,8 +621,8 @@ class ContextHub:
             "context_version": latest["version"],
             "needs_pm_refinement": bool(pending),
             "pending_reports": pending,
-            "workflow": "Collect original reports; ChatGPT PM reviews and refines ContextPatch, "
-            "cites source_execution_ids and original SHA256 references, commits, then hands off the new version.",
+            "workflow": "Raw agent reports are automatically versioned into shared Context as unreviewed "
+            "agent_results. PM refinement is optional and promotes reviewed facts into semantic sections.",
         }
 
     def collect_context_updates(self, project_id):
@@ -635,8 +650,61 @@ class ContextHub:
             "evidence": artifacts,
             "context_sync": self.context_sync_status(project_id),
             "context_locations": self.context_locations(project_id),
-            "next_step": "PM reads sources and proposes ContextPatch; no automatic LLM summarization",
+            "next_step": "Raw agent results are already in shared Context; PM may promote reviewed facts with ContextPatch",
         }
+
+    def record_agent_context_result(self, conn, execution, report, report_path, report_sha256):
+        """Atomically append a provenance-backed, explicitly unreviewed agent result to Context."""
+        current = conn.execute(
+            "SELECT * FROM context_versions WHERE project_id=? ORDER BY version DESC LIMIT 1",
+            (execution["project_id"],),
+        ).fetchone()
+        snapshot = json.loads(current["snapshot"])
+        results = snapshot.setdefault("agent_results", [])
+        if any(item["execution_id"] == execution["id"] for item in results):
+            return current["version"]
+        source_ref = {"path": report_path, "sha256": report_sha256}
+        results.append(
+            {
+                "execution_id": execution["id"],
+                "task_id": execution["task_id"],
+                "provider": execution["agent"],
+                "role": execution["role"],
+                "base_context_version": execution["context_version"],
+                "summary": report["summary"],
+                "findings": report.get("findings", []),
+                "risks": report.get("risks", []),
+                "next_action": report["next_action"],
+                "context_updates": report.get("context_updates", []),
+                "source_document_ref": source_ref,
+                "review_status": "unreviewed",
+            }
+        )
+        parsed = ContextSnapshot.model_validate(snapshot)
+        version = current["version"] + 1
+        metadata = {
+            "new_context_version": version,
+            "changed_sections": ["agent_results"],
+            "timestamp": now(),
+            "git_revision": self.git_revision(Path(self.project(execution["project_id"])["root"])),
+            "recorded_execution_ids": [execution["id"]],
+            "source_task_ids": [execution["task_id"]],
+            "source_document_refs": [source_ref],
+            "update_reason": "Automatically recorded immutable agent result",
+            "author_role": "SYSTEM",
+            "semantic_review_ack": False,
+        }
+        conn.execute(
+            "INSERT INTO context_versions VALUES(?,?,?,?,?)",
+            (
+                execution["project_id"],
+                version,
+                parsed.model_dump_json(),
+                canonical(metadata),
+                now(),
+            ),
+        )
+        return version
 
     def save_artifact(self, conn, project_id, task_id, name, execution_id, content):
         root = Path(self.project(project_id)["root"])

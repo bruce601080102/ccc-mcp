@@ -55,8 +55,12 @@ Codex 與 Claude Code 不必兩個都安裝；缺少的 provider 可在角色設
 ccc-mcp --project TradeAdvisorv3 config role SA codex --quota-fallback chatgpt
 ccc-mcp --project TradeAdvisorv3 config role SD/RD claude --quota-fallback chatgpt
 ccc-mcp --project TradeAdvisorv3 config role REVIEW codex --quota-fallback chatgpt
+ccc-mcp --project TradeAdvisorv3 config workflow-mode agent-required
+ccc-mcp --project TradeAdvisorv3 config workspace-mode project
 ccc-mcp --project TradeAdvisorv3 config show
 ```
+
+`workflow-mode agent-required` 是硬性工作流開關。啟用後，`write_workspace` 會在後端直接拒絕寫入；修改必須建立 Task，先執行設定好的 SA，再由 PM 將附有 execution ID 與原始報告 SHA256 的結果提交為 ContextPatch。只要仍有未整理報告，SD／RD／SD/RD／REVIEW 都無法派工，任務也不能驗收完成。這不是靠 Prompt 約定。`workspace-mode project` 讓核准後的實作 Agent 寫入原專案；若要隔離在 Git Worktree，可省略這行。
 
 上面的快速設定刻意省略兩個選填參數：`--model`（模型）與 `--effort`（思考等級）。省略時，ccc-mcp 不會指定模型或思考等級，而是使用該本機 CLI 自己的預設值。若要固定 REVIEW 使用的 Codex 模型與思考等級，完整寫法例如：
 
@@ -120,11 +124,11 @@ bash scripts/install-tunnel-client.sh
 完成後讀回確認，列出修改內容及測試狀態，並整理共享 Context。
 ```
 
-ChatGPT 會先確認專案的讀寫授權，再透過讀寫工具完成修改。你不用記工具名稱、指定角色或建立工作區。
+若專案使用預設的 `direct` 模式，ChatGPT 會先確認專案的讀寫授權，再透過讀寫工具完成修改。若使用 `agent-required`，ccc-mcp 會自動強制 Task → SA → PM ContextPatch → 核准 → SD/RD 的證據鏈；不需要在每次需求中另寫提示詞。
 
 檔案直接寫回原專案。程式與測試仍須在本機執行；未執行的測試不能宣稱通過。
 
-如果它仍說「只能修改 Worktree」，請它重新恢復專案、查看 `project_access`，使用 `write_workspace`。普通專案編輯不使用唯讀 SA 任務的 `write_task_file`。
+若 `workflow_mode=direct` 卻仍說「只能修改 Worktree」，請它重新恢復專案、查看 `project_access`，使用 `write_workspace`。若 `workflow_mode=agent-required`，則必須使用 Task 與 `write_task_file`，不能改用 `write_workspace` 繞過證據鏈。
 
 ## 共用上下文與精簡回覆
 
@@ -134,9 +138,9 @@ ChatGPT 會先確認專案的讀寫授權，再透過讀寫工具完成修改。
 - `.ccc-mcp/context/`：架構、決策、進度與限制。
 - `.ccc-mcp/tasks/任務編號/executions/執行編號/`：Agent 完整原始回答及 `CONTEXT-UPDATES.md` 建議。
 
-流程是 **Codex／Claude 回報 → ChatGPT 審閱、精修並提交新版 Context → 下一個 Agent 取得新版**。原始報告保留，精簡不會覆蓋證據。
+流程是 **Codex／Claude 回報 → ccc-mcp 自動把具來源的原始結果寫入新版 Context → 下一個 Agent 自動取得新版**。不需要依賴提示詞觸發接力。自動寫入內容標示為 `unreviewed`，完整原始報告與 SHA256 來源都會保留。
 
-Agent 完成後，若 `context_sync.needs_pm_refinement=true`，代表 ChatGPT 還沒完成整理；不是背景自動呼叫 ChatGPT。`bootstrap_project` 會回傳實際資料位置與待整理報告。SQLite 保存正式版本，Markdown 是可閱讀的投影。
+Agent 完成後 Context Version 會自動增加，`shared_context.agent_results` 會包含 provider、role、摘要、findings、risks、context_updates、來源 execution 與原始報告雜湊。若 `context_sync.needs_pm_refinement=true`，表示這些原始結果尚未由 PM 提升為正式 summary／architecture。在 `direct` 模式它只是一個狀態；在 `agent-required` 模式它會硬性阻止下一個非 SA Agent 派工。SQLite 保存正式版本，Markdown 是可閱讀的投影。
 
 聊天視窗預設只呈現六點以內：結果、執行角色、修改、測試、Context 版本與下一步。需要細節時再說「展開完整報告」。這是給 ChatGPT 的工具指示，實際呈現仍由聊天模型決定。
 

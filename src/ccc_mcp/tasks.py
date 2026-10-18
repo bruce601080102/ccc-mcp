@@ -292,7 +292,7 @@ class TaskHub:
             self.sync_documents(project_id)
         return {"status": "APPROVED", "identity": identity, "plan_hash": plan["hash"]}
 
-    def approved_plan(self, project_id, task_id):
+    def approved_plan(self, project_id, task_id, require_current_context=True):
         approvals = self.get_approval_status(project_id, task_id)
         for approval in approvals:
             if approval["status"] != "APPROVED":
@@ -301,7 +301,10 @@ class TaskHub:
             if (
                 plan["version"] == approval["plan_version"]
                 and plan["hash"] == approval["plan_hash"]
-                and approval["context_version"] == self.latest(project_id)["version"]
+                and (
+                    not require_current_context
+                    or self.context_preserves_approval(project_id, approval["context_version"])
+                )
             ):
                 # A newer plan of a different ID also invalidates an older authorization.
                 newest = self.store.one(
@@ -310,8 +313,27 @@ class TaskHub:
                 )
                 if newest["id"] == plan["id"] and newest["version"] == plan["version"]:
                     return plan
+        action = "Implementation" if require_current_context else "Review"
         raise PermissionDenied(
-            "Implementation requires local human approval of the current plan and context"
+            f"{action} requires local human approval of the applicable plan"
+            + (" and current context" if require_current_context else "")
+        )
+
+    def context_preserves_approval(self, project_id, approved_version):
+        """Automatic evidence append does not invalidate a human-approved implementation plan."""
+        current = self.latest(project_id)["version"]
+        if current < approved_version:
+            return False
+        if current == approved_version:
+            return True
+        rows = self.store.all(
+            "SELECT metadata FROM context_versions WHERE project_id=? AND version>? ORDER BY version",
+            (project_id, approved_version),
+        )
+        return bool(rows) and all(
+            (metadata := json.loads(row["metadata"])).get("author_role") == "SYSTEM"
+            and set(metadata.get("changed_sections", [])) <= {"agent_results"}
+            for row in rows
         )
 
     def record_decision_local(
@@ -416,13 +438,19 @@ class TaskHub:
             self.task(project_id, task_id)
             if self.latest(project_id)["version"] != context_version:
                 raise VersionConflict("Dispatch Context Version is stale")
-            workspace_mode = self.get_project_settings(project_id)["workspace_mode"]
+            project_settings = self.get_project_settings(project_id)
+            workspace_mode = project_settings["workspace_mode"]
+            if project_settings["workflow_mode"] == "agent-required" and role != "SA":
+                pending = self.context_sync_status(project_id)["pending_reports"]
+                if pending:
+                    raise PermissionDenied(
+                        "Agent-required workflow has unrefined reports. PM must cite the original "
+                        "AgentReport, propose_context_patch, and commit_context_patch before the next role."
+                    )
             if role not in {"SA", "REVIEW"}:
                 self.approved_plan(project_id, task_id)
-                if workspace_mode == "project" and agent != "chatgpt":
-                    raise BridgeError(
-                        "Project workspace mode currently requires the ChatGPT provider"
-                    )
+                if workspace_mode == "project":
+                    self.prepare_project_workspace(project_id, task_id)
                 prior = self.store.one(
                     "SELECT options FROM agent_executions WHERE project_id=? AND task_id=? "
                     "AND worktree IS NOT NULL AND role NOT IN ('SA','REVIEW') ORDER BY created DESC LIMIT 1",
@@ -680,12 +708,7 @@ class TaskHub:
                     )
                 )
                 if report:
-                    self.save_artifact(
-                        conn,
-                        project_id,
-                        task_id,
-                        "CONTEXT-UPDATES.md",
-                        execution_id,
+                    updates_content = (
                         "# Proposed context updates — PM review required\n\n"
                         + canonical(
                             {
@@ -698,18 +721,30 @@ class TaskHub:
                                 "next_action": report["next_action"],
                             }
                         )
-                        + "\n",
-                    )
-                    name = {"SA": "SA-REPORT.md", "REVIEW": "REVIEW.md"}.get(
-                        row["role"], "IMPLEMENTATION.md"
+                        + "\n"
                     )
                     self.save_artifact(
                         conn,
                         project_id,
                         task_id,
+                        "CONTEXT-UPDATES.md",
+                        execution_id,
+                        updates_content,
+                    )
+                    name = {"SA": "SA-REPORT.md", "REVIEW": "REVIEW.md"}.get(
+                        row["role"], "IMPLEMENTATION.md"
+                    )
+                    report_content = f"# {name}\n\n{canonical(report)}\n"
+                    report_path = self.save_artifact(
+                        conn,
+                        project_id,
+                        task_id,
                         name,
                         execution_id,
-                        f"# {name}\n\n{canonical(report)}\n",
+                        report_content,
+                    )
+                    self.record_agent_context_result(
+                        conn, row, report, report_path, digest(report_content.encode())
                     )
                     if row["role"] not in {"SA", "REVIEW"}:
                         self.save_artifact(
@@ -761,6 +796,13 @@ class TaskHub:
         task = self.task(project_id, task_id)
         if task["state"] != "AWAITING_PM_REVIEW":
             raise BridgeError("Task must be awaiting PM review")
+        if self.get_project_settings(project_id)["workflow_mode"] == "agent-required":
+            pending = self.context_sync_status(project_id)["pending_reports"]
+            if pending:
+                raise PermissionDenied(
+                    "Agent-required workflow still has unrefined reports. PM must commit a "
+                    "provenance-backed ContextPatch before the task can be accepted."
+                )
         identity = confirm_local(
             "驗收任務及測試證據：\n" + canonical(self.get_task_result(project_id, task_id)), task_id
         )

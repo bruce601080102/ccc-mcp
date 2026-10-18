@@ -118,7 +118,9 @@ SA 可以反覆分析，SD/RD、SA、Review 也可依狀態交替。COMPLETED/CA
 
 ## Context Optimization
 
-ccc-mcp 不自行呼叫 ChatGPT 或產生模型摘要。PM 的四個步驟是：
+Agent 成功回報時，ccc-mcp 會在同一交易中保存不可變原始報告，追加一筆 `unreviewed` 的 `shared_context.agent_results`，並自動增加 Context Version。下一個 Agent 的 handoff 會直接包含這筆結果；此流程不呼叫 ChatGPT，也不依賴提示詞。
+
+需要把原始結果提升成正式 summary、architecture 或其他語意欄位時，PM 才執行以下選擇性精修：
 
 1. `context collect` / MCP `collect_context_updates` 收集事件、成果與決策。
 2. PM 閱讀來源，產生 ContextPatch。

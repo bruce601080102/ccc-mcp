@@ -67,6 +67,22 @@ def test_project_grant_does_not_require_a_git_repo(bridge, tmp_path, human):
     assert not (folder / ".git").exists()
 
 
+def test_agent_required_mode_blocks_direct_writes_and_persists(bridge, human):
+    bridge.authorize_project_local("demo")
+    configured = bridge.configure_workflow_mode("demo", "agent-required")
+    assert configured["workflow_mode"] == "agent-required"
+    restored = CCCMCP(bridge.home)
+    settings = restored.get_project_settings("demo")
+    assert settings["workflow_mode"] == "agent-required"
+    assert settings["project_access"]["direct_write_allowed"] is False
+    assert restored.bootstrap_project("demo")["project_access"]["requires_task"] is True
+
+    with pytest.raises(PermissionDenied, match="agent-required"):
+        write(bridge, "new.py", "value=1\n")
+
+    assert not (root(bridge) / "new.py").exists()
+
+
 def test_authorization_requires_interactive_operator(bridge):
     with pytest.raises(PermissionDenied, match="interactive"):
         bridge.authorize_project_local("demo")
@@ -193,6 +209,9 @@ def test_simple_cli_and_hidden_legacy_setup(bridge, human, monkeypatch):
     granted = runner.invoke(app, args + ["project", "authorize", "demo"])
     assert granted.exit_code == 0, granted.output
     assert json.loads(granted.output)["mode"] == "read-write"
+    workflow = runner.invoke(app, args + ["--project", "demo", "config", "workflow-mode", "agent-required"])
+    assert workflow.exit_code == 0, workflow.output
+    assert json.loads(workflow.output)["workflow_mode"] == "agent-required"
     help_text = runner.invoke(app, args + ["config", "--help"]).output
     for hidden in ("write-root", "write-file", "workspace-mode"):
         assert hidden not in help_text

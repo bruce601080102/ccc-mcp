@@ -6,6 +6,7 @@ from conftest import approve
 from ccc_mcp.errors import BridgeError, PermissionDenied, VersionConflict
 from ccc_mcp.models import AgentReport
 from ccc_mcp.service import CCCMCP
+from ccc_mcp.worker import run_execution
 
 
 def root(bridge):
@@ -200,14 +201,25 @@ def test_project_mode_keeps_sha_comment_and_revocation_checks(bridge, human):
         bridge.write_task_file("demo", eid, "another.py", "value=2\n")
 
 
-def test_project_mode_does_not_silently_enable_native_cli_root_writes(bridge, human):
+def test_agent_required_project_mode_allows_approved_native_cli_on_current_state(
+    bridge, human
+):
+    bridge.authorize_project_local("demo")
+    bridge.configure_workflow_mode("demo", "agent-required")
     bridge.configure_workspace_mode("demo", "project")
+    (root(bridge) / "app.py").write_text(
+        "# original comment\ndef value():\n    return 99\n", encoding="utf-8"
+    )
     bridge.create_task("demo", "Implement")
     approve(bridge)
-    with pytest.raises(BridgeError, match="ChatGPT"):
-        bridge.dispatch_agent(
-            "demo", "TASK-0001", "claude", "SD/RD", 1, "Implement", adapter="fake"
-        )
+    queued = bridge.dispatch_agent(
+        "demo", "TASK-0001", "claude", "SD/RD", 1, "Implement", adapter="fake"
+    )
+    run_execution(bridge, queued["execution_id"])
+    saved = bridge.get_task_result("demo", "TASK-0001")[-1]
+    assert saved["status"] == "SUCCEEDED"
+    assert Path(saved["worktree"]) == root(bridge)
+    assert not (bridge.home / "worktrees").exists()
 
 
 def test_project_mode_allows_same_task_revision_without_requiring_commit(bridge, human):
@@ -216,7 +228,14 @@ def test_project_mode_allows_same_task_revision_without_requiring_commit(bridge,
     bridge.submit_agent_report(
         "demo", eid, AgentReport(summary="First implementation", next_action="Refine").model_dump()
     )
-    retry = bridge.dispatch_agent("demo", "TASK-0001", "auto", "SD/RD", 1, "Refine")
+    retry = bridge.dispatch_agent(
+        "demo",
+        "TASK-0001",
+        "auto",
+        "SD/RD",
+        bridge.latest("demo")["version"],
+        "Refine",
+    )
     sha = bridge.read_workspace("demo", "new.py")["sha256"]
     bridge.write_task_file("demo", retry["execution_id"], "new.py", "value = 2\n", sha)
     assert (root(bridge) / "new.py").read_text() == "value = 2\n"

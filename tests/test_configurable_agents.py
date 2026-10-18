@@ -118,14 +118,17 @@ def test_chatgpt_readonly_and_pm_context_refinement_roundtrip(bridge):
     bridge.submit_agent_report(
         "demo", first["execution_id"], report(context_updates=["Candidate fact"])
     )
-    assert bridge.latest("demo")["version"] == 1
+    assert bridge.latest("demo")["version"] == 2
+    automatic = bridge.latest("demo")["snapshot"]["agent_results"][0]
+    assert automatic["provider"] == "chatgpt"
+    assert automatic["context_updates"] == ["Candidate fact"]
     updates = bridge.collect_context_updates("demo")
     original = next(item for item in updates["evidence"] if "CONTEXT-UPDATES.md" in item["path"])
     ref = {key: original[key] for key in ("path", "sha256")}
     patch = bridge.propose_context_patch(
         "demo",
         {
-            "base_context_version": 1,
+            "base_context_version": 2,
             "changes": {"summary": "PM refined shared context"},
             "source_task_ids": ["TASK-0001"],
             "source_document_refs": [ref],
@@ -139,7 +142,7 @@ def test_chatgpt_readonly_and_pm_context_refinement_roundtrip(bridge):
         second["context_package"]["content"]["shared_context"]["summary"]
         == "PM refined shared context"
     )
-    assert second["context_package"]["context_version"] == 2
+    assert second["context_package"]["context_version"] == 3
 
 
 def test_chatgpt_implementation_requires_approval_and_uses_cas(bridge, human):

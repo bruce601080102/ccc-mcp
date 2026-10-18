@@ -18,7 +18,7 @@ def test_sd_handoff_contains_approved_plan_and_current_version(bridge, human):
     run_execution(bridge, implementation["execution_id"])
     result = bridge.get_task_result("demo", "TASK-0001")[-1]
     package = result["package"]
-    assert package["context_version"] == 1
+    assert package["context_version"] == 2
     assert package["content"]["approved_plan"]["id"] == "PLAN-A"
     assert "SA-REPORT.md" in package["content"]["reports"]
     assert result["worktree"] != bridge.project("demo")["root"]

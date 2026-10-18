@@ -76,12 +76,24 @@ class ConfigurationHub:
             }
             for role in ROLES
         }
+        workflow_mode = settings.get("workflow_mode", "direct")
+        project_access = self.get_project_access(project_id)
+        if workflow_mode == "agent-required":
+            project_access = {
+                **project_access,
+                "write_tool": "write_task_file",
+                "requires_task": True,
+                "requires_plan_approval": True,
+                "requires_context_refinement": True,
+                "direct_write_allowed": False,
+            }
         return {
             "roles": {**defaults, **settings.get("roles", {})},
-            "project_access": self.get_project_access(project_id),
+            "project_access": project_access,
             "read_roots": settings.get("read_roots", {}),
             "writable_files": settings.get("writable_files", []),
             "writable_roots": settings.get("writable_roots", []),
+            "workflow_mode": workflow_mode,
             "workspace_mode": settings.get("workspace_mode", "worktree"),
             "worktree_dir": settings.get("worktree_dir", str(self.home / "worktrees")),
         }
@@ -184,6 +196,14 @@ class ConfigurationHub:
                 )
                 self._save_settings(project_id, settings)
             return settings
+
+    def configure_workflow_mode(self, project_id, mode):
+        if mode not in {"direct", "agent-required"}:
+            raise BridgeError("Workflow mode must be direct or agent-required")
+        with self.lock(project_id):
+            settings = self.get_project_settings(project_id)
+            settings["workflow_mode"] = mode
+            return self._save_settings(project_id, settings)
 
     def execution_workspace(self, row):
         options = row.get("options") or {}
