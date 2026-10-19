@@ -74,7 +74,9 @@ class ProjectAccessHub:
                 ("AUTH-" + uuid.uuid4().hex[:16], project_id, project["root"], identity, now()),
             )
             # Revoke old granular grants too, so they cannot silently retain original-file access.
-            settings = self.get_project_settings(project_id)
+            # Revocation must remain possible even if an edited settings file
+            # is malformed; the immutable access event is authoritative.
+            settings = self.get_project_settings(project_id, import_file=False)
             settings["writable_files"] = []
             settings["writable_roots"] = []
             self._save_settings(project_id, settings)

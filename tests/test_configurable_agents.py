@@ -48,6 +48,90 @@ def test_role_settings_persist_and_resolve_per_execution(bridge, monkeypatch):
     assert CCCMCP(bridge.home).get_project_settings("demo")["roles"]["SA"]["provider"] == "chatgpt"
 
 
+def test_manual_settings_json_edits_control_next_dispatch(bridge, human):
+    bridge.authorize_project_local("demo")
+    path = Path(bridge.project("demo")["root"]) / ".ccc-mcp/settings.json"
+    document = json.loads(path.read_text(encoding="utf-8"))
+    document["roles"]["SA"]["provider"] = "chatgpt"
+    document["roles"]["SA"]["quota_fallback"] = None
+    document["roles"]["SD/RD"]["provider"] = "chatgpt"
+    document["language"] = "ch"
+    path.write_text(json.dumps(document, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    started = bridge.start_project_request("demo", "Analyze app.py")
+    execution = bridge.store.one(
+        "SELECT agent,role,adapter,options FROM agent_executions WHERE id=?",
+        (started["sa_execution"]["execution_id"],),
+    )
+    assert (execution["agent"], execution["role"], execution["adapter"]) == (
+        "chatgpt", "SA", "interactive"
+    )
+    saved = json.loads(
+        bridge.store.one("SELECT content FROM project_settings WHERE project_id='demo'")["content"]
+    )
+    assert saved["roles"]["SD/RD"]["provider"] == "chatgpt"
+    assert saved["language"] == "ch"
+    assert json.loads(execution["options"])["agent_settings"]["provider"] == "chatgpt"
+
+
+def test_manual_settings_json_edits_survive_later_cli_change(bridge, human):
+    bridge.authorize_project_local("demo")
+    path = Path(bridge.project("demo")["root"]) / ".ccc-mcp/settings.json"
+    document = json.loads(path.read_text(encoding="utf-8"))
+    document["roles"]["SD/RD"]["provider"] = "chatgpt"
+    path.write_text(json.dumps(document), encoding="utf-8")
+
+    bridge.configure_role("demo", "REVIEW", "codex", effort="high")
+    assert bridge.get_project_settings("demo")["roles"]["SD/RD"]["provider"] == "chatgpt"
+    assert json.loads(path.read_text(encoding="utf-8"))["roles"]["SD/RD"]["provider"] == "chatgpt"
+
+
+def test_config_show_imports_manual_settings_json_edit(bridge, human):
+    bridge.authorize_project_local("demo")
+    path = Path(bridge.project("demo")["root"]) / ".ccc-mcp/settings.json"
+    document = json.loads(path.read_text(encoding="utf-8"))
+    document["roles"]["SD/RD"]["provider"] = "chatgpt"
+    path.write_text(json.dumps(document), encoding="utf-8")
+
+    result = CliRunner().invoke(
+        app, ["--home", str(bridge.home), "--project", "demo", "config", "show"]
+    )
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["roles"]["SD/RD"]["provider"] == "chatgpt"
+
+
+def test_manual_settings_import_waits_until_outer_transaction_finishes(bridge, human):
+    bridge.authorize_project_local("demo")
+    path = Path(bridge.project("demo")["root"]) / ".ccc-mcp/settings.json"
+    document = json.loads(path.read_text(encoding="utf-8"))
+    document["roles"]["SD/RD"]["provider"] = "chatgpt"
+    path.write_text(json.dumps(document), encoding="utf-8")
+
+    with bridge.store.transaction():
+        assert bridge.get_project_settings("demo")["roles"]["SD/RD"]["provider"] == "claude"
+    assert bridge.get_project_settings("demo")["roles"]["SD/RD"]["provider"] == "chatgpt"
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "{bad json",
+        '{"roles":{"SD/RD":{"provider":"unknown"}}}',
+        '{"roles":{"SD/RD":{"provider":"chatgpt","model":"sonnet"}}}',
+    ],
+)
+def test_invalid_manual_settings_json_fails_closed(bridge, human, content):
+    bridge.authorize_project_local("demo")
+    path = Path(bridge.project("demo")["root"]) / ".ccc-mcp/settings.json"
+    path.write_text(content, encoding="utf-8")
+    with pytest.raises(BridgeError):
+        bridge.resolve_agent_settings("demo", "SD/RD")
+    stored = json.loads(
+        bridge.store.one("SELECT content FROM project_settings WHERE project_id='demo'")["content"]
+    )
+    assert stored["roles"]["SD/RD"]["provider"] == "claude"
+
+
 @pytest.mark.parametrize("role", ["SA", "SD", "RD", "SD/RD", "REVIEW"])
 @pytest.mark.parametrize("provider", ["codex", "claude", "chatgpt"])
 def test_role_is_independent_of_provider(bridge, role, provider):

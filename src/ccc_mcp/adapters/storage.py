@@ -1,5 +1,6 @@
 import json
 import sqlite3
+import threading
 from contextlib import contextmanager
 from datetime import UTC, datetime
 
@@ -106,6 +107,7 @@ CREATE TRIGGER IF NOT EXISTS context_no_delete BEFORE DELETE ON context_versions
 class Store:
     def __init__(self, home):
         self.path = home / "bridge.sqlite3"
+        self._transaction_state = threading.local()
         with self.connect() as conn:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.executescript(SCHEMA)
@@ -129,7 +131,15 @@ class Store:
     def transaction(self):
         with self.connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
-            yield conn
+            self._transaction_state.active = True
+            try:
+                yield conn
+            finally:
+                self._transaction_state.active = False
+
+    @property
+    def in_transaction(self):
+        return getattr(self._transaction_state, "active", False)
 
     def all(self, query, args=()):
         with self.connect() as conn:

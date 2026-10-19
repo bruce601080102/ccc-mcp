@@ -112,6 +112,35 @@ def test_access_history_is_immutable_and_json_is_not_authority(bridge, human):
         bridge.store.execute("DELETE FROM project_access_events")
 
 
+def test_manual_settings_json_cannot_expand_project_permissions(bridge):
+    path = root(bridge) / ".ccc-mcp/settings.json"
+    path.write_text(
+        json.dumps(
+            {
+                "roles": {"SA": {"provider": "chatgpt"}},
+                "project_access": {"mode": "read-write"},
+                "writable_roots": ["C:/"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    settings = bridge.get_project_settings("demo")
+    assert settings["roles"]["SA"]["provider"] == "chatgpt"
+    assert settings["project_access"]["mode"] == "read-only"
+    assert settings["writable_roots"] == []
+    with pytest.raises(PermissionDenied, match="project authorize demo"):
+        bridge.start_project_request("demo", "Change app.py")
+
+
+def test_project_revoke_remains_available_with_malformed_settings_file(bridge, human, monkeypatch):
+    bridge.authorize_project_local("demo")
+    path = root(bridge) / ".ccc-mcp/settings.json"
+    path.write_text("{broken", encoding="utf-8")
+    monkeypatch.setattr("ccc_mcp.core.approval.local_identity", lambda: "test-principal")
+    assert bridge.revoke_project_local("demo")["mode"] == "read-only"
+    assert bridge.get_project_settings("demo")["project_access"]["mode"] == "read-only"
+
+
 def test_cli_has_no_user_selectable_modes(bridge, human, monkeypatch):
     runner = CliRunner()
     args = ["--home", str(bridge.home)]

@@ -33,6 +33,76 @@ def directory(path, create=False):
 
 
 class ConfigurationHub:
+    @staticmethod
+    def _validated_role(role, provider, model=None, effort=None, quota_fallback=None):
+        if role not in ROLES or not isinstance(provider, str) or provider not in PROVIDERS:
+            raise BridgeError("Unsupported role or provider")
+        if model is not None and (
+            not isinstance(model, str)
+            or not model
+            or len(model) > 160
+            or model.startswith("-")
+            or any(char.isspace() for char in model)
+        ):
+            raise BridgeError("Invalid model identifier")
+        if effort is not None and (
+            not isinstance(effort, str) or effort not in EFFORTS[provider]
+        ):
+            raise BridgeError("Effort not supported by this provider")
+        if provider == "chatgpt" and model:
+            raise BridgeError("Choose the ChatGPT web model in the conversation UI, not in ccc-mcp")
+        if quota_fallback is not None and (
+            not isinstance(quota_fallback, str) or quota_fallback not in PROVIDERS
+        ):
+            raise BridgeError("Unsupported quota fallback")
+        result = {
+            "provider": provider,
+            "model": model,
+            "effort": effort,
+            "quota_fallback": quota_fallback,
+        }
+        reject_secrets(result)
+        return result
+
+    def _editable_file_settings(self, settings, defaults, root):
+        """Import operator-editable settings; never trust file-based authorization."""
+        path = safe_path(root, metadata_name(root) + "/settings.json")
+        if not path.exists():
+            return settings
+        try:
+            if path.stat().st_size > 1_000_000:
+                raise BridgeError("settings.json is too large")
+            document = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise BridgeError("Invalid settings.json; fix the file before continuing") from exc
+        if not isinstance(document, dict):
+            raise BridgeError("settings.json must contain a JSON object")
+        updated = dict(settings)
+        if "roles" in document:
+            roles = document["roles"]
+            if not isinstance(roles, dict):
+                raise BridgeError("settings.json roles must be an object")
+            updated_roles = dict(settings.get("roles", {}))
+            for role, values in roles.items():
+                if role not in ROLES or not isinstance(values, dict):
+                    raise BridgeError("settings.json contains an invalid role")
+                base = {**defaults[role], **updated_roles.get(role, {})}
+                configured = {**base, **values}
+                updated_roles[role] = self._validated_role(
+                    role,
+                    configured.get("provider"),
+                    configured.get("model"),
+                    configured.get("effort"),
+                    configured.get("quota_fallback"),
+                )
+            updated["roles"] = updated_roles
+        if "language" in document:
+            language = document["language"]
+            if not isinstance(language, str) or language not in LANGUAGES:
+                raise BridgeError("Language must be zh-TW, ch or en")
+            updated["language"] = language
+        return updated
+
     def resolve_agent_settings(self, project_id, role, agent="auto", model=None, effort=None):
         if role not in ROLES:
             raise BridgeError("Unsupported role")
@@ -66,12 +136,8 @@ class ConfigurationHub:
         reject_secrets(resolved)
         return resolved
 
-    def get_project_settings(self, project_id):
-        self.project(project_id)
-        row = self.store.one(
-            "SELECT content FROM project_settings WHERE project_id=?", (project_id,)
-        )
-        settings = json.loads(row["content"]) if row else {}
+    def get_project_settings(self, project_id, *, import_file=True):
+        project = self.project(project_id)
         defaults = {
             role: {
                 "provider": "codex" if role in {"SA", "REVIEW"} else "claude",
@@ -81,6 +147,29 @@ class ConfigurationHub:
             }
             for role in ROLES
         }
+        for _ in range(3):
+            row = self.store.one(
+                "SELECT content FROM project_settings WHERE project_id=?", (project_id,)
+            )
+            settings = json.loads(row["content"]) if row else {}
+            # An outer write transaction already owns SQLite's writer lock.
+            # Its caller uses the committed settings; the next unlocked read
+            # imports a newly edited file before another dispatch can begin.
+            if self.store.in_transaction or not import_file:
+                break
+            updated = self._editable_file_settings(settings, defaults, Path(project["root"]))
+            if updated == settings:
+                break
+            with self.store.transaction() as conn:
+                changed = conn.execute(
+                    "UPDATE project_settings SET content=? WHERE project_id=? AND content=?",
+                    (canonical(updated), project_id, row["content"]),
+                ).rowcount
+            if changed:
+                settings = updated
+                break
+        else:
+            raise BridgeError("Project settings changed concurrently; retry")
         project_access = self.get_project_access(project_id)
         continuously_authorized = project_access["mode"] == "read-write"
         workflow_mode = "agent-required" if continuously_authorized else settings.get(
@@ -118,10 +207,6 @@ class ConfigurationHub:
                 if k not in {"workflow_mode", "workspace_mode"}
             }
         reject_secrets(settings)
-        self.store.execute(
-            "INSERT INTO project_settings VALUES(?,?) ON CONFLICT(project_id) DO UPDATE SET content=excluded.content",
-            (project_id, canonical(settings)),
-        )
         atomic_write(
             safe_path(
                 Path(self.project(project_id)["root"]),
@@ -129,31 +214,19 @@ class ConfigurationHub:
             ),
             json.dumps(settings, ensure_ascii=False, indent=2) + "\n",
         )
+        self.store.execute(
+            "INSERT INTO project_settings VALUES(?,?) ON CONFLICT(project_id) DO UPDATE SET content=excluded.content",
+            (project_id, canonical(settings)),
+        )
         return settings
 
     def configure_role(
         self, project_id, role, provider, model=None, effort=None, quota_fallback=None
     ):
-        if role not in ROLES or provider not in PROVIDERS:
-            raise BridgeError("Unsupported role or provider")
-        if effort and effort not in EFFORTS[provider]:
-            raise BridgeError(
-                "Effort not supported by this provider; model-specific support is checked by its CLI"
-            )
-        if provider == "chatgpt" and model:
-            raise BridgeError("Choose the ChatGPT web model in the conversation UI, not in ccc-mcp")
-        if model and (len(model) > 160 or model.startswith("-") or any(c.isspace() for c in model)):
-            raise BridgeError("Invalid model identifier")
-        if quota_fallback not in {None, *PROVIDERS}:
-            raise BridgeError("Unsupported quota fallback")
+        updated = self._validated_role(role, provider, model, effort, quota_fallback)
         with self.lock(project_id):
             settings = self.get_project_settings(project_id)
-            settings["roles"][role] = {
-                "provider": provider,
-                "model": model,
-                "effort": effort,
-                "quota_fallback": quota_fallback,
-            }
+            settings["roles"][role] = updated
             return self._save_settings(project_id, settings)
 
     def configure_read_root(self, project_id, name, path):

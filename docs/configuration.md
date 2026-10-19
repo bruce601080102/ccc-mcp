@@ -11,7 +11,7 @@ ccc-mcp project authorize my-project
 ccc-mcp --project my-project config show
 ```
 
-授權綁定專案根目錄，持續有效，直到執行 `ccc-mcp project revoke my-project`。MCP 不能自行授權。授權後可讀原專案；實作 Agent 在原專案寫入，仍受安全路徑、憑證、註解及寫入證據檢查。`settings.json` 只是可讀副本，改它不能授權。舊版保存的模式設定不會讓已授權專案繞過 Agent。
+授權綁定專案根目錄，持續有效，直到執行 `ccc-mcp project revoke my-project`。MCP 不能自行授權。授權後可讀原專案；實作 Agent 在原專案寫入，仍受安全路徑、憑證、註解及寫入證據檢查。`.ccc-mcp/settings.json` 可手動修改 `roles` 與 `language`；下次讀取設定或派工時會驗證並同步 SQLite。`project_access`、寫入範圍與工作區等欄位仍由本機授權及 CLI 管理，改 JSON 不能授權。舊版保存的模式設定不會讓已授權專案繞過 Agent。
 
 對一般修改需求，ChatGPT 使用 MCP 的 `start_project_request(project_id, requirement, acceptance?)`。後端會建立或沿用內部專案工作串，立即派出設定好的 SA。SA 結果以 execution ID 與原始報告保存；PM 核對證據後用 `advance_project` 提交 ContextPatch 與實作計畫，後端會自動派 SD/RD。實作結果經 PM 用同一工具整理後，後端自動派 REVIEW；REVIEW 結果整理後自動完成本輪。未整理報告時，後端拒絕下一角色派工。計畫由既有專案授權自動承接。`write_workspace` 不提供給 MCP，已授權專案也會在服務層拒絕直接寫檔。
 

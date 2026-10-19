@@ -78,6 +78,8 @@ ccc-mcp --project hello-demo config language ch
 
 `--model 模型ID` 與 `--effort` 都可省略，交由本機 CLI 使用預設值；它們不會設定 ChatGPT 網頁模型。`--quota-fallback chatgpt` **只在 CLI 額度不足時**備援，不會修復 CLI 未安裝、未登入或一般執行錯誤。每次 `config role` 會整組取代該角色設定，要保留的選項請一起填。語言預設 `zh-TW`（繁體中文），也可設 `ch`（簡體中文）或 `en`（英文）；切換不會翻譯既有紀錄。
 
+也可直接編輯 `hello-demo/.ccc-mcp/settings.json` 的 `roles` 或 `language`；儲存後，下次查詢設定或派工時會驗證並同步到 SQLite，不用重啟。先用 `ccc-mcp --project hello-demo config show` 確認生效值。格式錯誤會停止派工並顯示錯誤；`project_access` 等授權欄位不能靠改檔取得權限，仍須在本機執行 `project authorize`。
+
 只安裝 Codex 時，可把 `SD/RD` 也改成 `codex`；不用本機 CLI 時，可選 `chatgpt`，但這就**不是** Codex／Claude 的真實執行。更多選項見[角色設定](docs/configuration.md)。
 
 ## 遇到問題
