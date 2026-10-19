@@ -82,6 +82,19 @@ ccc-mcp --project hello-demo config language ch
 
 只安裝 Codex 時，可把 `SD/RD` 也改成 `codex`；不用本機 CLI 時，可選 `chatgpt`，但這就**不是** Codex／Claude 的真實執行。更多選項見[角色設定](docs/configuration.md)。
 
+## 安裝本機 Skill（選用）
+
+Skill 是一份 `SKILL.md`（說明用途與觸發時機，可附帶輔助腳本），裝好之後**不分 Codex、Claude 還是 ChatGPT，每次派工都會自動看到**，由 Agent 自己判斷要不要用：
+
+```bash
+ccc-mcp skill install ./my-skill          # 本機資料夾
+ccc-mcp skill install https://example.com/my-skill.zip
+ccc-mcp skill list
+ccc-mcp skill remove my-skill
+```
+
+Skill 是全局安裝（`~/.ccc-mcp/skills/`），裝一次所有專案都能用。從 URL 安裝時內容會直接進入 Agent 的 prompt，只安裝你信任的來源。
+
 ## 遇到問題
 
 - `Project ID is already registered`：用 `ccc-mcp project list` 找到原專案並沿用，不要刪資料重建。

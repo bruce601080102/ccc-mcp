@@ -468,3 +468,43 @@ def test_setup_single_provider_reports_next_action(monkeypatch):
     payload = json.loads(result.output)
     assert payload["ready"] == [{"provider": "codex", "path": "C:/codex.exe", "logged_in": True}]
     assert "ccc-mcp connect" in payload["next_action"]
+
+
+def test_skill_install_list_remove_roundtrip(tmp_path):
+    source = tmp_path / "my-skill"
+    source.mkdir()
+    (source / "SKILL.md").write_text(
+        "---\nname: my-skill\ndescription: d\n---\nBody.\n", encoding="utf-8"
+    )
+    runner = CliRunner()
+    home_args = ["--home", str(tmp_path / "home")]
+
+    installed = runner.invoke(app, home_args + ["skill", "install", str(source)])
+    assert installed.exit_code == 0, installed.output
+    assert json.loads(installed.output)["id"] == "my-skill"
+
+    listed = runner.invoke(app, home_args + ["skill", "list"])
+    assert listed.exit_code == 0, listed.output
+    assert json.loads(listed.output)[0]["id"] == "my-skill"
+
+    removed = runner.invoke(app, home_args + ["skill", "remove", "my-skill"])
+    assert removed.exit_code == 0, removed.output
+    assert json.loads(removed.output) == {"id": "my-skill", "removed": True}
+
+    listed_after = runner.invoke(app, home_args + ["skill", "list"])
+    assert json.loads(listed_after.output) == []
+
+
+def test_skill_install_from_url_warns_about_trust(tmp_path, monkeypatch):
+    from ccc_mcp.interfaces import cli as cli_module
+
+    monkeypatch.setattr(
+        cli_module,
+        "install_skill",
+        lambda home, source: {"id": "x", "name": "x", "description": "", "path": str(home)},
+    )
+    result = CliRunner().invoke(
+        app, ["--home", str(tmp_path / "home"), "skill", "install", "https://example.invalid/s.md"]
+    )
+    assert result.exit_code == 0, result.output
+    assert "信任的來源" in result.output

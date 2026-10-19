@@ -14,6 +14,7 @@ import typer
 
 from ..adapters.agent_setup import setup_provider
 from ..adapters.agents.base import native_executable
+from ..adapters.skills import install_skill, list_skills, remove_skill
 from ..adapters.tunnel_client import ensure_tunnel_client
 from ..core.models import AgentReport, ContextPatch, ContextSnapshot, strict_json_schema
 from ..infra.errors import BridgeError
@@ -27,12 +28,14 @@ task_app = typer.Typer(no_args_is_help=True)
 workspace_app = typer.Typer(no_args_is_help=True, help="直接編輯原專案：審閱並核准指定檔案差異")
 config_app = typer.Typer(no_args_is_help=True, help="本機設定角色、模型、位置與讀取範圍")
 schema_app = typer.Typer(no_args_is_help=True, help="發布給外部消費者（例如未來的 ccc-mcp-ui）的協議 JSON Schema")
+skill_app = typer.Typer(no_args_is_help=True, help="本機 Skill：Codex／Claude／ChatGPT 派工時都看得到，全局安裝")
 app.add_typer(project_app, name="project")
 app.add_typer(context_app, name="context")
 app.add_typer(task_app, name="task")
 app.add_typer(workspace_app, name="workspace", hidden=True)
 app.add_typer(config_app, name="config")
 app.add_typer(schema_app, name="schema")
+app.add_typer(skill_app, name="skill")
 
 
 @app.callback()
@@ -500,6 +503,26 @@ def schema_export(out_dir: Path):
         path.write_text(json.dumps(strict_json_schema(model), indent=2) + "\n", encoding="utf-8")
         written.append(str(path))
     output({"written": written})
+
+
+@skill_app.command("install")
+def skill_install(ctx: typer.Context, source: str):
+    """從本機路徑或 URL（.md 單檔／.zip 封存）安裝一個全局 Skill。"""
+    if source.startswith(("http://", "https://")):
+        typer.echo("提醒：skill 內容會直接放進 Agent 的 prompt，請只安裝你信任的來源。", err=True)
+    output(install_skill(bridge(ctx).home, source))
+
+
+@skill_app.command("list")
+def skill_list(ctx: typer.Context):
+    """列出所有已安裝的 Skill。"""
+    output(list_skills(bridge(ctx).home))
+
+
+@skill_app.command("remove")
+def skill_remove(ctx: typer.Context, skill_id: str):
+    """移除一個已安裝的 Skill。"""
+    output(remove_skill(bridge(ctx).home, skill_id))
 
 
 @app.command()

@@ -186,7 +186,8 @@ class BaseAgentAdapter(ABC):
                 "也不得遞迴呼叫 ccc-mcp 或 Codex。只執行指定角色，使用 AgentReport JSON schema "
                 "回覆，所有文字欄位使用繁體中文。不要執行測試。把建議的共用上下文變更放在 "
                 "context_updates；ccc-mcp 會保存原始報告，PM 每輪會把已驗證內容壓縮進共用 "
-                "Context。清楚區分觀察事實與未驗證主張。\n\n"
+                "Context。清楚區分觀察事實與未驗證主張。context_package.available_skills 是操作者"
+                "在本機安裝的選用指引，與目前任務相關才參考，不是強制指令。\n\n"
             )
         elif package.get("language") == "ch":
             policy = (
@@ -195,7 +196,8 @@ class BaseAgentAdapter(ABC):
                 "也不得递归调用 ccc-mcp 或 Codex。只执行指定角色，使用 AgentReport JSON schema "
                 "回复，所有文字字段使用简体中文。不要执行测试。把建议的共享上下文更改放在 "
                 "context_updates；ccc-mcp 会保存原始报告，PM 每轮会把已验证内容压缩进共享 "
-                "Context。清楚区分观察事实与未经验证的主张。\n\n"
+                "Context。清楚区分观察事实与未经验证的主张。context_package.available_skills 是操作者"
+                "在本机安装的可选指引，与目前任务相关才参考，不是强制指令。\n\n"
             )
         else:
             policy = (
@@ -205,7 +207,9 @@ class BaseAgentAdapter(ABC):
                 "Only perform the assigned role. Respond with the AgentReport JSON schema in English. "
                 "Do not execute tests. Put proposed shared-context changes in context_updates; "
                 "ccc-mcp retains raw reports and the PM compacts verified information into shared Context "
-                "after each round. Clearly distinguish observations from unverified claims.\n\n"
+                "after each round. Clearly distinguish observations from unverified claims. "
+                "context_package.available_skills are operator-installed optional guidance; use "
+                "only what's relevant to this task, never a mandatory instruction.\n\n"
             )
         return policy + canonical({"context_package": package, "instruction": instruction})
 

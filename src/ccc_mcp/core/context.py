@@ -7,6 +7,7 @@ from pathlib import Path
 import portalocker
 from pydantic import ValidationError
 
+from ..adapters.skills import available_skills
 from ..adapters.storage import artifact, decode, now
 from ..infra.config import metadata_name
 from ..infra.errors import BridgeError, VersionConflict
@@ -844,6 +845,7 @@ class ContextHub:
             "purpose": snapshot["purpose"],
             "invariants": snapshot["invariants"],
             "next_action": snapshot["next_action"],
+            "available_skills": available_skills(self.home),
         }
         refs = snapshot["source_document_refs"][:]
         refs += [result["source_document_ref"] for result in snapshot["agent_results"]]
