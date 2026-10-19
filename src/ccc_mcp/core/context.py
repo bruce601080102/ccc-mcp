@@ -829,6 +829,7 @@ class ContextHub:
                 "pending_chatgpt_handoffs": self.pending_chatgpt_handoffs(project_id),
                 "context_sync": self.context_sync_status(project_id),
                 "context_locations": self.context_locations(project_id),
+                "available_skills": available_skills(self.home),
             }
 
     def build_handoff(self, project_id, role="PM", task_id=None, token_budget=None):

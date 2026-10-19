@@ -15,6 +15,14 @@ def _install_demo_skill(bridge):
     return install_skill(bridge.home, str(source))
 
 
+def test_bootstrap_project_includes_available_skills(bridge):
+    # bootstrap_project builds its own dict instead of calling build_handoff(),
+    # so it needs its own coverage — this is the usual first call of a session.
+    _install_demo_skill(bridge)
+    boot = bridge.bootstrap_project("demo")
+    assert boot["available_skills"][0]["id"] == "demo-skill"
+
+
 def test_build_handoff_includes_available_skills_for_every_role(bridge):
     _install_demo_skill(bridge)
     bridge.create_task("demo", "Add API", ["Returns 200"])
