@@ -3,8 +3,8 @@ from pathlib import Path
 import pytest
 from conftest import approve
 
-from ccc_mcp.errors import BridgeError, PermissionDenied, VersionConflict
-from ccc_mcp.models import AgentReport
+from ccc_mcp.core.models import AgentReport
+from ccc_mcp.infra.errors import BridgeError, PermissionDenied, VersionConflict
 from ccc_mcp.service import CCCMCP
 from ccc_mcp.worker import run_execution
 
@@ -57,7 +57,7 @@ def test_one_local_confirmation_approves_all_batch_files(bridge, monkeypatch):
     proposed = batch(bridge)
     calls = []
     monkeypatch.setattr(
-        "ccc_mcp.approval.confirm_local",
+        "ccc_mcp.core.approval.confirm_local",
         lambda description, challenge: calls.append((description, challenge)) or "test-principal",
     )
     with pytest.raises(PermissionDenied):
@@ -92,7 +92,7 @@ def test_entire_batch_preflight_runs_before_first_write(bridge, human, failure):
 
 
 def test_interrupted_batch_is_resumable_without_reappending(bridge, human, monkeypatch):
-    from ccc_mcp.security import atomic_write
+    from ccc_mcp.infra.security import atomic_write
 
     proposed = batch(bridge)
     bridge.approve_workspace_edit_local("demo", proposed["id"])
@@ -102,11 +102,11 @@ def test_interrupted_batch_is_resumable_without_reappending(bridge, human, monke
             raise OSError("interrupted before second write")
         atomic_write(path, content)
 
-    monkeypatch.setattr("ccc_mcp.directedit.atomic_write", interrupted)
+    monkeypatch.setattr("ccc_mcp.core.directedit.atomic_write", interrupted)
     with pytest.raises(OSError):
         bridge.write_workspace("demo", proposed["id"])
     assert bridge.get_workspace_edit("demo", proposed["id"])["status"] == "APPLYING"
-    monkeypatch.setattr("ccc_mcp.directedit.atomic_write", atomic_write)
+    monkeypatch.setattr("ccc_mcp.core.directedit.atomic_write", atomic_write)
     assert bridge.write_workspace("demo", proposed["id"])["status"] == "APPLIED"
     assert (root(bridge) / "first.md").read_text() == "original\ntest\n"
 
@@ -125,7 +125,7 @@ def test_batch_cannot_have_duplicate_file_or_already_grouped_edits(bridge):
 def test_one_task_approval_allows_multiple_original_project_files(bridge, human, monkeypatch):
     calls = []
     monkeypatch.setattr(
-        "ccc_mcp.approval.confirm_local",
+        "ccc_mcp.core.approval.confirm_local",
         lambda *args: calls.append(args) or "test-principal",
     )
     execution = task(bridge)
@@ -242,7 +242,7 @@ def test_project_mode_allows_same_task_revision_without_requiring_commit(bridge,
 def test_scope_cli_accepts_directory_as_positional_argument(bridge):
     from typer.testing import CliRunner
 
-    from ccc_mcp.cli import app
+    from ccc_mcp.interfaces.cli import app
 
     runner = CliRunner()
     prefix = ["--home", str(bridge.home), "--project", "demo", "config"]

@@ -1,9 +1,9 @@
 import json
 
-from ..errors import AgentProcessError, BridgeError
-from ..models import AgentReport
-from ..security import redact
-from ..telemetry import record_output
+from ...core.models import AgentReport
+from ...infra.errors import AgentProcessError, BridgeError
+from ...infra.security import redact
+from ...infra.telemetry import record_output
 from .base import BaseAgentAdapter, parse_report, probe, run_process
 
 

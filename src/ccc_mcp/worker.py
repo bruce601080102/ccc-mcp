@@ -4,12 +4,12 @@ from pathlib import Path
 
 import portalocker
 
-from .agents import ClaudeCodeAdapter, CodexAdapter, FakeAgentAdapter
-from .errors import AgentCancelled, AgentTimeout, BridgeError
-from .git import git, tracked_snapshot, working_snapshot, worktree
-from .security import comment_check, redact, reject_secrets, same_text_content
+from .adapters.agents import ADAPTERS, FakeAgentAdapter
+from .adapters.git import git, tracked_snapshot, working_snapshot, worktree
+from .infra.errors import AgentCancelled, AgentTimeout, BridgeError
+from .infra.security import comment_check, redact, reject_secrets, same_text_content
+from .infra.telemetry import audit_scope, is_quota_error
 from .service import CCCMCP
-from .telemetry import audit_scope, is_quota_error
 
 
 def run_execution(bridge, execution_id):
@@ -88,8 +88,10 @@ def run_execution(bridge, execution_id):
                     cwd = expected
             if row["adapter"] == "fake":
                 adapter = FakeAgentAdapter(options["scenario"], options["delay"])
+            elif row["agent"] in ADAPTERS:
+                adapter = ADAPTERS[row["agent"]]()
             else:
-                adapter = CodexAdapter() if row["agent"] == "codex" else ClaudeCodeAdapter()
+                raise BridgeError(f"No adapter registered for provider: {row['agent']}")
             with audit_scope(audit):
                 report = adapter.run(
                     package, row["instruction"], cwd, options["timeout"], cancelled
@@ -199,7 +201,7 @@ def main():
     parser.add_argument("--home", required=True)
     parser.add_argument("--execution", required=True)
     args = parser.parse_args()
-    from .context import identifier
+    from .core.context import identifier
 
     run_execution(CCCMCP(args.home), identifier(args.execution))
 

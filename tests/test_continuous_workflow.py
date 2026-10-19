@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from ccc_mcp.errors import BridgeError
+from ccc_mcp.infra.errors import BridgeError
 from ccc_mcp.worker import run_execution
 
 
@@ -163,8 +163,8 @@ def test_language_defaults_to_chinese_and_can_be_english(bridge):
 def test_simplified_chinese_language_covers_project_and_agent_outputs(bridge, tmp_path):
     from typer.testing import CliRunner
 
-    from ccc_mcp.agents.base import BaseAgentAdapter
-    from ccc_mcp.cli import app
+    from ccc_mcp.adapters.agents.base import BaseAgentAdapter
+    from ccc_mcp.interfaces.cli import app
 
     root = Path(bridge.project("demo")["root"])
     configured = CliRunner().invoke(

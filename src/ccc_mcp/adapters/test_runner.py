@@ -2,11 +2,11 @@ import sys
 import uuid
 from pathlib import Path
 
+from ..core.approval import confirm_local
+from ..infra.errors import AgentProcessError, BridgeError
+from ..infra.security import canonical, redact
 from .agents.base import run_process
-from .approval import confirm_local
-from .errors import AgentProcessError, BridgeError
 from .git import revision
-from .security import canonical, redact
 
 
 def run_tests_local(bridge, project_id, task_id):

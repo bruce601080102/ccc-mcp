@@ -4,9 +4,9 @@ import difflib
 import uuid
 from pathlib import Path
 
-from .errors import BridgeError, PermissionDenied, VersionConflict
-from .security import atomic_write, canonical, comment_check, digest, reject_secrets
-from .storage import decode, now
+from ..adapters.storage import decode, now
+from ..infra.errors import BridgeError, PermissionDenied, VersionConflict
+from ..infra.security import atomic_write, canonical, comment_check, digest, reject_secrets
 from .workspace import allowed_path
 
 MAX_EDIT_BYTES = 200_000

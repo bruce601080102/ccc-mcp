@@ -5,9 +5,9 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from ccc_mcp.cli import app
-from ccc_mcp.errors import PermissionDenied
-from ccc_mcp.server import create_server
+from ccc_mcp.infra.errors import PermissionDenied
+from ccc_mcp.interfaces.cli import app
+from ccc_mcp.interfaces.server import create_server
 from ccc_mcp.service import CCCMCP
 
 
@@ -85,7 +85,7 @@ def test_old_direct_setting_cannot_reenable_pm_file_writes(bridge, human):
 
 def test_revocation_removes_authorization(bridge, human, monkeypatch):
     bridge.authorize_project_local("demo")
-    monkeypatch.setattr("ccc_mcp.approval.local_identity", lambda: "test-principal")
+    monkeypatch.setattr("ccc_mcp.core.approval.local_identity", lambda: "test-principal")
     assert bridge.revoke_project_local("demo")["mode"] == "read-only"
     with pytest.raises(PermissionDenied, match="project authorize demo"):
         bridge.start_project_request("demo", "Change app.py")
@@ -124,7 +124,7 @@ def test_cli_has_no_user_selectable_modes(bridge, human, monkeypatch):
     help_text = runner.invoke(app, args + ["config", "--help"]).output
     assert "workflow-mode" not in help_text
     assert "workspace-mode" not in help_text
-    monkeypatch.setattr("ccc_mcp.approval.local_identity", lambda: "test-principal")
+    monkeypatch.setattr("ccc_mcp.core.approval.local_identity", lambda: "test-principal")
     revoked = runner.invoke(app, args + ["project", "revoke", "demo"])
     assert revoked.exit_code == 0, revoked.output
 

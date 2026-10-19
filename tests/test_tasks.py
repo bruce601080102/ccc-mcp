@@ -4,9 +4,23 @@ from pathlib import Path
 import pytest
 from conftest import approve, dispatch
 
-from ccc_mcp.errors import BridgeError, PermissionDenied, VersionConflict
+from ccc_mcp.infra.errors import BridgeError, PermissionDenied, VersionConflict
 from ccc_mcp.service import CCCMCP
 from ccc_mcp.worker import run_execution
+
+
+def test_worker_rejects_unregistered_provider(bridge, human):
+    """Regression: worker must not silently run an unknown provider as Claude."""
+    bridge.create_task("demo", "新增 API", ["API 回傳 200"])
+    queued = dispatch(bridge)
+    bridge.store.execute(
+        "UPDATE agent_executions SET agent='grok',adapter='real' WHERE id=?",
+        (queued["execution_id"],),
+    )
+    run_execution(bridge, queued["execution_id"])
+    result = bridge.get_task_result("demo", "TASK-0001")[-1]
+    assert result["status"] == "FAILED"
+    assert "No adapter registered for provider: grok" in result["error"]
 
 
 def test_sd_handoff_contains_approved_plan_and_current_version(bridge, human):
@@ -174,7 +188,7 @@ def test_append_decisions_and_reject_plan(bridge, human):
 
 
 def test_observed_test_results_persist(bridge, human):
-    from ccc_mcp.test_runner import run_tests_local
+    from ccc_mcp.adapters.test_runner import run_tests_local
 
     bridge.create_task("demo", "需求")
     approve(bridge)

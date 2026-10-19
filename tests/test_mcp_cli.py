@@ -8,9 +8,9 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from typer.testing import CliRunner
 
-from ccc_mcp.cli import app
-from ccc_mcp.errors import BridgeError
-from ccc_mcp.server import JWTVerifier, create_server
+from ccc_mcp.infra.errors import BridgeError
+from ccc_mcp.interfaces.cli import app
+from ccc_mcp.interfaces.server import JWTVerifier, create_server
 
 
 def test_cli_workflow(tmp_path):

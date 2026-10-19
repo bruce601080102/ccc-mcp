@@ -4,8 +4,8 @@ from pathlib import Path
 import pytest
 from conftest import approve, dispatch
 
-from ccc_mcp.config import bridge_home, setting_env
-from ccc_mcp.errors import BridgeError, PermissionDenied
+from ccc_mcp.infra.config import bridge_home, setting_env
+from ccc_mcp.infra.errors import BridgeError, PermissionDenied
 from ccc_mcp.service import CCCMCP
 from ccc_mcp.worker import run_execution
 

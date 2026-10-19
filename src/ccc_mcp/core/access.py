@@ -3,9 +3,9 @@
 import uuid
 from pathlib import Path
 
-from .errors import PermissionDenied, VersionConflict
-from .security import digest
-from .storage import now
+from ..adapters.storage import now
+from ..infra.errors import PermissionDenied, VersionConflict
+from ..infra.security import digest
 
 
 class ProjectAccessHub:

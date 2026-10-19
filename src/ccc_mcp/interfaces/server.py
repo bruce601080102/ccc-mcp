@@ -9,10 +9,10 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp_types import ToolAnnotations
 
-from .config import setting_env
-from .errors import BridgeError
-from .models import AgentReport, ContextPatch
-from .service import CCCMCP
+from ..core.models import AgentReport, ContextPatch
+from ..infra.config import setting_env
+from ..infra.errors import BridgeError
+from ..service import CCCMCP
 
 
 async def call(fn, *args):

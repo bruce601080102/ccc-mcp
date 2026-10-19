@@ -3,7 +3,7 @@ import os
 import subprocess
 import sys
 
-from .errors import PermissionDenied
+from ..infra.errors import PermissionDenied
 
 
 def local_identity():

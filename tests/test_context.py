@@ -5,8 +5,8 @@ from pathlib import Path
 import pytest
 from conftest import approve, dispatch
 
-from ccc_mcp.context import DOCUMENTS, TASK_DOCUMENTS
-from ccc_mcp.errors import BridgeError, VersionConflict
+from ccc_mcp.core.context import DOCUMENTS, TASK_DOCUMENTS
+from ccc_mcp.infra.errors import BridgeError, VersionConflict
 from ccc_mcp.service import CCCMCP
 from ccc_mcp.worker import run_execution
 
@@ -155,7 +155,7 @@ def test_architecture_source_drift(bridge):
 
 
 def test_atomic_projection_crash_recovers_from_committed_db(bridge, monkeypatch):
-    import ccc_mcp.context as context_module
+    import ccc_mcp.core.context as context_module
 
     original = context_module.atomic_write
     proposal = bridge.propose_context_patch("demo", patch(bridge, summary="after crash"))

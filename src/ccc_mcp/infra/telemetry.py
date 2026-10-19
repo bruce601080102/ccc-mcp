@@ -3,7 +3,7 @@ import json
 from contextlib import contextmanager
 from contextvars import ContextVar
 
-from .storage import now
+from ..adapters.storage import now
 
 ACTIVE_AUDIT = ContextVar("ccc_mcp_audit", default=None)
 

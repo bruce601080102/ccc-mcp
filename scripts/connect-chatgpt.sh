@@ -57,7 +57,7 @@ if ! MSYS_NO_PATHCONV=1 env -u OPENAI_ADMIN_KEY -u OPENAI_API_KEY \
 fi
 
 python_windows="$("$python" -c 'import sys; from pathlib import Path; print(Path(sys.executable).as_posix())' | tr -d '\r')"
-home_windows="$("$python" -c 'from ccc_mcp.config import bridge_home; print(bridge_home().as_posix())' | tr -d '\r')"
+home_windows="$("$python" -c 'from ccc_mcp.infra.config import bridge_home; print(bridge_home().as_posix())' | tr -d '\r')"
 profile_dir="$("$python" -c 'from pathlib import Path; import sys; print((Path(sys.argv[1]) / ".tunnel").as_posix())' "$root" | tr -d '\r')"
 mcp_command="\"$python_windows\" -m ccc_mcp --home \"$home_windows\" serve"
 

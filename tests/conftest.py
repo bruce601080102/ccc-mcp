@@ -35,7 +35,7 @@ def bridge(tmp_path, monkeypatch):
 @pytest.fixture
 def human(monkeypatch):
     # Tests substitute the operator ceremony, never a production approved=true API.
-    monkeypatch.setattr("ccc_mcp.approval.confirm_local", lambda *args: "test-principal")
+    monkeypatch.setattr("ccc_mcp.core.approval.confirm_local", lambda *args: "test-principal")
 
 
 def approve(bridge, task="TASK-0001", plan="PLAN-A"):

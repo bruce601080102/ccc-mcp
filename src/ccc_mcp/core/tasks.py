@@ -4,15 +4,16 @@ import subprocess
 import sys
 import uuid
 from contextlib import nullcontext
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import portalocker
 
-from .config import metadata_name, setting_env
+from ..adapters.storage import artifact, decode, event, now
+from ..infra.config import metadata_name, setting_env
+from ..infra.errors import BridgeError, PermissionDenied, VersionConflict
+from ..infra.security import canonical, digest, reject_secrets
 from .context import identifier
-from .errors import BridgeError, PermissionDenied, VersionConflict
-from .security import canonical, digest, reject_secrets
-from .storage import artifact, decode, event, now
+
 
 def attribution(language, agent, role=None):
     """One readable line so a human opening a saved .md knows who produced it."""
@@ -886,7 +887,7 @@ class TaskHub:
                 options = json.loads(latest["options"]) if latest["options"] else {}
                 timeout = options.get("timeout")
                 elapsed = (
-                    datetime.now(timezone.utc) - datetime.fromisoformat(latest["created"])
+                    datetime.now(UTC) - datetime.fromisoformat(latest["created"])
                 ).total_seconds()
                 progress = {
                     "elapsed_seconds": round(elapsed),

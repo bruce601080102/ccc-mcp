@@ -3,7 +3,7 @@ import sqlite3
 from contextlib import contextmanager
 from datetime import UTC, datetime
 
-from .security import canonical
+from ..infra.security import canonical
 
 
 def now() -> str:
@@ -162,7 +162,7 @@ def event(conn, project, task, old, new, reason):
 
 
 def artifact(conn, project, path, content):
-    from .security import digest, reject_secrets
+    from ..infra.security import digest, reject_secrets
 
     reject_secrets(content)
     conn.execute(

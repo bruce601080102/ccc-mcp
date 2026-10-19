@@ -1,7 +1,7 @@
 import time
 
-from ..errors import AgentCancelled, AgentTimeout, BridgeError
-from ..models import AgentReport
+from ...core.models import AgentReport
+from ...infra.errors import AgentCancelled, AgentTimeout, BridgeError
 from .base import BaseAgentAdapter
 
 

@@ -17,7 +17,7 @@ dependencies = [
 dev = ["pytest>=8,<10", "pytest-asyncio>=1,<2", "httpx>=0.28,<1", "ruff>=0.13,<1"]
 
 [project.scripts]
-ccc-mcp = "ccc_mcp.cli:main"
+ccc-mcp = "ccc_mcp.interfaces.cli:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

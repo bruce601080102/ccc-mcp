@@ -2,8 +2,8 @@ import platform
 import tempfile
 from pathlib import Path
 
-from ..errors import BridgeError
-from ..telemetry import record_output
+from ...infra.errors import BridgeError
+from ...infra.telemetry import record_output
 from .base import BaseAgentAdapter, parse_report, probe, run_process, schema_file
 
 

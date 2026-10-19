@@ -2,12 +2,10 @@ import json
 import uuid
 from pathlib import Path
 
-from .configuration import directory
-from .errors import BridgeError, PermissionDenied, VersionConflict
-from .evidence import implementation_evidence
-from .git import git, revision, worktree
-from .models import AgentReport
-from .security import (
+from ..adapters.git import git, revision, worktree
+from ..adapters.storage import decode
+from ..infra.errors import BridgeError, PermissionDenied, VersionConflict
+from ..infra.security import (
     atomic_write,
     canonical,
     comment_check,
@@ -16,7 +14,9 @@ from .security import (
     reject_secrets,
     safe_path,
 )
-from .storage import decode
+from .configuration import directory
+from .evidence import implementation_evidence
+from .models import AgentReport
 
 DENIED = {
     ".git",

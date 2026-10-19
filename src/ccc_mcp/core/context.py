@@ -7,11 +7,11 @@ from pathlib import Path
 import portalocker
 from pydantic import ValidationError
 
-from .config import metadata_name
-from .errors import BridgeError, VersionConflict
+from ..adapters.storage import artifact, decode, now
+from ..infra.config import metadata_name
+from ..infra.errors import BridgeError, VersionConflict
+from ..infra.security import atomic_write, canonical, digest, reject_secrets, safe_path
 from .models import ContextPatch, ContextSnapshot, SourceRef
-from .security import atomic_write, canonical, digest, reject_secrets, safe_path
-from .storage import artifact, decode, now
 
 DOCUMENTS = {
     "project": "context/PROJECT.md",
@@ -1115,7 +1115,7 @@ class ContextHub:
         path = f"{metadata_name(root)}/tasks/{task_id}/executions/{execution_id}/{name}"
         artifact(conn, project_id, path, content)
         alias = f"{metadata_name(root)}/tasks/{task_id}/{name}"
-        from .storage import now
+        from ..adapters.storage import now
 
         conn.execute(
             "INSERT INTO artifacts VALUES(?,?,?,?,?) ON CONFLICT(project_id,path) DO UPDATE SET "

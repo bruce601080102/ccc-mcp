@@ -6,13 +6,13 @@ import pytest
 from conftest import approve
 from typer.testing import CliRunner
 
-from ccc_mcp.agents import ClaudeCodeAdapter, CodexAdapter
-from ccc_mcp.agents.base import run_process
-from ccc_mcp.cli import app
-from ccc_mcp.errors import AgentProcessError, BridgeError, PermissionDenied, VersionConflict
-from ccc_mcp.models import AgentReport
+from ccc_mcp.adapters.agents import ClaudeCodeAdapter, CodexAdapter
+from ccc_mcp.adapters.agents.base import run_process
+from ccc_mcp.core.models import AgentReport
+from ccc_mcp.infra.errors import AgentProcessError, BridgeError, PermissionDenied, VersionConflict
+from ccc_mcp.infra.telemetry import audit_scope, usage_from_output
+from ccc_mcp.interfaces.cli import app
 from ccc_mcp.service import CCCMCP
-from ccc_mcp.telemetry import audit_scope, usage_from_output
 from ccc_mcp.worker import run_execution
 
 
@@ -65,7 +65,7 @@ def test_invalid_config_and_chatgpt_model_not_faked(bridge):
 
 
 def test_codex_implementation_model_effort_and_permissions(monkeypatch, tmp_path):
-    monkeypatch.setattr("ccc_mcp.agents.codex.probe", lambda *args: "codex.exe")
+    monkeypatch.setattr("ccc_mcp.adapters.agents.codex.probe", lambda *args: "codex.exe")
 
     def invoke(argv, cwd, *args):
         assert argv[argv.index("--sandbox") + 1] == "workspace-write"
@@ -74,7 +74,7 @@ def test_codex_implementation_model_effort_and_permissions(monkeypatch, tmp_path
         Path(argv[argv.index("--output-last-message") + 1]).write_text(json.dumps(report()))
         return '{"type":"turn.completed","usage":{"input_tokens":8,"output_tokens":3}}', ""
 
-    monkeypatch.setattr("ccc_mcp.agents.codex.run_process", invoke)
+    monkeypatch.setattr("ccc_mcp.adapters.agents.codex.run_process", invoke)
     audit = {"provider": "codex"}
     with audit_scope(audit):
         CodexAdapter().run(
@@ -89,7 +89,7 @@ def test_codex_implementation_model_effort_and_permissions(monkeypatch, tmp_path
 
 @pytest.mark.parametrize("role", ["SA", "REVIEW"])
 def test_claude_readonly_role_with_model_and_effort(monkeypatch, tmp_path, role):
-    monkeypatch.setattr("ccc_mcp.agents.claude.probe", lambda *args: "claude.exe")
+    monkeypatch.setattr("ccc_mcp.adapters.agents.claude.probe", lambda *args: "claude.exe")
 
     def invoke(argv, *args):
         assert argv[argv.index("--permission-mode") + 1] == "plan"
@@ -98,7 +98,7 @@ def test_claude_readonly_role_with_model_and_effort(monkeypatch, tmp_path, role)
         assert argv[argv.index("--effort") + 1] == "high"
         return json.dumps({"structured_output": report()}), ""
 
-    monkeypatch.setattr("ccc_mcp.agents.claude.run_process", invoke)
+    monkeypatch.setattr("ccc_mcp.adapters.agents.claude.run_process", invoke)
     ClaudeCodeAdapter().run(
         {"role": role, "agent_settings": {"model": "sonnet", "effort": "high"}},
         "Analyze",
@@ -259,7 +259,7 @@ def test_quota_fallback_queues_chatgpt_without_reapproval(bridge, human, monkeyp
     def fail(*args):
         raise BridgeError("Usage limit reached" if quota else "Not logged in")
 
-    monkeypatch.setattr("ccc_mcp.agents.claude.ClaudeCodeAdapter.run", fail)
+    monkeypatch.setattr("ccc_mcp.adapters.agents.claude.ClaudeCodeAdapter.run", fail)
     queued = dispatch(bridge, "RD")
     run_execution(bridge, queued["execution_id"])
     results = bridge.get_task_result("demo", "TASK-0001")
@@ -311,7 +311,7 @@ def test_worker_persists_host_process_audit(bridge, monkeypatch):
         )
         return report(context_updates=["Observed source"])
 
-    monkeypatch.setattr("ccc_mcp.agents.codex.CodexAdapter.run", observed_process)
+    monkeypatch.setattr("ccc_mcp.adapters.agents.codex.CodexAdapter.run", observed_process)
     queued = dispatch(bridge)
     run_execution(bridge, queued["execution_id"])
     saved = bridge.get_task_result("demo", "TASK-0001")[-1]["result"]["invocation"]
@@ -344,7 +344,7 @@ def test_quota_fallback_does_not_bypass_stale_context(bridge, monkeypatch):
         bridge.commit_context_patch("demo", patch["patch_id"])
         raise AgentProcessError(1, '{"error":"insufficient_quota"}', "")
 
-    monkeypatch.setattr("ccc_mcp.agents.codex.CodexAdapter.run", stale)
+    monkeypatch.setattr("ccc_mcp.adapters.agents.codex.CodexAdapter.run", stale)
     queued = dispatch(bridge)
     run_execution(bridge, queued["execution_id"])
     results = bridge.get_task_result("demo", "TASK-0001")

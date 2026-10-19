@@ -2,8 +2,8 @@ import os
 import subprocess
 from pathlib import Path
 
-from .errors import BridgeError
-from .security import safe_path
+from ..infra.errors import BridgeError
+from ..infra.security import safe_path
 
 
 def git(root, *args, check=True):

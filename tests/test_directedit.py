@@ -5,9 +5,9 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from ccc_mcp.cli import app
-from ccc_mcp.errors import BridgeError, PermissionDenied, VersionConflict
-from ccc_mcp.server import create_server
+from ccc_mcp.infra.errors import BridgeError, PermissionDenied, VersionConflict
+from ccc_mcp.interfaces.cli import app
+from ccc_mcp.interfaces.server import create_server
 from ccc_mcp.service import CCCMCP
 
 
@@ -88,7 +88,7 @@ def test_changed_during_local_review_is_rejected(bridge, monkeypatch):
         target(bridge).write_text("changed during review", encoding="utf-8")
         return "test-principal"
 
-    monkeypatch.setattr("ccc_mcp.approval.confirm_local", confirm)
+    monkeypatch.setattr("ccc_mcp.core.approval.confirm_local", confirm)
     with pytest.raises(VersionConflict):
         bridge.approve_workspace_edit_local("demo", edit["id"])
     assert bridge.get_workspace_edit("demo", edit["id"])["status"] == "PENDING"
@@ -200,7 +200,7 @@ def test_proposal_and_application_are_idempotent_without_overwriting_later_edits
 
 @pytest.mark.parametrize("replace_before_crash", [False, True])
 def test_retry_recovers_write_interruption(bridge, human, monkeypatch, replace_before_crash):
-    from ccc_mcp.security import atomic_write
+    from ccc_mcp.infra.security import atomic_write
 
     edit = proposal(bridge)
     bridge.approve_workspace_edit_local("demo", edit["id"])
@@ -210,11 +210,11 @@ def test_retry_recovers_write_interruption(bridge, human, monkeypatch, replace_b
             atomic_write(path, content)
         raise OSError("simulated interruption")
 
-    monkeypatch.setattr("ccc_mcp.directedit.atomic_write", interrupted)
+    monkeypatch.setattr("ccc_mcp.core.directedit.atomic_write", interrupted)
     with pytest.raises(OSError):
         bridge.write_workspace("demo", edit["id"])
     assert bridge.get_workspace_edit("demo", edit["id"])["status"] == "APPLYING"
-    monkeypatch.setattr("ccc_mcp.directedit.atomic_write", atomic_write)
+    monkeypatch.setattr("ccc_mcp.core.directedit.atomic_write", atomic_write)
     receipt = CCCMCP(bridge.home).write_workspace("demo", edit["id"])
     assert receipt["status"] == "APPLIED"
     assert target(bridge).read_bytes() == b"original\ntest\n"

@@ -1,5 +1,5 @@
-from .git import git, tracked_snapshot, working_snapshot
-from .security import comment_check, redact, reject_secrets, same_text_content
+from ..adapters.git import git, tracked_snapshot, working_snapshot
+from ..infra.security import comment_check, redact, reject_secrets, same_text_content
 
 
 def implementation_evidence(bridge, row, cwd):

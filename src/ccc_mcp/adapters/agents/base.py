@@ -10,10 +10,10 @@ from pathlib import Path
 
 import psutil
 
-from ..errors import AgentCancelled, AgentProcessError, AgentTimeout, BridgeError
-from ..models import AgentReport
-from ..security import canonical, redact
-from ..telemetry import ACTIVE_AUDIT, process_finished, process_started, record_output
+from ...core.models import AgentReport
+from ...infra.errors import AgentCancelled, AgentProcessError, AgentTimeout, BridgeError
+from ...infra.security import canonical, redact
+from ...infra.telemetry import ACTIVE_AUDIT, process_finished, process_started, record_output
 
 
 def terminate_tree(process):
@@ -88,22 +88,7 @@ def run_process(argv, cwd, prompt, timeout, cancelled):
 
 
 def probe(executable, args, required):
-    path = shutil.which(executable)
-    if path and os.name == "nt" and executable == "claude":
-        # npm's claude.cmd/claude.ps1 are launchers; invoke the installed native binary
-        # directly so Windows execution policy and shell expansion cannot change argv.
-        native = (
-            Path(path).parent
-            / "node_modules"
-            / "@anthropic-ai"
-            / "claude-code"
-            / "bin"
-            / "claude.exe"
-        )
-        if native.is_file():
-            path = str(native)
-    if not path or Path(path).suffix.lower() in {".cmd", ".bat", ".ps1"}:
-        raise BridgeError(f"Native {executable} executable unavailable; install the official CLI")
+    path = native_executable(executable)
     result = subprocess.run(
         [path, *args, "--help"],
         capture_output=True,
@@ -129,6 +114,63 @@ def probe(executable, args, required):
         )
         audit["cli_version"] = redact(version.stdout.decode("utf-8", "replace").strip())[:200]
     return path
+
+
+def native_executable(executable):
+    """Resolve a native CLI even when a Tunnel/Worker did not inherit Git Bash's PATH."""
+    found = shutil.which(executable)
+    candidates = [Path(found)] if found else []
+    if found and os.name == "nt" and executable == "claude":
+        # npm's .cmd/.ps1 launchers are not safe argv targets for subprocess.Popen.
+        candidates.append(
+            Path(found).parent / "node_modules" / "@anthropic-ai" / "claude-code"
+            / "bin" / "claude.exe"
+        )
+    candidates.extend(installed_native_candidates(executable))
+    for candidate in candidates:
+        if candidate.is_file() and (
+            os.name != "nt" or candidate.suffix.lower() == ".exe"
+        ) and candidate.suffix.lower() not in {".cmd", ".bat", ".ps1"}:
+            return str(candidate)
+    raise BridgeError(f"Native {executable} executable unavailable; install the official CLI")
+
+
+def installed_native_candidates(executable, *, windows=None, home=None, local_appdata=None, roaming_appdata=None):
+    """Known Windows install locations; candidate binaries are still checked by probe()."""
+    if windows is None:
+        windows = os.name == "nt"
+    if not windows:
+        return []
+    home = Path(home) if home is not None else Path.home()
+    local = Path(local_appdata) if local_appdata is not None else Path(
+        os.environ.get("LOCALAPPDATA", home / "AppData" / "Local")
+    )
+    roaming = Path(roaming_appdata) if roaming_appdata is not None else Path(
+        os.environ.get("APPDATA", home / "AppData" / "Roaming")
+    )
+    candidates = [
+        home / ".local" / "bin" / f"{executable}.exe",
+        local / "Microsoft" / "WinGet" / "Links" / f"{executable}.exe",
+    ]
+    if executable == "codex":
+        candidates.extend((local / "OpenAI" / "Codex" / "bin").glob("*/codex.*"))
+        candidates.extend(
+            (home / ".vscode" / "extensions").glob(
+                "openai.chatgpt-*/bin/windows-*/codex.exe"
+            )
+        )
+    elif executable == "claude":
+        package = roaming / "npm" / "node_modules" / "@anthropic-ai" / "claude-code"
+        candidates.append(package / "bin" / "claude.exe")
+        candidates.extend(
+            package.glob("node_modules/@anthropic-ai/claude-code-win32-*/claude.exe")
+        )
+        candidates.extend(
+            (local / "Microsoft" / "WinGet" / "Packages").glob(
+                "Anthropic.ClaudeCode_*/claude.exe"
+            )
+        )
+    return candidates
 
 
 class BaseAgentAdapter(ABC):

@@ -1,13 +1,16 @@
 import json
 from pathlib import Path
 
-from .config import metadata_name
+from ..adapters.agents import ADAPTERS
+from ..adapters.git import git
+from ..infra.config import metadata_name
+from ..infra.errors import BridgeError
+from ..infra.security import atomic_write, canonical, reject_secrets, safe_path
 from .context import identifier
-from .errors import BridgeError
-from .git import git
-from .security import atomic_write, canonical, reject_secrets, safe_path
 
-PROVIDERS = {"codex", "claude", "chatgpt"}
+# "chatgpt" is interactive, not CLI-dispatched, so it is not in the ADAPTERS registry
+# but is still a configurable provider.
+PROVIDERS = set(ADAPTERS) | {"chatgpt"}
 LANGUAGES = {"zh-TW", "ch", "en"}
 ROLES = ("SA", "SD", "RD", "SD/RD", "REVIEW")
 EFFORTS = {

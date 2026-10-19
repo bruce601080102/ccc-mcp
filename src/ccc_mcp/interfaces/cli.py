@@ -9,10 +9,11 @@ from typing import Annotated
 
 import typer
 
-from .errors import BridgeError
-from .models import ContextPatch
-from .security import atomic_write, redact
-from .service import CCCMCP
+from ..adapters.agents.base import native_executable
+from ..core.models import ContextPatch
+from ..infra.errors import BridgeError
+from ..infra.security import atomic_write, redact
+from ..service import CCCMCP
 
 app = typer.Typer(no_args_is_help=True, help="ccc-mcp Context Hub 與 Agent 協作工具")
 project_app = typer.Typer(no_args_is_help=True)
@@ -392,7 +393,7 @@ def task_accept(ctx: typer.Context, task_id: str):
 @task_app.command("test")
 def task_test(ctx: typer.Context, task_id: str):
     """本機人工授權後，在任務 Worktree 執行固定 pytest 命令。"""
-    from .test_runner import run_tests_local
+    from ..adapters.test_runner import run_tests_local
 
     output(run_tests_local(bridge(ctx), project_id(ctx), task_id))
 
@@ -438,7 +439,14 @@ def doctor(ctx: typer.Context):
         "registered_projects": len(bridge(ctx).list_projects()),
     }
     for executable in ["git", "codex", "claude"]:
-        path = shutil.which(executable)
+        try:
+            path = (
+                shutil.which(executable)
+                if executable == "git"
+                else native_executable(executable)
+            )
+        except BridgeError:
+            path = None
         if not path:
             checks[executable] = {
                 "available": False,
