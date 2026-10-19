@@ -554,9 +554,15 @@ def connect(ctx: typer.Context, tunnel_id: str):
     profile = f"ccc-mcp-{tunnel_id.removeprefix('tunnel_')}"
     profile_dir = home / "tunnel"
     profile_dir.mkdir(parents=True, exist_ok=True)
-    mcp_command = f'"{sys.executable}" -m ccc_mcp --home "{home}" serve'
-    if not (profile_dir / f"{profile}.yaml").exists() and not (profile_dir / f"{profile}.yml").exists():
-        subprocess.run(
+    # tunnel-client parses --mcp-command as a command line. Backslashes in
+    # Windows paths are consumed as escapes, so use forward slashes here.
+    mcp_command = (
+        f'"{Path(sys.executable).resolve().as_posix()}" '
+        f'-m ccc_mcp --home "{home.resolve().as_posix()}" serve'
+    )
+    profile_paths = (profile_dir / f"{profile}.yaml", profile_dir / f"{profile}.yml")
+    if not any(path.is_file() for path in profile_paths):
+        initialized = subprocess.run(
             [
                 str(client), "init", "--sample", "sample_mcp_stdio_local",
                 "--profile", profile, "--profile-dir", str(profile_dir),
@@ -568,20 +574,31 @@ def connect(ctx: typer.Context, tunnel_id: str):
             shell=False,
             check=False,
         )
+        if initialized.returncode != 0:
+            raise BridgeError(
+                "tunnel-client init failed; the profile was not created. "
+                "Fix the MCP command error above before retrying."
+            )
+        if not any(path.is_file() for path in profile_paths):
+            raise BridgeError("tunnel-client init returned success but no profile file was created")
 
-    subprocess.run(
+    diagnosed = subprocess.run(
         [str(client), "doctor", "--profile", profile, "--profile-dir", str(profile_dir), "--explain"],
         env=full_env,
         shell=False,
         check=False,
     )
+    if diagnosed.returncode != 0:
+        raise BridgeError("tunnel-client doctor failed; the connection was not started")
     typer.echo("\nKeep this terminal open while ChatGPT uses ccc-mcp. Press Ctrl+C to stop.\n")
-    subprocess.run(
+    connected = subprocess.run(
         [str(client), "run", "--profile", profile, "--profile-dir", str(profile_dir)],
         env=full_env,
         shell=False,
         check=False,
     )
+    if connected.returncode != 0:
+        raise BridgeError("tunnel-client run exited with an error")
 
 
 @app.command()

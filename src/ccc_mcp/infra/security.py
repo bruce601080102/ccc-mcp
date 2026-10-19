@@ -4,6 +4,7 @@ import json
 import os
 import re
 import tempfile
+import time
 import tokenize
 from collections import Counter
 from pathlib import Path, PureWindowsPath
@@ -45,7 +46,16 @@ def atomic_write(path: Path, content: str) -> None:
             handle.write(content)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(temp, path)
+        # Windows briefly denies rename-over when an AV scanner, search indexer or
+        # sync client has the destination open; that clears on its own within ~1s.
+        for attempt, delay in enumerate((0.05, 0.1, 0.2, 0.4, 0.8)):
+            try:
+                os.replace(temp, path)
+                break
+            except PermissionError:
+                if attempt == 4:
+                    raise
+                time.sleep(delay)
     finally:
         if os.path.exists(temp):
             os.unlink(temp)

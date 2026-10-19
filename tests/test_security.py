@@ -83,6 +83,43 @@ def test_atomic_write_does_not_destroy_old_file(tmp_path, monkeypatch):
     assert not list(tmp_path.glob(".bridge-*"))
 
 
+def test_atomic_write_retries_transient_windows_permission_error(tmp_path, monkeypatch):
+    target = tmp_path / "data.md"
+    atomic_write(target, "old")
+
+    calls = []
+    real_replace = os.replace
+
+    def flaky_replace(src, dst):
+        calls.append(1)
+        if len(calls) < 3:
+            raise PermissionError("[WinError 5] Access is denied")
+        real_replace(src, dst)
+
+    monkeypatch.setattr("ccc_mcp.infra.security.os.replace", flaky_replace)
+    monkeypatch.setattr("ccc_mcp.infra.security.time.sleep", lambda seconds: None)
+
+    atomic_write(target, "new")
+
+    assert target.read_text() == "new"
+    assert len(calls) == 3
+
+
+def test_atomic_write_gives_up_after_repeated_permission_errors(tmp_path, monkeypatch):
+    target = tmp_path / "data.md"
+    atomic_write(target, "old")
+
+    def always_denied(*args):
+        raise PermissionError("[WinError 5] Access is denied")
+
+    monkeypatch.setattr("ccc_mcp.infra.security.os.replace", always_denied)
+    monkeypatch.setattr("ccc_mcp.infra.security.time.sleep", lambda seconds: None)
+
+    with pytest.raises(PermissionError):
+        atomic_write(target, "new")
+    assert target.read_text() == "old"
+
+
 def test_comment_preservation():
     old = {"x.py": b"# keep me\nx = 1  # and me\n"}
     assert comment_check(old, {"x.py": b"# keep me\nx = 2  # and me\n# additional\n"})["ok"]

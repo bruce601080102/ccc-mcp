@@ -1,7 +1,9 @@
 import asyncio
 import json
 import os
+import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 from mcp import ClientSession, StdioServerParameters
@@ -314,6 +316,73 @@ def test_connect_stops_after_failed_admin_auth_check(tmp_path, monkeypatch):
     assert "Authentication/access check failed" in str(result.exception)
     assert len(calls) == 1
     assert calls[0][1:4] == ["admin", "tunnels", "get"]
+
+
+@pytest.mark.parametrize("failed_stage", ["init", "doctor"])
+def test_connect_stops_after_profile_or_doctor_failure(tmp_path, monkeypatch, failed_stage):
+    from ccc_mcp.interfaces import cli as cli_module
+
+    monkeypatch.setenv("CONTROL_PLANE_API_KEY", "secret-key")
+    monkeypatch.setattr(
+        cli_module, "ensure_tunnel_client", lambda home: tmp_path / "tunnel-client.exe"
+    )
+    monkeypatch.setattr(
+        cli_module, "native_executable", lambda name: (_ for _ in ()).throw(BridgeError("missing"))
+    )
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        stage = argv[1]
+        calls.append(stage)
+        if stage == "init" and failed_stage != "init":
+            profile_dir = Path(argv[argv.index("--profile-dir") + 1])
+            profile = argv[argv.index("--profile") + 1]
+            (profile_dir / f"{profile}.yaml").write_text("test profile", encoding="utf-8")
+        return subprocess.CompletedProcess(argv, int(stage == failed_stage))
+
+    monkeypatch.setattr(cli_module.subprocess, "run", fake_run)
+    result = CliRunner().invoke(
+        app, ["--home", str(tmp_path / "home"), "connect", "tunnel_" + "a" * 32]
+    )
+    assert result.exit_code == 1
+    assert isinstance(result.exception, BridgeError)
+    assert calls == (["admin", "init"] if failed_stage == "init" else ["admin", "init", "doctor"])
+
+
+def test_connect_uses_forward_slash_mcp_command_and_existing_profile(tmp_path, monkeypatch):
+    from ccc_mcp.interfaces import cli as cli_module
+
+    monkeypatch.setenv("CONTROL_PLANE_API_KEY", "secret-key")
+    monkeypatch.setattr(
+        cli_module, "ensure_tunnel_client", lambda home: tmp_path / "tunnel-client.exe"
+    )
+    monkeypatch.setattr(
+        cli_module, "native_executable", lambda name: (_ for _ in ()).throw(BridgeError("missing"))
+    )
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+        if argv[1] == "init":
+            profile_dir = Path(argv[argv.index("--profile-dir") + 1])
+            profile = argv[argv.index("--profile") + 1]
+            (profile_dir / f"{profile}.yaml").write_text("test profile", encoding="utf-8")
+        return subprocess.CompletedProcess(argv, 0)
+
+    monkeypatch.setattr(cli_module.subprocess, "run", fake_run)
+    args = ["--home", str(tmp_path / "home"), "connect", "tunnel_" + "a" * 32]
+    first = CliRunner().invoke(app, args)
+    assert first.exit_code == 0, first.output
+    assert [call[1] for call in calls] == ["admin", "init", "doctor", "run"]
+    command = calls[1][calls[1].index("--mcp-command") + 1]
+    assert "\\" not in command
+    assert Path(cli_module.sys.executable).resolve().as_posix() in command
+    assert (tmp_path / "home").resolve().as_posix() in command
+
+    calls.clear()
+    again = CliRunner().invoke(app, args)
+    assert again.exit_code == 0, again.output
+    assert [call[1] for call in calls] == ["admin", "doctor", "run"]
 
 
 def test_update_invokes_pip_upgrade(tmp_path, monkeypatch):
