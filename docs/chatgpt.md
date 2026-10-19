@@ -11,8 +11,10 @@
 3. 在專案根目錄的 Git Bash 執行：
 
 ```bash
-bash scripts/connect-chatgpt.sh tunnel_你的實際ID
+ccc-mcp connect tunnel_你的實際ID
 ```
+
+（`bash scripts/connect-chatgpt.sh tunnel_你的實際ID` 仍可用，現在只是轉發到上面這個指令。）
 
 依提示在終端輸入 runtime key，輸入會隱藏；不要貼到對話。腳本僅將 key 放入本次子程序環境，設定檔只保存 `env:CONTROL_PLANE_API_KEY` 引用。腳本會建立獨立 profile、執行 doctor 並在前景啟動 Tunnel，由它啟動 ccc-mcp stdio，不需另外手動執行 `ccc-mcp serve`。保持終端開啟。
 

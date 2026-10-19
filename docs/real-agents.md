@@ -73,10 +73,10 @@ winget.exe install --id Anthropic.ClaudeCode --exact --source winget
 先在原本連線的終端按 Ctrl+C。接著於專案根目錄執行：
 
 ```bash
-bash scripts/connect-chatgpt.sh tunnel_你的實際ID
+ccc-mcp connect tunnel_你的實際ID
 ```
 
-連線腳本會自動尋找原生 Codex／Claude CLI，將路徑傳給 Tunnel 與 Worker；不必先手動 `source`。它只檢查路徑與登入狀態，本身不執行模型任務。已授權專案不需要額外的 real-agent 環境開關，但仍需安裝並登入角色所用的 CLI。更新程式後須重啟 Tunnel，讓既有 Server 載入新版本。
+（`bash scripts/connect-chatgpt.sh tunnel_你的實際ID` 仍可用，現在只是轉發到上面這個指令。）連線指令會自動尋找原生 Codex／Claude CLI，不必先手動 `source`。它只檢查路徑與登入狀態，本身不執行模型任務。已授權專案不需要額外的 real-agent 環境開關，但仍需安裝並登入角色所用的 CLI。更新程式後須重啟 Tunnel，讓既有 Server 載入新版本。
 
 缺少 Claude 時仍可先連接 SA；SD/RD 要等 Claude 安裝及登入完成。實際派工前 Adapter 也會檢查 CLI 必要參數。
 

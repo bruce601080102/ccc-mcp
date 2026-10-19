@@ -272,3 +272,88 @@ async def test_jwt_verifier_rejects_unverified_tokens(monkeypatch):
         verifier, "decode", lambda token: (_ for _ in ()).throw(jwt.InvalidSignatureError())
     )
     assert await verifier.verify_token("forged") is None
+
+
+def test_connect_rejects_invalid_tunnel_id(tmp_path):
+    runner = CliRunner()
+    result = runner.invoke(app, ["--home", str(tmp_path / "home"), "connect", "bad_id"])
+    assert result.exit_code == 1
+    assert isinstance(result.exception, BridgeError)
+    assert "Usage: ccc-mcp connect" in str(result.exception)
+
+
+def test_connect_stops_after_failed_admin_auth_check(tmp_path, monkeypatch):
+    from ccc_mcp.interfaces import cli as cli_module
+
+    monkeypatch.setenv("CONTROL_PLANE_API_KEY", "secret-key")
+    fake_client = tmp_path / "tunnel-client.exe"
+    monkeypatch.setattr(cli_module, "ensure_tunnel_client", lambda home: fake_client)
+
+    def unavailable(executable):
+        raise BridgeError("native CLI unavailable")
+
+    monkeypatch.setattr(cli_module, "native_executable", unavailable)
+
+    calls = []
+
+    class FakeResult:
+        def __init__(self, returncode):
+            self.returncode = returncode
+
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+        return FakeResult(returncode=1)
+
+    monkeypatch.setattr(cli_module.subprocess, "run", fake_run)
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["--home", str(tmp_path / "home"), "connect", "tunnel_" + "a" * 32])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, BridgeError)
+    assert "Authentication/access check failed" in str(result.exception)
+    assert len(calls) == 1
+    assert calls[0][1:4] == ["admin", "tunnels", "get"]
+
+
+def test_update_invokes_pip_upgrade(tmp_path, monkeypatch):
+    from ccc_mcp.interfaces import cli as cli_module
+
+    calls = []
+
+    class FakeResult:
+        returncode = 0
+
+    def fake_run(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return FakeResult()
+
+    monkeypatch.setattr(cli_module.subprocess, "run", fake_run)
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["--home", str(tmp_path / "home"), "update"])
+
+    assert result.exit_code == 0, result.output
+    assert calls[0][0] == [cli_module.sys.executable, "-m", "pip", "install", "--upgrade", "ccc-mcp"]
+
+
+def test_update_dev_installs_editable_from_repo_root(tmp_path, monkeypatch):
+    from ccc_mcp.interfaces import cli as cli_module
+
+    calls = []
+
+    class FakeResult:
+        returncode = 0
+
+    def fake_run(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return FakeResult()
+
+    monkeypatch.setattr(cli_module.subprocess, "run", fake_run)
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["--home", str(tmp_path / "home"), "update", "--dev"])
+
+    assert result.exit_code == 0, result.output
+    assert calls[0][0] == [cli_module.sys.executable, "-m", "pip", "install", "-e", ".[dev]"]
+    assert calls[0][1]["cwd"] is not None

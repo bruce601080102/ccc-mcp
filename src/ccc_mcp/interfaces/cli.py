@@ -1,5 +1,8 @@
+import getpass
 import importlib.metadata
 import json
+import os
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -10,6 +13,7 @@ from typing import Annotated
 import typer
 
 from ..adapters.agents.base import native_executable
+from ..adapters.tunnel_client import ensure_tunnel_client
 from ..core.models import ContextPatch
 from ..infra.errors import BridgeError
 from ..infra.security import atomic_write, redact
@@ -490,6 +494,127 @@ def serve(
     from .server import serve as run_server
 
     run_server(bridge(ctx).home, transport, host, port, enable_writes)
+
+
+@app.command()
+def connect(ctx: typer.Context, tunnel_id: str):
+    """連接 ChatGPT：安裝/驗證 tunnel-client 並啟動長駐連線（取代 scripts/connect-chatgpt.sh）。"""
+    if not re.fullmatch(r"tunnel_[a-z0-9]{32}", tunnel_id):
+        raise BridgeError("Usage: ccc-mcp connect tunnel_YOUR_ID")
+    home = bridge(ctx).home
+    client = ensure_tunnel_client(home)
+
+    key = os.environ.get("CONTROL_PLANE_API_KEY")
+    if not key:
+        typer.echo("Enter the OpenAI runtime API key locally (hidden; do not paste into chat):")
+        key = getpass.getpass("")
+    if not key:
+        raise BridgeError("No key entered")
+    if any(c.isspace() for c in key) or key.startswith("tunnel_"):
+        raise BridgeError(
+            "Invalid key input: enter only the runtime Secret Key, "
+            "without spaces/newlines or a tunnel ID"
+        )
+
+    for executable, status_args, login_hint in [
+        ("codex", ["login", "status"], "codex login"),
+        ("claude", ["auth", "status", "--text"], "claude auth login"),
+    ]:
+        try:
+            path = native_executable(executable)
+        except BridgeError:
+            typer.echo(f"{executable} unavailable. Install it, or configure roles to use another provider.")
+            continue
+        result = subprocess.run(
+            [path, *status_args],
+            capture_output=True,
+            stdin=subprocess.DEVNULL,
+            timeout=15,
+            shell=False,
+            check=False,
+        )
+        if result.returncode == 0:
+            typer.echo(f"{executable} native CLI found; login available.")
+        else:
+            typer.echo(f"{executable} found; finish login with: {login_hint}")
+
+    env = {k: v for k, v in os.environ.items() if k not in {"OPENAI_ADMIN_KEY", "OPENAI_API_KEY"}}
+    env["CONTROL_PLANE_API_KEY"] = key
+    typer.echo("Checking runtime authentication and access to this tunnel...")
+    check = subprocess.run(
+        [str(client), "admin", "tunnels", "get", tunnel_id], env=env, shell=False, check=False
+    )
+    if check.returncode != 0:
+        raise BridgeError(
+            "Authentication/access check failed; connection was not started. Check the runtime "
+            "key, its Platform organization, and Tunnels Read + Use permissions."
+        )
+
+    full_env = {**os.environ, "CONTROL_PLANE_API_KEY": key}
+    profile = f"ccc-mcp-{tunnel_id.removeprefix('tunnel_')}"
+    profile_dir = home / "tunnel"
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    mcp_command = f'"{sys.executable}" -m ccc_mcp --home "{home}" serve'
+    if not (profile_dir / f"{profile}.yaml").exists() and not (profile_dir / f"{profile}.yml").exists():
+        subprocess.run(
+            [
+                str(client), "init", "--sample", "sample_mcp_stdio_local",
+                "--profile", profile, "--profile-dir", str(profile_dir),
+                "--tunnel-id", tunnel_id, "--mcp-command", mcp_command,
+                "--control-plane-api-key-ref", "env:CONTROL_PLANE_API_KEY",
+                "--health-listen-addr", "127.0.0.1:0",
+            ],
+            env=full_env,
+            shell=False,
+            check=False,
+        )
+
+    subprocess.run(
+        [str(client), "doctor", "--profile", profile, "--profile-dir", str(profile_dir), "--explain"],
+        env=full_env,
+        shell=False,
+        check=False,
+    )
+    typer.echo("\nKeep this terminal open while ChatGPT uses ccc-mcp. Press Ctrl+C to stop.\n")
+    subprocess.run(
+        [str(client), "run", "--profile", profile, "--profile-dir", str(profile_dir)],
+        env=full_env,
+        shell=False,
+        check=False,
+    )
+
+
+@app.command()
+def update(
+    ctx: typer.Context,
+    dev: bool = False,
+    tunnel_client: bool = False,
+):
+    """更新 ccc-mcp；--dev 在原始碼目錄重新可編輯安裝，--tunnel-client 一併更新 tunnel-client。"""
+    if dev:
+        repo_root = None
+        for parent in Path(__file__).resolve().parents:
+            if (parent / "pyproject.toml").is_file():
+                repo_root = parent
+                break
+        if repo_root is None:
+            raise BridgeError("Could not locate pyproject.toml above this file for --dev update")
+        result = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "-e", ".[dev]"],
+            cwd=repo_root,
+            shell=False,
+            check=False,
+        )
+    else:
+        result = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "--upgrade", "ccc-mcp"], shell=False, check=False
+        )
+    if result.returncode != 0:
+        raise BridgeError("pip install failed; see output above")
+    if tunnel_client:
+        path = ensure_tunnel_client(bridge(ctx).home, force=True)
+        typer.echo(f"tunnel-client updated: {path}")
+    typer.echo("更新完成；請重新執行 ccc-mcp connect <tunnel_id> 讓新版生效。")
 
 
 def main():

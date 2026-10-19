@@ -102,14 +102,10 @@ ccc-mcp project create new-project --language ch
 在 ccc-mcp 資料夾啟動連線，將 ID 換成自己的：
 
 ```bash
-bash scripts/connect-chatgpt.sh tunnel_你的ID
+ccc-mcp connect tunnel_你的ID
 ```
 
-第一次執行若尚未安裝官方 `tunnel-client`，腳本會從 OpenAI 的最新 GitHub release 下載 Windows 版本、核對官方 SHA256 後安裝到 `.tools/tunnel-client/`。也可只安裝而不連線：
-
-```bash
-bash scripts/install-tunnel-client.sh
-```
+第一次執行若尚未安裝官方 `tunnel-client`，會自動從 OpenAI 的最新 GitHub release 下載 Windows 版本、核對官方 SHA256 後安裝到 `~/.ccc-mcp/tools/tunnel-client/`，不需要另外的安裝步驟。（舊版 `bash scripts/connect-chatgpt.sh tunnel_你的ID` 仍可使用，行為相同。）
 
 保持終端開啟。第一次連線看[連線指南](docs/chatgpt.md)：
 
@@ -117,7 +113,7 @@ bash scripts/install-tunnel-client.sh
 2. 新開對話，用 `@` 選用這個連線。
 3. 請它實際讀取 TradeAdvisorv3 的 README，回報檔名與內容，確認連線可用。
 
-更新 ccc-mcp 後先執行 `./.venv/Scripts/python.exe -m pip install -e ".[dev]"` 更新依賴，再重啟 Tunnel。到 [ChatGPT Plugins](https://chatgpt.com/plugins) 開啟正在使用的 ccc-mcp 連線，按 **重新整理工具**，新開對話並用 `@` 選同一連線。確認工具清單有 `start_project_request`，而沒有 `write_workspace`。[官方更新步驟](https://developers.openai.com/plugins/deploy/connect-chatgpt#refresh-metadata)
+更新 ccc-mcp 後先執行 `ccc-mcp update --dev`（在原始碼目錄開發時）或 `ccc-mcp update`（一般 pip 安裝）更新依賴，再重啟 Tunnel。到 [ChatGPT Plugins](https://chatgpt.com/plugins) 開啟正在使用的 ccc-mcp 連線，按 **重新整理工具**，新開對話並用 `@` 選同一連線。確認工具清單有 `start_project_request`，而沒有 `write_workspace`。[官方更新步驟](https://developers.openai.com/plugins/deploy/connect-chatgpt#refresh-metadata)
 
 若舊對話仍呼叫 `create_task`，伺服器會相容地將它轉為 `start_project_request` 並自動派出 SA；這不是兩次派工，也不需要再呼叫 `dispatch_agent`。但舊工具清單沒有 `advance_project`，後續仍須依上一步重啟 Tunnel、重新整理工具，並在新對話使用更新後的連線。若出現 `Unknown tool: create_task`，代表執行中的 Tunnel 尚未載入此版伺服器。
 
