@@ -2,9 +2,36 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+# Bump only for incompatible changes to the published schemas (docs/schema/*.json);
+# an additive, optional field does not require a bump. See docs/protocol.md.
+PROTOCOL_VERSION = "1"
+
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+def strict_json_schema(model: type[BaseModel]) -> dict:
+    """Pydantic schema with additionalProperties:false and required everywhere.
+
+    Used both to constrain real Agent CLI structured output and to publish a
+    stable external contract for the models external consumers (docs/schema/*.json).
+    """
+    schema = model.model_json_schema()
+
+    def tighten(node):
+        if isinstance(node, dict):
+            if node.get("type") == "object":
+                node["additionalProperties"] = False
+                node["required"] = list(node.get("properties", {}))
+            for value in node.values():
+                tighten(value)
+        elif isinstance(node, list):
+            for value in node:
+                tighten(value)
+
+    tighten(schema)
+    return schema
 
 
 class SourceRef(StrictModel):

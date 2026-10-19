@@ -14,7 +14,7 @@ import typer
 
 from ..adapters.agents.base import native_executable
 from ..adapters.tunnel_client import ensure_tunnel_client
-from ..core.models import ContextPatch
+from ..core.models import AgentReport, ContextPatch, ContextSnapshot, strict_json_schema
 from ..infra.errors import BridgeError
 from ..infra.security import atomic_write, redact
 from ..service import CCCMCP
@@ -25,11 +25,13 @@ context_app = typer.Typer(no_args_is_help=True)
 task_app = typer.Typer(no_args_is_help=True)
 workspace_app = typer.Typer(no_args_is_help=True, help="直接編輯原專案：審閱並核准指定檔案差異")
 config_app = typer.Typer(no_args_is_help=True, help="本機設定角色、模型、位置與讀取範圍")
+schema_app = typer.Typer(no_args_is_help=True, help="發布給外部消費者（例如未來的 ccc-mcp-ui）的協議 JSON Schema")
 app.add_typer(project_app, name="project")
 app.add_typer(context_app, name="context")
 app.add_typer(task_app, name="task")
 app.add_typer(workspace_app, name="workspace", hidden=True)
 app.add_typer(config_app, name="config")
+app.add_typer(schema_app, name="schema")
 
 
 @app.callback()
@@ -478,6 +480,25 @@ def doctor(ctx: typer.Context):
     except BridgeError as exc:
         checks["context_schema"] = {"registered": False, "message": str(exc)}
     output(checks)
+
+
+PROTOCOL_MODELS = {
+    "agent-report": AgentReport,
+    "context-snapshot": ContextSnapshot,
+    "context-patch": ContextPatch,
+}
+
+
+@schema_app.command("export")
+def schema_export(out_dir: Path):
+    """把發布給外部消費者的協議 JSON Schema 寫到指定目錄（見 docs/protocol.md）。"""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    written = []
+    for name, model in PROTOCOL_MODELS.items():
+        path = out_dir / f"{name}.json"
+        path.write_text(json.dumps(strict_json_schema(model), indent=2) + "\n", encoding="utf-8")
+        written.append(str(path))
+    output({"written": written})
 
 
 @app.command()

@@ -7,6 +7,7 @@ from ..infra.config import metadata_name
 from ..infra.errors import BridgeError
 from ..infra.security import atomic_write, canonical, reject_secrets, safe_path
 from .context import identifier
+from .models import PROTOCOL_VERSION
 
 # "chatgpt" is interactive, not CLI-dispatched, so it is not in the ADAPTERS registry
 # but is still a configurable provider.
@@ -220,8 +221,11 @@ class ConfigurationHub:
     def public_project_settings(self, project_id):
         settings = self.get_project_settings(project_id)
         return {
-            key: value for key, value in settings.items()
-            if key not in {"workflow_mode", "workspace_mode", "worktree_dir", "writable_files", "writable_roots"}
+            "protocol_version": PROTOCOL_VERSION,
+            **{
+                key: value for key, value in settings.items()
+                if key not in {"workflow_mode", "workspace_mode", "worktree_dir", "writable_files", "writable_roots"}
+            },
         }
 
     def configure_language(self, project_id, language):

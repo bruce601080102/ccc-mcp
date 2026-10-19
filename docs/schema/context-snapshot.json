@@ -1,0 +1,277 @@
+{
+  "$defs": {
+    "AgentContextResult": {
+      "additionalProperties": false,
+      "properties": {
+        "execution_id": {
+          "minLength": 1,
+          "title": "Execution Id",
+          "type": "string"
+        },
+        "task_id": {
+          "minLength": 1,
+          "title": "Task Id",
+          "type": "string"
+        },
+        "provider": {
+          "minLength": 1,
+          "title": "Provider",
+          "type": "string"
+        },
+        "role": {
+          "minLength": 1,
+          "title": "Role",
+          "type": "string"
+        },
+        "base_context_version": {
+          "minimum": 1,
+          "title": "Base Context Version",
+          "type": "integer"
+        },
+        "summary": {
+          "title": "Summary",
+          "type": "string"
+        },
+        "findings": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Findings",
+          "type": "array"
+        },
+        "risks": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Risks",
+          "type": "array"
+        },
+        "next_action": {
+          "title": "Next Action",
+          "type": "string"
+        },
+        "context_updates": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Context Updates",
+          "type": "array"
+        },
+        "source_document_ref": {
+          "$ref": "#/$defs/SourceRef"
+        },
+        "review_status": {
+          "const": "unreviewed",
+          "default": "unreviewed",
+          "title": "Review Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "execution_id",
+        "task_id",
+        "provider",
+        "role",
+        "base_context_version",
+        "summary",
+        "findings",
+        "risks",
+        "next_action",
+        "context_updates",
+        "source_document_ref",
+        "review_status"
+      ],
+      "title": "AgentContextResult",
+      "type": "object"
+    },
+    "Fact": {
+      "additionalProperties": false,
+      "properties": {
+        "text": {
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        },
+        "source_document_refs": {
+          "items": {
+            "$ref": "#/$defs/SourceRef"
+          },
+          "minItems": 1,
+          "title": "Source Document Refs",
+          "type": "array"
+        }
+      },
+      "required": [
+        "text",
+        "source_document_refs"
+      ],
+      "title": "Fact",
+      "type": "object"
+    },
+    "Invariant": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "requirement",
+            "acceptance",
+            "constraint",
+            "blocker"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "text": {
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "text"
+      ],
+      "title": "Invariant",
+      "type": "object"
+    },
+    "SourceRef": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "minLength": 1,
+          "title": "Path",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "sha256"
+      ],
+      "title": "SourceRef",
+      "type": "object"
+    },
+    "WorkspaceChange": {
+      "additionalProperties": false,
+      "properties": {
+        "edit_id": {
+          "minLength": 1,
+          "title": "Edit Id",
+          "type": "string"
+        },
+        "path": {
+          "minLength": 1,
+          "title": "Path",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "edit_id",
+        "path",
+        "sha256"
+      ],
+      "title": "WorkspaceChange",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "project_name": {
+      "minLength": 1,
+      "title": "Project Name",
+      "type": "string"
+    },
+    "purpose": {
+      "minLength": 1,
+      "title": "Purpose",
+      "type": "string"
+    },
+    "status": {
+      "default": "Initialized",
+      "title": "Status",
+      "type": "string"
+    },
+    "next_action": {
+      "default": "\u5efa\u7acb\u9700\u6c42\u8207\u9a57\u6536\u689d\u4ef6\uff0c\u6307\u6d3e SA \u5206\u6790\u3002",
+      "title": "Next Action",
+      "type": "string"
+    },
+    "summary": {
+      "default": "\u5c1a\u7121 Agent \u6210\u679c\u3002",
+      "title": "Summary",
+      "type": "string"
+    },
+    "unresolved_questions": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Unresolved Questions",
+      "type": "array"
+    },
+    "invariants": {
+      "items": {
+        "$ref": "#/$defs/Invariant"
+      },
+      "title": "Invariants",
+      "type": "array"
+    },
+    "architecture": {
+      "items": {
+        "$ref": "#/$defs/Fact"
+      },
+      "title": "Architecture",
+      "type": "array"
+    },
+    "source_document_refs": {
+      "items": {
+        "$ref": "#/$defs/SourceRef"
+      },
+      "title": "Source Document Refs",
+      "type": "array"
+    },
+    "agent_results": {
+      "items": {
+        "$ref": "#/$defs/AgentContextResult"
+      },
+      "title": "Agent Results",
+      "type": "array"
+    },
+    "workspace_changes": {
+      "items": {
+        "$ref": "#/$defs/WorkspaceChange"
+      },
+      "title": "Workspace Changes",
+      "type": "array"
+    }
+  },
+  "required": [
+    "project_name",
+    "purpose",
+    "status",
+    "next_action",
+    "summary",
+    "unresolved_questions",
+    "invariants",
+    "architecture",
+    "source_document_refs",
+    "agent_results",
+    "workspace_changes"
+  ],
+  "title": "ContextSnapshot",
+  "type": "object"
+}

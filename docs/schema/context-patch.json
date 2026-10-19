@@ -1,0 +1,89 @@
+{
+  "$defs": {
+    "SourceRef": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "minLength": 1,
+          "title": "Path",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "sha256"
+      ],
+      "title": "SourceRef",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "base_context_version": {
+      "minimum": 1,
+      "title": "Base Context Version",
+      "type": "integer"
+    },
+    "changes": {
+      "additionalProperties": false,
+      "minProperties": 1,
+      "title": "Changes",
+      "type": "object",
+      "required": []
+    },
+    "source_task_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Source Task Ids",
+      "type": "array"
+    },
+    "source_execution_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Source Execution Ids",
+      "type": "array"
+    },
+    "source_document_refs": {
+      "items": {
+        "$ref": "#/$defs/SourceRef"
+      },
+      "title": "Source Document Refs",
+      "type": "array"
+    },
+    "update_reason": {
+      "minLength": 1,
+      "title": "Update Reason",
+      "type": "string"
+    },
+    "author_role": {
+      "const": "PM",
+      "default": "PM",
+      "title": "Author Role",
+      "type": "string"
+    },
+    "semantic_review_ack": {
+      "default": false,
+      "title": "Semantic Review Ack",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "base_context_version",
+    "changes",
+    "source_task_ids",
+    "source_execution_ids",
+    "source_document_refs",
+    "update_reason",
+    "author_role",
+    "semantic_review_ack"
+  ],
+  "title": "ContextPatch",
+  "type": "object"
+}

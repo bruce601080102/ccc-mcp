@@ -10,7 +10,7 @@ from pathlib import Path
 
 import psutil
 
-from ...core.models import AgentReport
+from ...core.models import AgentReport, strict_json_schema
 from ...infra.errors import AgentCancelled, AgentProcessError, AgentTimeout, BridgeError
 from ...infra.security import canonical, redact
 from ...infra.telemetry import ACTIVE_AUDIT, process_finished, process_started, record_output
@@ -219,21 +219,7 @@ def parse_report(text):
 
 def schema_file(folder):
     path = Path(folder) / "report.schema.json"
-    schema = AgentReport.model_json_schema()
-
-    def strict(node):
-        if isinstance(node, dict):
-            if node.get("type") == "object":
-                node["additionalProperties"] = False
-                node["required"] = list(node.get("properties", {}))
-            for value in node.values():
-                strict(value)
-        elif isinstance(node, list):
-            for value in node:
-                strict(value)
-
-    strict(schema)
-    path.write_text(json.dumps(schema), encoding="utf-8")
+    path.write_text(json.dumps(strict_json_schema(AgentReport)), encoding="utf-8")
     return path
 
 

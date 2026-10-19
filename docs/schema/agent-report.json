@@ -1,0 +1,89 @@
+{
+  "$defs": {
+    "TestClaim": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "claimed_result": {
+          "title": "Claimed Result",
+          "type": "string"
+        },
+        "details": {
+          "title": "Details",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "claimed_result",
+        "details"
+      ],
+      "title": "TestClaim",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "summary": {
+      "title": "Summary",
+      "type": "string"
+    },
+    "findings": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Findings",
+      "type": "array"
+    },
+    "risks": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Risks",
+      "type": "array"
+    },
+    "next_action": {
+      "title": "Next Action",
+      "type": "string"
+    },
+    "tests": {
+      "items": {
+        "$ref": "#/$defs/TestClaim"
+      },
+      "title": "Tests",
+      "type": "array"
+    },
+    "needs_revision": {
+      "default": false,
+      "title": "Needs Revision",
+      "type": "boolean"
+    },
+    "simulated": {
+      "default": false,
+      "title": "Simulated",
+      "type": "boolean"
+    },
+    "context_updates": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Context Updates",
+      "type": "array"
+    }
+  },
+  "required": [
+    "summary",
+    "findings",
+    "risks",
+    "next_action",
+    "tests",
+    "needs_revision",
+    "simulated",
+    "context_updates"
+  ],
+  "title": "AgentReport",
+  "type": "object"
+}

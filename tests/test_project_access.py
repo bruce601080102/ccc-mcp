@@ -34,6 +34,7 @@ def test_one_authorization_enables_agent_request_not_direct_write(bridge, human)
     assert CCCMCP(bridge.home).get_project_settings("demo")["workspace_mode"] == "project"
     assert "workflow_mode" not in bridge.public_project_settings("demo")
     assert "workspace_mode" not in bridge.public_project_settings("demo")
+    assert bridge.public_project_settings("demo")["protocol_version"] == "1"
     with pytest.raises(PermissionDenied, match="Agent workstream"):
         bridge.write_workspace("demo", path="new.py", content="value=1\n")
     assert not (root(bridge) / "new.py").exists()

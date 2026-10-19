@@ -11,7 +11,7 @@ from ..adapters.storage import artifact, decode, now
 from ..infra.config import metadata_name
 from ..infra.errors import BridgeError, VersionConflict
 from ..infra.security import atomic_write, canonical, digest, reject_secrets, safe_path
-from .models import ContextPatch, ContextSnapshot, SourceRef
+from .models import PROTOCOL_VERSION, ContextPatch, ContextSnapshot, SourceRef
 
 DOCUMENTS = {
     "project": "context/PROJECT.md",
@@ -802,6 +802,7 @@ class ContextHub:
             )
             execution_settings = self.public_project_settings(project_id)
             return {
+                "protocol_version": PROTOCOL_VERSION,
                 "project_summary": snapshot["purpose"],
                 "context_version": latest["version"],
                 "current_git_revision": self.git_revision(root),
