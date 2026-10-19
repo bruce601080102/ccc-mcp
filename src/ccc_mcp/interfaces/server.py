@@ -96,6 +96,10 @@ def create_server(
         token_verifier=verifier,
         auth=auth,
         instructions="Use bootstrap_project to restore state and inspect project_access. "
+        "bootstrap_project and get_context include available_skills: operator-installed local "
+        "guidance (name/description/content), the same ones Codex and Claude Code receive. Read "
+        "each description; if one is relevant to the current request, follow its content yourself "
+        "when acting as PM, not only when relaying a dispatched Agent's report. "
         "For every authorized project change, call start_project_request: it creates/reuses the "
         "internal workstream and dispatches the configured SA. Do not edit files directly as PM. "
         "After each Agent report, use advance_project with a provenance-backed PM ContextPatch; "

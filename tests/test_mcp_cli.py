@@ -255,6 +255,15 @@ async def test_stdio_chatgpt_role_roundtrip_without_native_cli(bridge):
     assert bridge.task("demo", "TASK-0001")["state"] == "AWAITING_PM_DECISION"
 
 
+def test_server_instructions_tell_pm_about_available_skills(bridge):
+    # available_skills rides inside bootstrap_project/get_context payloads, but
+    # ChatGPT-as-PM never sees agents/base.py's policy text (that's only sent to
+    # real Codex/Claude CLI subprocesses) — without a mention here, PM has no
+    # reason to notice or act on the field at all.
+    server = create_server(bridge.home)
+    assert "available_skills" in server.instructions
+
+
 def test_http_auth_required_for_remote_and_writes(bridge):
     with pytest.raises(BridgeError, match="OAuth"):
         create_server(bridge.home, http=True, host="0.0.0.0")
