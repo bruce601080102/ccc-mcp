@@ -34,6 +34,15 @@ if name == 'claude':
         candidates += sorted(packages.glob('Anthropic.ClaudeCode_*/claude.exe'),
                              key=lambda path: path.stat().st_mtime, reverse=True)
 if name == 'codex':
+    local_appdata = Path(os.environ.get('LOCALAPPDATA', home / 'AppData/Local'))
+    codex_bins = local_appdata / 'OpenAI/Codex/bin'
+    if codex_bins.is_dir():
+        candidates += sorted(
+            (path for path in codex_bins.glob('*/codex.*')
+             if path.suffix.lower() == '.exe'),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
     extension_root = home / '.vscode/extensions'
     if extension_root.is_dir():
         candidates += sorted(extension_root.glob('openai.chatgpt-*/bin/windows-x86_64/codex.exe'),
@@ -85,7 +94,11 @@ ccc_mcp_enable_real_agents() {
   fi
   export CCC_MCP_ENABLE_REAL_AGENTS=1
   printf 'Real dispatch enabled for programs started from this terminal. No model task was started.\n'
-  printf 'Restart scripts/connect-chatgpt.sh from this same terminal to apply the environment.\n'
+  if [[ "${CCC_MCP_CONNECTING:-0}" == "1" ]]; then
+    printf 'Native CLI paths applied to this Tunnel process.\n'
+  else
+    printf 'Restart scripts/connect-chatgpt.sh from this same terminal to apply the environment.\n'
+  fi
 }
 
 if ccc_mcp_enable_real_agents; then

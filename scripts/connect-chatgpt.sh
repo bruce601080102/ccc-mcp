@@ -17,6 +17,9 @@ if [[ ! -f "$python" ]]; then
   printf 'source scripts/setup-real-agents.sh codex\n' >&2
   exit 1
 fi
+# This script may be started from a fresh shell. Populate PATH for the Tunnel and
+# its detached workers instead of relying on an earlier manual `source` command.
+CCC_MCP_CONNECTING=1 source "$root/scripts/enable-real-agents.sh"
 if [[ ! -f "$client" ]]; then
   printf 'Official tunnel-client is missing; installing the latest verified Windows release...\n'
   bash "$root/scripts/install-tunnel-client.sh"

@@ -68,16 +68,15 @@ winget.exe install --id Anthropic.ClaudeCode --exact --source winget
 
 若同時啟用了 Conda，npm 產生的 Git Bash `claude` shell shim 可能誤用 Anaconda 的 `cygpath`，形成 `anaconda3/Library/c/Users/...` 之類的錯誤路徑。設定腳本會優先尋找 npm 套件內真正的 `claude.exe` 並加入 PATH，繞過該 shim；重新執行 `source scripts/setup-real-agents.sh claude` 即可，不必重裝套件。
 
-## 2. 在 Git Bash 啟用真實派工並重啟 Tunnel
+## 2. 在 Git Bash 重啟 Tunnel
 
 先在原本連線的終端按 Ctrl+C。接著於專案根目錄執行：
 
 ```bash
-source scripts/enable-real-agents.sh
 bash scripts/connect-chatgpt.sh tunnel_你的實際ID
 ```
 
-設定腳本檢查 CLI 路徑與登入狀態，並為舊版／未授權派工設定目前終端環境；它本身不執行模型任務。已授權專案不再需要額外的 real-agent 環境開關，但仍需安裝並登入角色所用的 CLI。更新程式後須重啟 Tunnel，讓既有 Server 載入新版本。
+連線腳本會自動尋找原生 Codex／Claude CLI，將路徑傳給 Tunnel 與 Worker；不必先手動 `source`。它只檢查路徑與登入狀態，本身不執行模型任務。已授權專案不需要額外的 real-agent 環境開關，但仍需安裝並登入角色所用的 CLI。更新程式後須重啟 Tunnel，讓既有 Server 載入新版本。
 
 缺少 Claude 時仍可先連接 SA；SD/RD 要等 Claude 安裝及登入完成。實際派工前 Adapter 也會檢查 CLI 必要參數。
 
