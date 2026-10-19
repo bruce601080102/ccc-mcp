@@ -97,6 +97,7 @@ async def test_mcp_tool_schemas_and_no_fake_human_approval(bridge):
         "get_task_result",
         "review_changes",
         "get_approval_status",
+        "recover_workers",
     }
     assert required <= names
     assert not {"approve", "register_project", "propose_plan", "request_approval"} & names

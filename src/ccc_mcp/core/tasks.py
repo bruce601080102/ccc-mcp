@@ -889,17 +889,41 @@ class TaskHub:
                 elapsed = (
                     datetime.now(UTC) - datetime.fromisoformat(latest["created"])
                 ).total_seconds()
-                progress = {
-                    "elapsed_seconds": round(elapsed),
-                    "timeout_seconds": timeout,
-                    "note": (
+                # A worker that never even reached run_execution (e.g. the subprocess
+                # failed to start or crashed before acquiring its lock) leaves the row
+                # QUEUED forever with no error — invisible unless something checks the
+                # lock directly. Give new dispatches a few seconds' grace so this isn't
+                # a false positive against a worker that just hasn't started yet.
+                orphaned = False
+                if latest["status"] == "QUEUED" and not options.get("interactive") and elapsed > 5:
+                    lockfile = self.home / "locks" / f"{latest['id']}.lock"
+                    try:
+                        with portalocker.Lock(lockfile, timeout=0):
+                            orphaned = True
+                    except portalocker.exceptions.LockException:
+                        orphaned = False
+                if orphaned:
+                    note = (
+                        "No live worker process holds this execution's lock even though "
+                        "it is still QUEUED; the worker most likely crashed before it "
+                        "started. Call recover_workers to clear it, then dispatch again."
+                    )
+                elif timeout is None or elapsed < timeout:
+                    note = (
                         "Still within the configured timeout; a real Agent CLI call can "
                         "legitimately take several minutes. Re-check get_task_status later "
                         "rather than assuming it is stuck."
-                        if timeout is None or elapsed < timeout
-                        else "Elapsed time exceeds the configured timeout but status has not "
+                    )
+                else:
+                    note = (
+                        "Elapsed time exceeds the configured timeout but status has not "
                         "flipped yet; the worker may have crashed. Treat as possibly stuck."
-                    ),
+                    )
+                progress = {
+                    "elapsed_seconds": round(elapsed),
+                    "timeout_seconds": timeout,
+                    "orphaned": orphaned,
+                    "note": note,
                 }
             task["brief"] = {
                 "task_id": task_id,

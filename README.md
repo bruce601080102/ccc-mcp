@@ -95,6 +95,10 @@ ccc-mcp skill remove my-skill
 
 Skill 是全局安裝（`~/.ccc-mcp/skills/`），裝一次所有專案都能用。從 URL 安裝時內容會直接進入 Agent 的 prompt，只安裝你信任的來源。
 
+**實際生效的時機**：Skill 內容附在 `bootstrap_project`、`get_context`，以及每次派工（`start_project_request`／`advance_project`／`dispatch_agent`）回傳的 `available_skills` 欄位裡。真正執行角色的是誰，就是誰看到——SA/SD/RD/REVIEW 設成 `codex`／`claude` 時由本機 CLI 看到；設成 `chatgpt` 時（`ccc-mcp --project 你的專案ID config show` 可查），就是 ChatGPT 自己要照著做。
+
+**實務上要注意**：Skill 要不要用，完全由 Agent 自己判斷，ccc-mcp 不強制。跟這次任務的程式碼或分析工作直接相關的 skill（例如「一律加型別標註」「commit 訊息要符合某種格式」）比較容易被真的採用，因為會自然融進它本來就要產出的東西；跟任務內容無關的格式性要求（例如「回覆開頭先打招呼」）很容易被模型當成次要資訊忽略，不代表機制壞掉。改完 Skill 內容後記得 `ccc-mcp connect` 重啟才會生效。
+
 ## 遇到問題
 
 - `Project ID is already registered`：用 `ccc-mcp project list` 找到原專案並沿用，不要刪資料重建。

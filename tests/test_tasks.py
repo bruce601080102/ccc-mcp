@@ -23,6 +23,60 @@ def test_worker_rejects_unregistered_provider(bridge, human):
     assert "No adapter registered for provider: grok" in result["error"]
 
 
+def test_get_task_status_flags_orphaned_queued_execution(bridge, human):
+    # spawn_worker is a no-op in tests (see conftest), so dispatch() always
+    # leaves the row QUEUED with nothing holding its lock — exactly the shape
+    # of a worker subprocess that crashed or never started.
+    bridge.create_task("demo", "新增 API", ["API 回傳 200"])
+    queued = dispatch(bridge)
+    bridge.store.execute(
+        "UPDATE agent_executions SET created=? WHERE id=?",
+        ("2000-01-01T00:00:00+00:00", queued["execution_id"]),
+    )
+
+    status = bridge.get_task_status("demo", "TASK-0001")
+
+    assert status["brief"]["progress"]["orphaned"] is True
+    assert "recover_workers" in status["brief"]["progress"]["note"]
+
+
+def test_get_task_status_does_not_flag_freshly_queued_execution(bridge, human):
+    bridge.create_task("demo", "新增 API", ["API 回傳 200"])
+    dispatch(bridge)
+
+    status = bridge.get_task_status("demo", "TASK-0001")
+
+    assert status["brief"]["progress"]["orphaned"] is False
+
+
+def test_get_task_status_does_not_flag_execution_with_live_lock(bridge, human):
+    import portalocker
+
+    bridge.create_task("demo", "新增 API", ["API 回傳 200"])
+    queued = dispatch(bridge)
+    bridge.store.execute(
+        "UPDATE agent_executions SET created=? WHERE id=?",
+        ("2000-01-01T00:00:00+00:00", queued["execution_id"]),
+    )
+    lockfile = bridge.home / "locks" / f"{queued['execution_id']}.lock"
+    lockfile.parent.mkdir(exist_ok=True)
+
+    with portalocker.Lock(lockfile, timeout=5):
+        status = bridge.get_task_status("demo", "TASK-0001")
+
+    assert status["brief"]["progress"]["orphaned"] is False
+
+
+def test_recover_workers_clears_orphaned_execution(bridge, human):
+    bridge.create_task("demo", "新增 API", ["API 回傳 200"])
+    queued = dispatch(bridge)
+
+    result = bridge.recover_workers("demo")
+
+    assert result["interrupted_executions"] == [queued["execution_id"]]
+    assert bridge.task("demo", "TASK-0001")["state"] == "BLOCKED"
+
+
 def test_sd_handoff_contains_approved_plan_and_current_version(bridge, human):
     bridge.create_task("demo", "新增 API", ["API 回傳 200"])
     sa = dispatch(bridge)
