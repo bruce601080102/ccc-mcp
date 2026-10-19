@@ -186,7 +186,7 @@ ChatGPT 官方網頁的 HTTPS / Secure MCP Tunnel、OAuth 與工作區權限操�
 
 ## 真實 Agent、人工核准與安全邊界
 
-從已連線的 ChatGPT 接上真實 Codex SA 與 Claude Code SD/RD，請依 [真實 Agent 設定指南](real-agents.md) 操作。Git Bash 使用 `source scripts/enable-real-agents.sh` 設定 CLI 路徑與真實派工環境，再於同一個終端重啟 Tunnel。
+從已連線的 ChatGPT 接上真實 Codex SA 與 Claude Code SD/RD，請依 [真實 Agent 設定指南](real-agents.md) 操作。`ccc-mcp connect` 會自動尋找已安裝的 codex／claude CLI，不需要另外設定 PATH；重新執行 `ccc-mcp connect tunnel_你的實際ID` 即可重啟 Tunnel。
 
 Codex 與 Claude Code 必須由使用者依官方方式另外安裝並登入。`doctor` 僅查安裝及版本，不宣稱已登入。Adapter 執行前再次檢查 CLI help；缺少必要參數會明確失敗。
 

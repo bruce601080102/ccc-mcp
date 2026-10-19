@@ -2,9 +2,9 @@
 
 文件核對日期：2026-10-17。官方介面及工作區政策可能改變，以下以連結文件與實際帳戶介面為準。本次交付只完成本機 MCP 與驗證，沒有建立雲端資源或使用帳戶登入。
 
-## Git Bash 快速連線（本機工具已準備）
+## Git Bash 快速連線
 
-本機 `.tools/tunnel-client/tunnel-client.exe` 已由官方 release 安裝，版本 0.0.16，下載 SHA256 與官方清單相符。
+`ccc-mcp connect` 第一次執行時會自動從官方 release 下載 `tunnel-client`、核對 SHA256，安裝到 `~/.ccc-mcp/tools/tunnel-client/`，不需要事先手動安裝。
 
 1. 開啟 [Platform Tunnels](https://platform.openai.com/settings/organization/tunnels)，建立名稱為 ccc-mcp 的 Tunnel，關聯要使用的 ChatGPT 工作區，複製 `tunnel_...` ID。
 2. 在 [Runtime API Keys](https://platform.openai.com/settings/organization/api-keys) 準備 runtime key；該 key 的 principal 需有 Tunnels Read + Use。此流程不需要提供 admin key 給本機 runtime。
@@ -30,7 +30,7 @@ ccc-mcp connect tunnel_你的實際ID
 先 Ctrl+C 停止重試，再使用以下命令重新在本機輸入金鑰（將 ID 換成實際值）。`env -u` 只影響這次腳本，不會改掉父層終端既有設定：
 
 ```bash
-env -u CONTROL_PLANE_API_KEY -u OPENAI_ADMIN_KEY bash scripts/connect-chatgpt.sh tunnel_你的實際ID
+env -u CONTROL_PLANE_API_KEY -u OPENAI_ADMIN_KEY ccc-mcp connect tunnel_你的實際ID
 ```
 
 腳本會先用 runtime key 執行唯讀的 tunnel metadata 存取檢查，失敗就停止，避免直接進入持續 poll。檢查成功仍不代表已通過 ChatGPT 端到端驗收，還需確認 polling 及實際工具呼叫。
@@ -39,7 +39,7 @@ env -u CONTROL_PLANE_API_KEY -u OPENAI_ADMIN_KEY bash scripts/connect-chatgpt.sh
 
 新版本有註冊 `list_workspace`、`read_workspace`、`write_task_file`、`submit_agent_report`。如果 ChatGPT 能派工卻找不到這些工具，先更新服務與 ChatGPT 端保存的工具清單，而不是再次註冊專案或增加 read-root：
 
-1. 在 ccc-mcp 根目錄停止舊 Tunnel，重新執行 `source scripts/enable-real-agents.sh`，再執行 `bash scripts/connect-chatgpt.sh tunnel_你的實際ID`。
+1. 停止舊 Tunnel，重新執行 `ccc-mcp connect tunnel_你的實際ID`（會自動找 codex／claude CLI，不需要先手動 `source` 任何腳本）。
 2. 若 plugin 詳細設定有重新整理工具／actions 選項，可用它更新。沒有此入口時，可新增另一個名稱（例如 ccc-mcp-v2）的連線，選擇同一個 Tunnel，完成建立並安裝。建立畫面沒有工具清單時，直接進入下一步，不要求在該畫面確認工具數量。
 3. 新開對話，以 `@` 明確選用更新後的 plugin；若新舊連線同時存在，請選新建立的那個。先要求呼叫 `list_workspace(project_id="你的專案ID", root_id="project")`，再用 `read_workspace` 讀實際列出的 README 路徑，回報檔名、SHA256 與少量內容。看到成功的工具呼叫結果才代表本次對話可讀檔；文字宣稱「可以讀」不算驗證。驗證期間不要派工或提交 Context。
 
