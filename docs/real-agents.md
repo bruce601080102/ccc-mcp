@@ -15,27 +15,26 @@ ChatGPT PM → Codex SA → SA-REPORT.md
 
 ## 1. 安裝與登入
 
-建議直接在專案根目錄使用整合設定腳本。它會建立或更新 `.venv`、安裝 ccc-mcp、安裝缺少的 CLI、引導登入，並在目前 Git Bash 啟用真實派工：
+分兩步：第一步在專案根目錄建立 `.venv`、把 ccc-mcp 本身裝起來（這是唯一需要腳本的地方，因為 `ccc-mcp` 指令此時還不存在）；第二步起，裝缺少的 CLI、引導登入都交給 `ccc-mcp setup`，純 Python 執行，不需要 `source`：
 
 ```bash
-# 預設只準備 Codex
 source scripts/setup-real-agents.sh
 
+# 預設只準備 Codex
+ccc-mcp setup codex
+
 # 只準備 Claude Code
-source scripts/setup-real-agents.sh claude
+ccc-mcp setup claude
 
 # 同時準備兩個 CLI
-source scripts/setup-real-agents.sh all
-
-# 設定完成後直接啟動 Tunnel
-source scripts/setup-real-agents.sh codex tunnel_你的實際ID
+ccc-mcp setup all
 ```
 
-腳本必須用 `source`，才能讓環境變數留在啟動 Tunnel 的同一個終端。若 Node.js／npm 不存在，腳本會嘗試透過 WinGet 安裝 Node.js LTS；安裝後 PATH 尚未刷新時，只需開新的 Git Bash，再執行同一條設定命令。
+若 Node.js／npm 不存在，`ccc-mcp setup` 會嘗試透過 WinGet 安裝 Node.js LTS；安裝後若在同一個指令裡還找不到 npm，開新的 Git Bash 再跑一次 `ccc-mcp setup` 即可。
 
 以下是需要手動排錯時使用的個別安裝方式。
 
-需要各自的官方原生 CLI 及帳戶登入。已有 VS Code Codex 擴充套件的 Windows 安裝，可由設定腳本找到其隨附的 codex.exe；版本更新後重新 source 腳本即可重新尋找。
+需要各自的官方原生 CLI 及帳戶登入。已有 VS Code Codex 擴充套件的 Windows 安裝，`ccc-mcp setup codex`／`ccc-mcp doctor` 可以找到其隨附的 codex.exe；版本更新後重跑一次即可重新尋找。
 
 Codex CLI 可依 [OpenAI 官方安裝方式](https://developers.openai.com/cookbook/examples/codex/using_goals_in_codex) 使用 npm 安裝或更新：
 
@@ -64,9 +63,9 @@ claude
 winget.exe install --id Anthropic.ClaudeCode --exact --source winget
 ```
 
-若 WinGet 顯示已安裝，但 Git Bash 回報 `claude: command not found`，請先於本專案根目錄執行 `source scripts/enable-real-agents.sh`，再執行 `claude --version` 與 `claude auth login`。設定腳本可直接尋找 WinGet 的 Claude 套件目錄，補入目前終端的 PATH；不必重新安裝。
+若 WinGet 顯示已安裝，但 Git Bash 回報 `claude: command not found`，不必自己修 PATH——直接執行 `ccc-mcp setup claude` 或 `ccc-mcp doctor`，它們會自己找到 WinGet 裝的 Claude 套件目錄，不依賴目前終端的 PATH。
 
-若同時啟用了 Conda，npm 產生的 Git Bash `claude` shell shim 可能誤用 Anaconda 的 `cygpath`，形成 `anaconda3/Library/c/Users/...` 之類的錯誤路徑。設定腳本會優先尋找 npm 套件內真正的 `claude.exe` 並加入 PATH，繞過該 shim；重新執行 `source scripts/setup-real-agents.sh claude` 即可，不必重裝套件。
+若同時啟用了 Conda，npm 產生的 Git Bash `claude` shell shim 可能誤用 Anaconda 的 `cygpath`，形成 `anaconda3/Library/c/Users/...` 之類的錯誤路徑。`ccc-mcp setup claude` 會優先解析 npm 套件內真正的 `claude.exe`，繞過該 shim；重新執行一次即可，不必重裝套件。
 
 ## 2. 在 Git Bash 重啟 Tunnel
 
@@ -76,7 +75,7 @@ winget.exe install --id Anthropic.ClaudeCode --exact --source winget
 ccc-mcp connect tunnel_你的實際ID
 ```
 
-（`bash scripts/connect-chatgpt.sh tunnel_你的實際ID` 仍可用，現在只是轉發到上面這個指令。）連線指令會自動尋找原生 Codex／Claude CLI，不必先手動 `source`。它只檢查路徑與登入狀態，本身不執行模型任務。已授權專案不需要額外的 real-agent 環境開關，但仍需安裝並登入角色所用的 CLI。更新程式後須重啟 Tunnel，讓既有 Server 載入新版本。
+連線指令會自動尋找原生 Codex／Claude CLI，不必先手動 `source`。它只檢查路徑與登入狀態，本身不執行模型任務。已授權專案不需要額外的 real-agent 環境開關，但仍需安裝並登入角色所用的 CLI。更新程式後須重啟 Tunnel，讓既有 Server 載入新版本。
 
 缺少 Claude 時仍可先連接 SA；SD/RD 要等 Claude 安裝及登入完成。實際派工前 Adapter 也會檢查 CLI 必要參數。
 

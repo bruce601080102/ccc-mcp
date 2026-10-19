@@ -12,6 +12,7 @@ from typing import Annotated
 
 import typer
 
+from ..adapters.agent_setup import setup_provider
 from ..adapters.agents.base import native_executable
 from ..adapters.tunnel_client import ensure_tunnel_client
 from ..core.models import AgentReport, ContextPatch, ContextSnapshot, strict_json_schema
@@ -499,6 +500,16 @@ def schema_export(out_dir: Path):
         path.write_text(json.dumps(strict_json_schema(model), indent=2) + "\n", encoding="utf-8")
         written.append(str(path))
     output({"written": written})
+
+
+@app.command()
+def setup(provider: Annotated[str, typer.Argument()] = "codex"):
+    """安裝並登入本機 Codex／Claude Code CLI（codex、claude 或 all）。"""
+    if provider not in {"codex", "claude", "all"}:
+        raise BridgeError("Unsupported provider: use codex, claude, or all")
+    providers = ["codex", "claude"] if provider == "all" else [provider]
+    ready = [setup_provider(name) for name in providers]
+    output({"ready": ready, "next_action": "ccc-mcp connect tunnel_你的實際ID"})
 
 
 @app.command()

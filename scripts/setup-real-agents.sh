@@ -1,25 +1,18 @@
 #!/usr/bin/env bash
-# One-command Git Bash setup for ccc-mcp and its optional local agent CLIs.
-# Source this script so CCC_MCP_ENABLE_REAL_AGENTS remains available to the Tunnel.
+# One-time bootstrap: create the venv and install ccc-mcp itself. This is the
+# only step `ccc-mcp` can't do for you yet, since the `ccc-mcp` command doesn't
+# exist until this finishes. Everything else (installing/logging into Codex
+# and Claude Code, connecting to ChatGPT) is `ccc-mcp setup` / `ccc-mcp connect`
+# — this script does not call, and is not called by, any other script.
+set -euo pipefail
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
-  printf 'Run from Git Bash with: source scripts/setup-real-agents.sh [codex|claude|all] [tunnel_id]\n' >&2
+  printf 'Run from Git Bash with: source scripts/setup-real-agents.sh\n' >&2
   exit 2
 fi
 
-ccc_mcp_setup_real_agents() {
-  local provider="${1:-codex}"
-  local tunnel_id="${2:-}"
-  local bridge_root bridge_python need_npm=0 node_major
-
-  case "$provider" in
-    codex|claude|all) ;;
-    *)
-      printf 'Unsupported provider: %s (use codex, claude, or all)\n' "$provider" >&2
-      return 2
-      ;;
-  esac
-
+ccc_mcp_bootstrap() {
+  local bridge_root bridge_python
   bridge_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)" || return 1
   bridge_python="$bridge_root/.venv/Scripts/python.exe"
 
@@ -39,94 +32,15 @@ ccc_mcp_setup_real_agents() {
   ) || return 1
   export PATH="$bridge_root/.venv/Scripts:$PATH"
 
-  # Reuse VS Code/WinGet installations already discoverable by the enable script.
-  source "$bridge_root/scripts/enable-real-agents.sh" || return 1
-
-  if [[ ("$provider" == "codex" || "$provider" == "all") ]] \
-    && ! command -v codex >/dev/null 2>&1; then
-    need_npm=1
-  fi
-  if [[ ("$provider" == "claude" || "$provider" == "all") ]] \
-    && ! command -v claude >/dev/null 2>&1; then
-    need_npm=1
-  fi
-
-  if [[ "$need_npm" == "1" ]] && ! command -v npm >/dev/null 2>&1; then
-    if ! command -v winget.exe >/dev/null 2>&1; then
-      printf 'npm is required, and WinGet is unavailable. Install Node.js, open a new Git Bash, and retry.\n' >&2
-      return 1
-    fi
-    printf 'Installing Node.js LTS with WinGet...\n'
-    winget.exe install --id OpenJS.NodeJS.LTS --exact --source winget \
-      --accept-package-agreements --accept-source-agreements || return 1
-    export PATH="/c/Program Files/nodejs:$PATH"
-    hash -r
-  fi
-
-  if [[ "$need_npm" == "1" ]] && ! command -v npm >/dev/null 2>&1; then
-    printf 'Node.js was installed, but npm is not visible yet. Open a new Git Bash and run the same setup command again.\n' >&2
-    return 1
-  fi
-
-  if [[ "$provider" == "codex" || "$provider" == "all" ]]; then
-    if ! command -v codex >/dev/null 2>&1; then
-      printf 'Installing Codex CLI...\n'
-      npm install -g @openai/codex@latest || return 1
-      hash -r
-      source "$bridge_root/scripts/enable-real-agents.sh" || return 1
-    fi
-    if ! codex login status >/dev/null 2>&1; then
-      printf 'Opening Codex login...\n'
-      codex login || return 1
-    fi
-    codex login status >/dev/null 2>&1 || {
-      printf 'Codex login is still incomplete.\n' >&2
-      return 1
-    }
-    printf 'Codex ready.\n'
-  fi
-
-  if [[ "$provider" == "claude" || "$provider" == "all" ]]; then
-    if ! command -v claude >/dev/null 2>&1; then
-      node_major="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || true)"
-      if [[ -z "$node_major" || "$node_major" -lt 22 ]]; then
-        printf 'Claude Code npm installation requires Node.js 22+. Upgrade Node.js and retry.\n' >&2
-        return 1
-      fi
-      printf 'Installing Claude Code...\n'
-      npm install -g @anthropic-ai/claude-code || return 1
-      hash -r
-      source "$bridge_root/scripts/enable-real-agents.sh" || return 1
-    fi
-    if ! claude auth status --text >/dev/null 2>&1; then
-      printf 'Opening Claude Code login...\n'
-      claude auth login || return 1
-    fi
-    claude auth status --text >/dev/null 2>&1 || {
-      printf 'Claude Code login is still incomplete.\n' >&2
-      return 1
-    }
-    printf 'Claude Code ready.\n'
-  fi
-
-  source "$bridge_root/scripts/enable-real-agents.sh" || return 1
-  printf 'ccc-mcp real-agent setup complete for: %s\n' "$provider"
-
-  if [[ -n "$tunnel_id" ]]; then
-    if [[ ! -f "$bridge_root/.tools/tunnel-client/tunnel-client.exe" ]]; then
-      bash "$bridge_root/scripts/install-tunnel-client.sh" || return 1
-    fi
-    printf 'Starting ChatGPT Tunnel: %s\n' "$tunnel_id"
-    bash "$bridge_root/scripts/connect-chatgpt.sh" "$tunnel_id"
-  else
-    printf 'Start the Tunnel from this terminal with: bash scripts/connect-chatgpt.sh tunnel_你的實際ID\n'
-  fi
+  printf '\nccc-mcp is installed. Next steps:\n'
+  printf '  ccc-mcp setup all                   # install/log in to Codex and Claude Code\n'
+  printf '  ccc-mcp connect tunnel_你的實際ID    # connect ChatGPT\n'
 }
 
-if ccc_mcp_setup_real_agents "$@"; then
-  unset -f ccc_mcp_setup_real_agents
+if ccc_mcp_bootstrap; then
+  unset -f ccc_mcp_bootstrap
 else
-  setup_status=$?
-  unset -f ccc_mcp_setup_real_agents
-  return "$setup_status"
+  bootstrap_status=$?
+  unset -f ccc_mcp_bootstrap
+  return "$bootstrap_status"
 fi

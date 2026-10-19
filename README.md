@@ -15,10 +15,11 @@
 ```bash
 git clone https://github.com/bruce601080102/ccc-mcp.git
 cd ccc-mcp
-source scripts/setup-real-agents.sh all
+source scripts/setup-real-agents.sh
+ccc-mcp setup all
 ```
 
-腳本會建立 `.venv`、安裝 ccc-mcp，並檢查／安裝、登入 Codex 與 Claude Code。若安裝 Node.js 後提示重開終端，開新的 Git Bash，在 `ccc-mcp` 目錄重跑最後一行即可。
+第一步只建立 `.venv`、把 ccc-mcp 本身裝起來（這是唯一需要腳本的地方：`ccc-mcp` 指令此時還不存在）。`ccc-mcp setup all` 接手檢查／安裝、登入 Codex 與 Claude Code，純 Python 執行，不需要先 `source` 任何東西。若安裝 Node.js 後提示重開終端，開新的 Git Bash，在 `ccc-mcp` 目錄重跑 `ccc-mcp setup all` 即可。
 
 ### 2. 建立並授權專案
 

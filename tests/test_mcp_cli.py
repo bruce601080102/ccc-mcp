@@ -426,3 +426,45 @@ def test_update_dev_installs_editable_from_repo_root(tmp_path, monkeypatch):
     assert result.exit_code == 0, result.output
     assert calls[0][0] == [cli_module.sys.executable, "-m", "pip", "install", "-e", ".[dev]"]
     assert calls[0][1]["cwd"] is not None
+
+
+def test_setup_rejects_unsupported_provider():
+    result = CliRunner().invoke(app, ["setup", "grok"])
+    assert result.exit_code == 1
+    assert isinstance(result.exception, BridgeError)
+    assert "Unsupported provider" in str(result.exception)
+
+
+def test_setup_all_runs_both_providers_and_stops_on_first_failure(monkeypatch):
+    from ccc_mcp.interfaces import cli as cli_module
+
+    calls = []
+
+    def fake_setup_provider(provider):
+        calls.append(provider)
+        if provider == "codex":
+            return {"provider": "codex", "path": "C:/codex.exe", "logged_in": True}
+        raise BridgeError("claude login is still incomplete")
+
+    monkeypatch.setattr(cli_module, "setup_provider", fake_setup_provider)
+    result = CliRunner().invoke(app, ["setup", "all"])
+
+    assert calls == ["codex", "claude"]
+    assert result.exit_code == 1
+    assert isinstance(result.exception, BridgeError)
+
+
+def test_setup_single_provider_reports_next_action(monkeypatch):
+    from ccc_mcp.interfaces import cli as cli_module
+
+    monkeypatch.setattr(
+        cli_module,
+        "setup_provider",
+        lambda provider: {"provider": provider, "path": "C:/codex.exe", "logged_in": True},
+    )
+    result = CliRunner().invoke(app, ["setup", "codex"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["ready"] == [{"provider": "codex", "path": "C:/codex.exe", "logged_in": True}]
+    assert "ccc-mcp connect" in payload["next_action"]

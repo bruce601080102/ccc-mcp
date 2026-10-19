@@ -14,8 +14,6 @@
 ccc-mcp connect tunnel_你的實際ID
 ```
 
-（`bash scripts/connect-chatgpt.sh tunnel_你的實際ID` 仍可用，現在只是轉發到上面這個指令。）
-
 依提示在終端輸入 runtime key，輸入會隱藏；不要貼到對話。腳本僅將 key 放入本次子程序環境，設定檔只保存 `env:CONTROL_PLANE_API_KEY` 引用。腳本會建立獨立 profile、執行 doctor 並在前景啟動 Tunnel，由它啟動 ccc-mcp stdio，不需另外手動執行 `ccc-mcp serve`。保持終端開啟。
 
 4. 在 [ChatGPT Plugins](https://chatgpt.com/plugins) 新增 custom MCP server，名稱 ccc-mcp、Connection 選 Tunnel，選擇同一個 ID。此本機 stdio 端沒有另外實作 OAuth，因此若畫面要求選取 MCP authentication，選擇無驗證；Tunnel 的組織與工作區權限仍必須正確限制存取。依畫面完成建立；建立表單不一定顯示工具清單，不以此判定連線成功或失敗。
