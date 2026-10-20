@@ -57,36 +57,38 @@ def test_cli_language_defaults_to_zh_tw_and_rejects_unsupported_values(monkeypat
     assert cli_language() == "zh-TW"
     monkeypatch.setenv("CCC_MCP_LANG", "en")
     assert cli_language() == "en"
+    monkeypatch.setenv("CCC_MCP_LANG", "ch")
+    assert cli_language() == "ch"
     monkeypatch.setenv("CCC_MCP_LANG", "fr")
     assert cli_language() == "zh-TW"  # unsupported value falls back to the default
 
 
-def test_cli_help_text_switches_to_english_with_env_var():
-    """Regression: CCC_MCP_LANG=en must switch the CLI's own --help text to English.
-    This is a subprocess test, not CliRunner, because help= strings are built once at
-    module import time — a later env var change inside the same process can't affect
-    an already-imported Typer app."""
-    en = subprocess.run(
+@pytest.mark.parametrize(
+    "lang,needle",
+    [
+        ("en", b"Register a project"),
+        ("ch", "注册项目".encode()),
+        (None, "註冊專案".encode()),  # default, no CCC_MCP_LANG set
+    ],
+)
+def test_cli_help_text_switches_language_with_env_var(lang, needle):
+    """Regression: CCC_MCP_LANG must switch the CLI's own --help text (en, ch, or the
+    zh-TW default). This is a subprocess test, not CliRunner, because help= strings are
+    built once at module import time — a later env var change inside the same process
+    can't affect an already-imported Typer app."""
+    env = {k: v for k, v in os.environ.items() if k != "CCC_MCP_LANG"}
+    if lang is not None:
+        env["CCC_MCP_LANG"] = lang
+    result = subprocess.run(
         [sys.executable, "-m", "ccc_mcp", "--help"],
         capture_output=True,
-        env={**os.environ, "CCC_MCP_LANG": "en"},
+        env=env,
         shell=False,
         timeout=30,
         check=False,
     )
-    assert en.returncode == 0
-    assert b"Register a project" in en.stdout
-
-    zh = subprocess.run(
-        [sys.executable, "-m", "ccc_mcp", "--help"],
-        capture_output=True,
-        env={k: v for k, v in os.environ.items() if k != "CCC_MCP_LANG"},
-        shell=False,
-        timeout=30,
-        check=False,
-    )
-    assert zh.returncode == 0
-    assert "註冊專案".encode() in zh.stdout
+    assert result.returncode == 0
+    assert needle in result.stdout
 
 
 def test_task_show_infers_project_but_refuses_ambiguous_task(bridge, monkeypatch):

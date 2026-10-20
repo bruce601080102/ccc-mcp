@@ -4,7 +4,7 @@ from pathlib import Path
 from ..adapters.agents import ADAPTERS, CodexAdapter
 from ..adapters.agents.base import operator_policy
 from ..adapters.git import git
-from ..infra.config import metadata_name
+from ..infra.config import cli_language, metadata_name
 from ..infra.errors import BridgeError
 from ..infra.security import atomic_write, canonical, reject_secrets, safe_path
 from .context import context_policy, identifier
@@ -367,6 +367,12 @@ class ConfigurationHub:
         Composed from the same functions the real dispatch path uses (operator_policy,
         CodexAdapter.EXTRA_INSTRUCTION, context_policy), so this can never drift from
         what actually gets sent — there is no second copy of the text to keep in sync.
+
+        `adapter_operator_policy`/`context_handoff_policy` are the real payload text, so
+        they follow the *project's* `language` setting (what Codex/Claude/ChatGPT actually
+        receive) — CCC_MCP_LANG never changes them, by design, otherwise this preview
+        would stop matching what a real dispatch sends. `tool_access` is this command's
+        own description, not sent to any agent, so it does follow CCC_MCP_LANG.
         """
         if role not in ROLES:
             raise BridgeError("Unsupported role")
@@ -374,23 +380,43 @@ class ConfigurationHub:
         language = settings["language"]
         provider = settings["roles"][role]["provider"]
         readonly = role in {"SA", "REVIEW"}
+
+        def ui(zh, en):
+            return en if cli_language() == "en" else zh
+
         if provider == "claude":
             tool_access = (
-                "Read/Glob/Grep（唯讀）" if readonly else "Read/Edit/Write/Glob/Grep（可寫）"
+                ui("Read/Glob/Grep（唯讀）", "Read/Glob/Grep (read-only)")
+                if readonly
+                else ui("Read/Edit/Write/Glob/Grep（可寫）", "Read/Edit/Write/Glob/Grep (read-write)")
             )
         elif provider == "codex":
             tool_access = (
-                "codex --sandbox read-only（唯讀）"
+                ui("codex --sandbox read-only（唯讀）", "codex --sandbox read-only (read-only)")
                 if readonly
-                else "codex --sandbox workspace-write（可寫，侷限在任務 worktree）"
+                else ui(
+                    "codex --sandbox workspace-write（可寫，侷限在任務 worktree）",
+                    "codex --sandbox workspace-write (read-write, confined to the task worktree)",
+                )
             )
         else:
-            tool_access = "互動式 ChatGPT：沒有 shell，透過 read_workspace／write_workspace 等 MCP 工具操作"
+            tool_access = ui(
+                "互動式 ChatGPT：沒有 shell，透過 read_workspace／write_workspace 等 MCP 工具操作",
+                "Interactive ChatGPT: no shell, operates via MCP tools like read_workspace/write_workspace",
+            )
         return {
             "role": role,
             "provider": provider,
             "language": language,
             "tool_access": tool_access,
+            "note": ui(
+                f"adapter_operator_policy／context_handoff_policy 是實際送給 Agent 的內容，"
+                f"語言跟隨這個專案的 language 設定（目前是 {language}），不受 CCC_MCP_LANG 影響；"
+                "要改這兩段文字的語言，請用 `ccc-mcp config language`。",
+                f"adapter_operator_policy/context_handoff_policy are the real payload sent "
+                f"to the Agent, so they follow this project's `language` setting (currently "
+                f"{language}), not CCC_MCP_LANG; change it with `ccc-mcp config language` instead.",
+            ),
             "adapter_operator_policy": operator_policy(language),
             "provider_extra_instruction": CodexAdapter.EXTRA_INSTRUCTION
             if provider == "codex"

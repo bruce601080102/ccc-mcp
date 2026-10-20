@@ -219,6 +219,25 @@ def test_role_prompt_preview_rejects_unknown_role(bridge):
         bridge.role_prompt_preview("demo", "QA")
 
 
+def test_role_prompt_preview_tool_access_follows_cli_lang_but_payload_does_not(bridge, monkeypatch):
+    """Regression: tool_access/note are this command's own description, so they follow
+    CCC_MCP_LANG; adapter_operator_policy/context_handoff_policy are the real payload
+    sent to the Agent, so they follow the project's `language` setting instead — never
+    CCC_MCP_LANG, or this preview would stop matching what a real dispatch actually sends."""
+    monkeypatch.delenv("CCC_MCP_LANG", raising=False)
+    zh_preview = bridge.role_prompt_preview("demo", "SA")
+    assert "唯讀" in zh_preview["tool_access"]
+    assert "zh-TW" in zh_preview["note"] or "繁體" in zh_preview["note"]
+
+    monkeypatch.setenv("CCC_MCP_LANG", "en")
+    en_preview = bridge.role_prompt_preview("demo", "SA")
+    assert "read-only" in en_preview["tool_access"]
+    assert "CCC_MCP_LANG" in en_preview["note"]
+    # The actual payload must be identical regardless of CCC_MCP_LANG.
+    assert en_preview["adapter_operator_policy"] == zh_preview["adapter_operator_policy"]
+    assert en_preview["context_handoff_policy"] == zh_preview["context_handoff_policy"]
+
+
 def test_config_prompt_cli_is_read_only_and_does_not_dispatch(bridge):
     result = CliRunner().invoke(
         app, ["--home", str(bridge.home), "--project", "demo", "config", "prompt", "SA"]

@@ -21,9 +21,10 @@ def setting_env(name, default=None):
 def cli_language(default="zh-TW"):
     """The CLI's own displayed language (help text, usage errors) via CCC_MCP_LANG —
     independent from a project's `language` setting, which controls what Codex/Claude/
-    ChatGPT receive in their reports, not what the operator's terminal shows."""
+    ChatGPT receive in their reports, not what the operator's terminal shows. Mirrors
+    the same three values a project's `language` setting accepts (zh-TW/ch/en)."""
     value = setting_env("LANG", default)
-    return value if value in {"zh-TW", "en"} else default
+    return value if value in {"zh-TW", "ch", "en"} else default
 
 
 def metadata_name(root):

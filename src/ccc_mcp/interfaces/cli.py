@@ -24,18 +24,33 @@ from ..infra.security import atomic_write, redact
 from ..service import CCCMCP
 
 
-def t(zh: str, en: str) -> str:
+def t(zh: str, en: str, ch: str | None = None) -> str:
     """Pick the CLI's own displayed text (help, usage errors) by CCC_MCP_LANG.
 
     Independent from a project's `language` setting (zh-TW/ch/en), which controls
     what Codex/Claude/ChatGPT receive, not what this terminal shows. Re-reads the env
     var on every call (cheap) instead of caching at import time, so e.g. `CCC_MCP_LANG=en
-    ccc-mcp ...` works per-invocation without needing a fresh process/import.
+    ccc-mcp ...` works per-invocation without needing a fresh process/import. `ch`
+    (simplified Chinese) is optional per string — strings that haven't been given one
+    yet fall back to the zh-TW (Traditional) text, which a simplified-Chinese reader
+    can still follow, unlike the original problem (no English at all for en readers).
     """
-    return en if cli_language() == "en" else zh
+    lang = cli_language()
+    if lang == "en":
+        return en
+    if lang == "ch":
+        return ch or zh
+    return zh
 
 
-app = typer.Typer(no_args_is_help=True, help=t("ccc-mcp Context Hub 與 Agent 協作工具", "ccc-mcp context hub and agent collaboration tool"))
+app = typer.Typer(
+    no_args_is_help=True,
+    help=t(
+        "ccc-mcp Context Hub 與 Agent 協作工具",
+        "ccc-mcp context hub and agent collaboration tool",
+        "ccc-mcp Context Hub 与 Agent 协作工具",
+    ),
+)
 project_app = typer.Typer(no_args_is_help=True)
 context_app = typer.Typer(no_args_is_help=True)
 task_app = typer.Typer(no_args_is_help=True)
@@ -44,17 +59,23 @@ workspace_app = typer.Typer(
     help=t(
         "直接編輯原專案：審閱並核准指定檔案差異",
         "Direct edits to the original project: review and approve a specific file's diff",
+        "直接编辑原项目：审阅并核准指定文件差异",
     ),
 )
 config_app = typer.Typer(
     no_args_is_help=True,
-    help=t("本機設定角色、模型、位置與讀取範圍", "Local settings: roles, models, locations and read scope"),
+    help=t(
+        "本機設定角色、模型、位置與讀取範圍",
+        "Local settings: roles, models, locations and read scope",
+        "本机设置角色、模型、位置与读取范围",
+    ),
 )
 schema_app = typer.Typer(
     no_args_is_help=True,
     help=t(
         "發布給外部消費者（例如未來的 ccc-mcp-ui）的協議 JSON Schema",
         "Protocol JSON Schema published for external consumers (e.g. a future ccc-mcp-ui)",
+        "发布给外部消费者（例如未来的 ccc-mcp-ui）的协议 JSON Schema",
     ),
 )
 skill_app = typer.Typer(
@@ -62,6 +83,7 @@ skill_app = typer.Typer(
     help=t(
         "本機 Skill：Codex／Claude／ChatGPT 派工時都看得到，全局安裝",
         "Local skills: visible to Codex/Claude/ChatGPT on every dispatch; installed globally",
+        "本机 Skill：Codex／Claude／ChatGPT 派工时都看得到，全局安装",
     ),
 )
 app.add_typer(project_app, name="project")
@@ -74,7 +96,11 @@ app.add_typer(skill_app, name="skill")
 
 
 @app.callback(
-    help=t("--home 指定資料庫位置；--project 指定已註冊專案。", "--home sets the database location; --project selects a registered project.")
+    help=t(
+        "--home 指定資料庫位置；--project 指定已註冊專案。",
+        "--home sets the database location; --project selects a registered project.",
+        "--home 指定数据库位置；--project 指定已注册项目。",
+    )
 )
 def options(ctx: typer.Context, home: Path | None = None, project: str | None = None):
     bridge = CCCMCP(home)
@@ -92,7 +118,11 @@ def project_id(ctx):
     candidates = [p for p in bridge(ctx).list_projects() if cwd.is_relative_to(Path(p["root"]))]
     if not candidates:
         raise BridgeError(
-            t("目前目錄未註冊，請先 init 或使用 --project", "This directory isn't registered; run init first or use --project")
+            t(
+                "目前目錄未註冊，請先 init 或使用 --project",
+                "This directory isn't registered; run init first or use --project",
+                "当前目录未注册，请先 init 或使用 --project",
+            )
         )
     return max(candidates, key=lambda p: len(p["root"]))["id"]
 
@@ -101,7 +131,13 @@ def output(value):
     typer.echo(json.dumps(value, ensure_ascii=False, indent=2))
 
 
-@app.command(help=t("註冊專案並產生 .ccc-mcp 共用記憶。", "Register a project and generate its .ccc-mcp shared memory."))
+@app.command(
+    help=t(
+        "註冊專案並產生 .ccc-mcp 共用記憶。",
+        "Register a project and generate its .ccc-mcp shared memory.",
+        "注册项目并生成 .ccc-mcp 共享记忆。",
+    )
+)
 def init(
     ctx: typer.Context,
     path: Annotated[Path, typer.Argument()] = Path("."),
@@ -667,6 +703,7 @@ def task_decision(
     help=t(
         "檢查環境；不執行模型、不假造登入狀態。",
         "Check the environment; never invokes a model, never fakes login status.",
+        "检查环境；不执行模型、不假造登录状态。",
     )
 )
 def doctor(ctx: typer.Context):
@@ -774,6 +811,7 @@ def skill_remove(ctx: typer.Context, skill_id: str):
     help=t(
         "安裝並登入本機 Codex／Claude Code CLI（codex、claude 或 all）。",
         "Install and log in to the local Codex/Claude Code CLI (codex, claude, or all).",
+        "安装并登录本机 Codex／Claude Code CLI（codex、claude 或 all）。",
     )
 )
 def setup(provider: Annotated[str, typer.Argument()] = "codex"):
@@ -784,7 +822,11 @@ def setup(provider: Annotated[str, typer.Argument()] = "codex"):
     output(
         {
             "ready": ready,
-            "next_action": t("ccc-mcp connect tunnel_你的實際ID", "ccc-mcp connect tunnel_YOUR_ACTUAL_ID"),
+            "next_action": t(
+                "ccc-mcp connect tunnel_你的實際ID",
+                "ccc-mcp connect tunnel_YOUR_ACTUAL_ID",
+                "ccc-mcp connect tunnel_你的实际ID",
+            ),
         }
     )
 
@@ -793,6 +835,7 @@ def setup(provider: Annotated[str, typer.Argument()] = "codex"):
     help=t(
         "啟動 MCP；HTTP 預設唯讀，啟用寫入需 OAuth。",
         "Start the MCP server; HTTP defaults to read-only, enabling writes needs OAuth.",
+        "启动 MCP；HTTP 预设只读，启用写入需 OAuth。",
     )
 )
 def serve(
@@ -851,6 +894,7 @@ def _profile_is_stale(profile_path: Path) -> bool:
         "連接 ChatGPT：安裝/驗證 tunnel-client 並啟動長駐連線（取代 scripts/connect-chatgpt.sh）。",
         "Connect to ChatGPT: install/verify tunnel-client and start a persistent connection "
         "(replaces scripts/connect-chatgpt.sh).",
+        "连接 ChatGPT：安装/验证 tunnel-client 并启动长驻连接（取代 scripts/connect-chatgpt.sh）。",
     )
 )
 def connect(ctx: typer.Context, tunnel_id: str):
@@ -975,6 +1019,7 @@ def connect(ctx: typer.Context, tunnel_id: str):
     help=t(
         "更新 ccc-mcp；--dev 在原始碼目錄重新可編輯安裝，--tunnel-client 一併更新 tunnel-client。",
         "Update ccc-mcp; --dev reinstalls editable from the source directory, --tunnel-client also updates tunnel-client.",
+        "更新 ccc-mcp；--dev 在源码目录重新可编辑安装，--tunnel-client 一并更新 tunnel-client。",
     )
 )
 def update(
@@ -1009,6 +1054,7 @@ def update(
         t(
             "更新完成；請重新執行 ccc-mcp connect <tunnel_id> 讓新版生效。",
             "Update complete; re-run ccc-mcp connect <tunnel_id> for the new version to take effect.",
+            "更新完成；请重新执行 ccc-mcp connect <tunnel_id> 让新版生效。",
         )
     )
 
