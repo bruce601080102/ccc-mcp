@@ -4,6 +4,8 @@
 
 預設流程：**ChatGPT（PM）→ Codex（SA）→ Claude Code（SD/RD）→ Codex（REVIEW）→ ChatGPT 整理 Context**。真正派工、檔案修改和 Context 更新都應留下紀錄，不能只憑聊天回覆判定成功。
 
+> **English CLI help**: `ccc-mcp` prints its own `--help` text, command list and usage errors in Traditional Chinese by default. Set `CCC_MCP_LANG=en` (before running any `ccc-mcp` command, as it's read once per process) to get them in English instead — e.g. `CCC_MCP_LANG=en ccc-mcp --help`. This is separate from a project's own `language` setting (`zh-TW`/`ch`/`en`, see "想調整角色或語言？" below), which controls what Codex/Claude/ChatGPT receive in their reports, not what your own terminal shows.
+
 ## 快速開始（Windows Git Bash／macOS／Linux）
 
 需要 Git、Python 3.11+，以及可登入的 Codex／Claude Code 帳戶。連接 ChatGPT 另需可使用 Tunnel 的 OpenAI Platform 帳戶。以下全部以 `hello-demo` 為例。
@@ -94,7 +96,7 @@ ccc-mcp --project hello-demo config role REVIEW codex --effort high --quota-fall
 ccc-mcp --project hello-demo config language ch
 ```
 
-`--model 模型ID` 與 `--effort` 都可省略，交由本機 CLI 使用預設值；它們不會設定 ChatGPT 網頁模型。`--quota-fallback chatgpt` **只在 CLI 額度不足時**備援，不會修復 CLI 未安裝、未登入或一般執行錯誤。每次 `config role` 會整組取代該角色設定，要保留的選項請一起填。語言預設 `zh-TW`（繁體中文），也可設 `ch`（簡體中文）或 `en`（英文）；切換不會翻譯既有紀錄。
+`--model 模型ID` 與 `--effort` 都可省略，交由本機 CLI 使用預設值；它們不會設定 ChatGPT 網頁模型。`--quota-fallback chatgpt` **只在 CLI 額度不足時**備援，不會修復 CLI 未安裝、未登入或一般執行錯誤。每次 `config role` 會整組取代該角色設定，要保留的選項請一起填。這裡的語言預設 `zh-TW`（繁體中文），也可設 `ch`（簡體中文）或 `en`（英文）；切換不會翻譯既有紀錄。**這個語言設定只影響 Codex／Claude／ChatGPT 收到及回覆的語言**，不會改變你終端機看到的 `ccc-mcp` 指令說明——那個是 `CCC_MCP_LANG` 環境變數（見文件最上方），兩者是分開的設定。
 
 也可直接編輯 `hello-demo/.ccc-mcp/settings.json` 的 `roles` 或 `language`；儲存後，下次查詢設定或派工時會驗證並同步到 SQLite，不用重啟。先用 `ccc-mcp --project hello-demo config show` 確認生效值。格式錯誤會停止派工並顯示錯誤；`project_access` 等授權欄位不能靠改檔取得權限，仍須在本機執行 `project authorize`。
 

@@ -18,18 +18,52 @@ from ..adapters.agents.base import native_executable
 from ..adapters.skills import install_skill, list_skills, remove_skill
 from ..adapters.tunnel_client import ensure_tunnel_client
 from ..core.models import AgentReport, ContextPatch, ContextSnapshot, strict_json_schema
+from ..infra.config import cli_language
 from ..infra.errors import BridgeError
 from ..infra.security import atomic_write, redact
 from ..service import CCCMCP
 
-app = typer.Typer(no_args_is_help=True, help="ccc-mcp Context Hub 與 Agent 協作工具")
+
+def t(zh: str, en: str) -> str:
+    """Pick the CLI's own displayed text (help, usage errors) by CCC_MCP_LANG.
+
+    Independent from a project's `language` setting (zh-TW/ch/en), which controls
+    what Codex/Claude/ChatGPT receive, not what this terminal shows. Re-reads the env
+    var on every call (cheap) instead of caching at import time, so e.g. `CCC_MCP_LANG=en
+    ccc-mcp ...` works per-invocation without needing a fresh process/import.
+    """
+    return en if cli_language() == "en" else zh
+
+
+app = typer.Typer(no_args_is_help=True, help=t("ccc-mcp Context Hub 與 Agent 協作工具", "ccc-mcp context hub and agent collaboration tool"))
 project_app = typer.Typer(no_args_is_help=True)
 context_app = typer.Typer(no_args_is_help=True)
 task_app = typer.Typer(no_args_is_help=True)
-workspace_app = typer.Typer(no_args_is_help=True, help="直接編輯原專案：審閱並核准指定檔案差異")
-config_app = typer.Typer(no_args_is_help=True, help="本機設定角色、模型、位置與讀取範圍")
-schema_app = typer.Typer(no_args_is_help=True, help="發布給外部消費者（例如未來的 ccc-mcp-ui）的協議 JSON Schema")
-skill_app = typer.Typer(no_args_is_help=True, help="本機 Skill：Codex／Claude／ChatGPT 派工時都看得到，全局安裝")
+workspace_app = typer.Typer(
+    no_args_is_help=True,
+    help=t(
+        "直接編輯原專案：審閱並核准指定檔案差異",
+        "Direct edits to the original project: review and approve a specific file's diff",
+    ),
+)
+config_app = typer.Typer(
+    no_args_is_help=True,
+    help=t("本機設定角色、模型、位置與讀取範圍", "Local settings: roles, models, locations and read scope"),
+)
+schema_app = typer.Typer(
+    no_args_is_help=True,
+    help=t(
+        "發布給外部消費者（例如未來的 ccc-mcp-ui）的協議 JSON Schema",
+        "Protocol JSON Schema published for external consumers (e.g. a future ccc-mcp-ui)",
+    ),
+)
+skill_app = typer.Typer(
+    no_args_is_help=True,
+    help=t(
+        "本機 Skill：Codex／Claude／ChatGPT 派工時都看得到，全局安裝",
+        "Local skills: visible to Codex/Claude/ChatGPT on every dispatch; installed globally",
+    ),
+)
 app.add_typer(project_app, name="project")
 app.add_typer(context_app, name="context")
 app.add_typer(task_app, name="task")
@@ -39,9 +73,10 @@ app.add_typer(schema_app, name="schema")
 app.add_typer(skill_app, name="skill")
 
 
-@app.callback()
+@app.callback(
+    help=t("--home 指定資料庫位置；--project 指定已註冊專案。", "--home sets the database location; --project selects a registered project.")
+)
 def options(ctx: typer.Context, home: Path | None = None, project: str | None = None):
-    """--home 指定資料庫位置；--project 指定已註冊專案。"""
     bridge = CCCMCP(home)
     ctx.obj = {"bridge": bridge, "project": project}
 
@@ -56,7 +91,9 @@ def project_id(ctx):
     cwd = Path.cwd().resolve()
     candidates = [p for p in bridge(ctx).list_projects() if cwd.is_relative_to(Path(p["root"]))]
     if not candidates:
-        raise BridgeError("目前目錄未註冊，請先 init 或使用 --project")
+        raise BridgeError(
+            t("目前目錄未註冊，請先 init 或使用 --project", "This directory isn't registered; run init first or use --project")
+        )
     return max(candidates, key=lambda p: len(p["root"]))["id"]
 
 
@@ -64,7 +101,7 @@ def output(value):
     typer.echo(json.dumps(value, ensure_ascii=False, indent=2))
 
 
-@app.command()
+@app.command(help=t("註冊專案並產生 .ccc-mcp 共用記憶。", "Register a project and generate its .ccc-mcp shared memory."))
 def init(
     ctx: typer.Context,
     path: Annotated[Path, typer.Argument()] = Path("."),
@@ -72,7 +109,6 @@ def init(
     purpose: str | None = None,
     language: str = "zh-TW",
 ):
-    """註冊專案並產生 .ccc-mcp 共用記憶。"""
     output(bridge(ctx).register_project(path, id, purpose, language))
 
 
@@ -92,21 +128,33 @@ def project_list(ctx: typer.Context):
     output(bridge(ctx).list_projects())
 
 
-@project_app.command("authorize")
+@project_app.command(
+    "authorize",
+    help=t(
+        "持續授權指定專案；後端自動承接 Agent 工作串與計畫。",
+        "Grant continuous authorization to a project; the backend then auto-drives the Agent workstream and plans.",
+    ),
+)
 def project_authorize(ctx: typer.Context, id: str):
-    """持續授權指定專案；後端自動承接 Agent 工作串與計畫。"""
     output(bridge(ctx).authorize_project_local(id))
 
 
-@project_app.command("revoke")
+@project_app.command(
+    "revoke",
+    help=t("撤銷專案直接寫入授權，恢復唯讀。", "Revoke a project's direct-write authorization, back to read-only."),
+)
 def project_revoke(ctx: typer.Context, id: str):
-    """撤銷專案直接寫入授權，恢復唯讀。"""
     output(bridge(ctx).revoke_project_local(id))
 
 
-@project_app.command("create")
+@project_app.command(
+    "create",
+    help=t(
+        "建立新專案與 Git 基準；不搬移或覆寫既有目錄。",
+        "Create a new project with a Git baseline; never moves or overwrites an existing directory.",
+    ),
+)
 def project_create(ctx: typer.Context, id: str, path: Path | None = None, language: str = "zh-TW"):
-    """建立新專案與 Git 基準；不搬移或覆寫既有目錄。"""
     output(bridge(ctx).create_project(id, path, language))
 
 
@@ -115,34 +163,58 @@ def config_show(ctx: typer.Context):
     output(bridge(ctx).public_project_settings(project_id(ctx)))
 
 
-@config_app.command("providers")
+@config_app.command(
+    "providers",
+    help=t(
+        "新手友善總覽：可編輯設定（roles/language/test_command）與唯讀授權狀態分開顯示，"
+        "並列出目前所有可用的 provider 及支援的 effort。",
+        "Beginner-friendly overview: editable settings (roles/language/test_command) shown "
+        "separately from read-only authorization status, plus every available provider and "
+        "the efforts it supports.",
+    ),
+)
 def config_providers(ctx: typer.Context):
-    """新手友善總覽：可編輯設定（roles/language/test_command）與唯讀授權狀態分開顯示，
-    並列出目前所有可用的 provider 及支援的 effort。"""
     output(bridge(ctx).provider_overview(project_id(ctx)))
 
 
-@config_app.command("prompt")
+@config_app.command(
+    "prompt",
+    help=t(
+        "純讀取：依目前設定印出該角色實際會收到的操作政策／提示文字，不會真的派工。",
+        "Read-only: print exactly what a role would currently be sent, without dispatching anything.",
+    ),
+)
 def config_prompt(ctx: typer.Context, role: str):
-    """純讀取：依目前設定印出該角色實際會收到的操作政策／提示文字，不會真的派工。"""
     output(bridge(ctx).role_prompt_preview(project_id(ctx), role))
 
 
-@config_app.command("context-budget")
+@config_app.command(
+    "context-budget",
+    help=t(
+        "設定派工時 build_handoff 的 token 預算；超額時會壓縮歷史清單並列出省略了什麼。"
+        "未設定時維持現狀，不限制任何交接內容。",
+        "Set the token budget build_handoff uses on real dispatches; over budget, history "
+        "lists are compressed and what was omitted is listed. Unset (default): no limit at all.",
+    ),
+)
 def config_context_budget(
     ctx: typer.Context,
     budget: Annotated[
-        int | None, typer.Argument(help="單位約為字元數/3；留空並加 --clear 可清除設定")
+        int | None,
+        typer.Argument(
+            help=t(
+                "單位約為字元數/3；留空並加 --clear 可清除設定",
+                "Roughly character-count/3; leave empty with --clear to remove the setting",
+            )
+        ),
     ] = None,
     clear: bool = False,
 ):
-    """設定派工時 build_handoff 的 token 預算；超額時會壓縮歷史清單並列出省略了什麼。
-    未設定時維持現狀，不限制任何交接內容。"""
     if clear:
         output(bridge(ctx).configure_context_token_budget(project_id(ctx), None))
         return
     if budget is None:
-        raise BridgeError("請提供預算數字，或加 --clear 清除現有設定")
+        raise BridgeError(t("請提供預算數字，或加 --clear 清除現有設定", "Provide a budget number, or pass --clear to remove the current setting"))
     output(bridge(ctx).configure_context_token_budget(project_id(ctx), budget))
 
 
@@ -170,62 +242,114 @@ def config_worktree_dir(ctx: typer.Context, path: Path):
     output(bridge(ctx).configure_worktree_dir(project_id(ctx), path))
 
 
-@config_app.command("test-command")
+@config_app.command(
+    "test-command",
+    help=t(
+        "設定 `project authorize` 後、每輪 REVIEW 前自動執行的固定測試命令（本機實際執行，非 Agent）。",
+        "Set the fixed test command auto-run on the host (never the Agent) before each "
+        "round's REVIEW, once `project authorize` has been granted.",
+    ),
+)
 def config_test_command(
     ctx: typer.Context,
     command: Annotated[
-        str | None, typer.Argument(help='例如："pytest -q"；留空並加 --clear 可清除設定')
+        str | None,
+        typer.Argument(
+            help=t(
+                '例如："pytest -q"；留空並加 --clear 可清除設定',
+                'e.g. "pytest -q"; leave empty with --clear to remove the setting',
+            )
+        ),
     ] = None,
     clear: bool = False,
 ):
-    """設定 `project authorize` 後、每輪 REVIEW 前自動執行的固定測試命令（本機實際執行，非 Agent）。"""
     if clear:
         output(bridge(ctx).configure_test_command(project_id(ctx), None))
         return
     if not command:
-        raise BridgeError("請提供測試命令字串，或加 --clear 清除現有設定")
+        raise BridgeError(t("請提供測試命令字串，或加 --clear 清除現有設定", "Provide a test command string, or pass --clear to remove the current setting"))
     output(bridge(ctx).configure_test_command(project_id(ctx), shlex.split(command)))
 
 
-@config_app.command("write-file", hidden=True)
+@config_app.command(
+    "write-file",
+    hidden=True,
+    help=t(
+        "開放一個專案相對檔案的直接編輯提案；每份差異仍須本機核准。",
+        "Allow proposing a direct edit to one project-relative file; every diff still needs local approval.",
+    ),
+)
 def config_write_file(ctx: typer.Context, path: str):
-    """開放一個專案相對檔案的直接編輯提案；每份差異仍須本機核准。"""
     output(bridge(ctx).configure_write_file(project_id(ctx), path))
 
 
-@config_app.command("revoke-file", hidden=True)
+@config_app.command(
+    "revoke-file",
+    hidden=True,
+    help=t(
+        "撤銷一個檔案的直接編輯權；尚未套用的核准也會被擋下。",
+        "Revoke direct-edit rights for one file; any not-yet-applied approval is blocked too.",
+    ),
+)
 def config_revoke_file(ctx: typer.Context, path: str):
-    """撤銷一個檔案的直接編輯權；尚未套用的核准也會被擋下。"""
     output(bridge(ctx).revoke_write_file(project_id(ctx), path))
 
 
-@config_app.command("write-root", hidden=True)
+@config_app.command(
+    "write-root",
+    hidden=True,
+    help=t(
+        "一次開放專案相對目錄及子目錄；. 代表整個專案，憑證與管理資料仍禁止。",
+        "Allow a project-relative directory and its subdirectories at once; `.` means the "
+        "whole project. Credentials and operator metadata remain off-limits.",
+    ),
+)
 def config_write_root(ctx: typer.Context, path: Annotated[str, typer.Argument()] = "."):
-    """一次開放專案相對目錄及子目錄；. 代表整個專案，憑證與管理資料仍禁止。"""
     output(bridge(ctx).configure_write_root(project_id(ctx), path))
 
 
-@config_app.command("revoke-write-root", hidden=True)
+@config_app.command(
+    "revoke-write-root",
+    hidden=True,
+    help=t(
+        "撤銷目錄寫入範圍；獨立的 write-file 規則仍保留。",
+        "Revoke a directory write grant; independent write-file rules are kept.",
+    ),
+)
 def config_revoke_write_root(ctx: typer.Context, path: Annotated[str, typer.Argument()] = "."):
-    """撤銷目錄寫入範圍；獨立的 write-file 規則仍保留。"""
     output(bridge(ctx).revoke_write_root(project_id(ctx), path))
 
 
-@config_app.command("language")
+@config_app.command(
+    "language",
+    help=t(
+        "設定共用 Context 與 Agent 報告語言：zh-TW（預設）、ch（簡體）或 en。",
+        "Set the shared Context and Agent report language: zh-TW (default), ch (simplified Chinese) or en.",
+    ),
+)
 def config_language(ctx: typer.Context, language: str):
-    """設定共用 Context 與 Agent 報告語言：zh-TW（預設）、ch（簡體）或 en。"""
     output(bridge(ctx).configure_language(project_id(ctx), language))
 
 
-@workspace_app.command("show")
+@workspace_app.command(
+    "show",
+    help=t(
+        "查看直接編輯的差異與核准紀錄；--include-content 同時顯示前後全文。",
+        "View a direct edit's diff and approval record; --include-content also shows the full before/after text.",
+    ),
+)
 def workspace_show(ctx: typer.Context, edit_id: str, include_content: bool = False):
-    """查看直接編輯的差異與核准紀錄；--include-content 同時顯示前後全文。"""
     output(bridge(ctx).get_workspace_edit(project_id(ctx), edit_id, include_content))
 
 
-@workspace_app.command("approve")
+@workspace_app.command(
+    "approve",
+    help=t(
+        "舊版本機逐檔審閱工具；一般專案修改請使用 Agent 工作串。",
+        "Legacy per-file local review tool; use the Agent workstream for ordinary project changes.",
+    ),
+)
 def workspace_approve(ctx: typer.Context, edit_id: str):
-    """舊版本機逐檔審閱工具；一般專案修改請使用 Agent 工作串。"""
     output(bridge(ctx).approve_workspace_edit_local(project_id(ctx), edit_id))
 
 
@@ -274,9 +398,14 @@ def context_validate(ctx: typer.Context):
         raise typer.Exit(1)
 
 
-@context_app.command("recover")
+@context_app.command(
+    "recover",
+    help=t(
+        "從 SQLite 重建 Markdown（保留來源漂移警示）。",
+        "Rebuild the Markdown files from SQLite (source-drift warnings are preserved).",
+    ),
+)
 def context_recover(ctx: typer.Context):
-    """從 SQLite 重建 Markdown（保留來源漂移警示）。"""
     output(bridge(ctx).recover_context(project_id(ctx)))
 
 
@@ -291,9 +420,14 @@ def context_commit(ctx: typer.Context, patch_id: str):
     output(bridge(ctx).commit_context_patch(project_id(ctx), patch_id))
 
 
-@context_app.command("import-patch")
+@context_app.command(
+    "import-patch",
+    help=t(
+        "沒有 MCP 寫入權限時，以 JSON 匯入並提交 Patch。",
+        "Import and commit a Patch from JSON when MCP write access isn't available.",
+    ),
+)
 def context_import(ctx: typer.Context, patch: Path):
-    """沒有 MCP 寫入權限時，以 JSON 匯入並提交 Patch。"""
     parsed = ContextPatch.model_validate_json(patch.read_text(encoding="utf-8-sig"))
     proposed = bridge(ctx).propose_context_patch(project_id(ctx), parsed.model_dump())
     output(bridge(ctx).commit_context_patch(project_id(ctx), proposed["patch_id"]))
@@ -324,16 +458,27 @@ def task_status(ctx: typer.Context, task_id: Annotated[str | None, typer.Argumen
     output(service.get_task_status(project, task_id or service.project_workstream_task(project)))
 
 
-@task_app.command("result")
+@task_app.command(
+    "result",
+    help=t(
+        "查詢完整執行資料；一般查看成果可用 task show。",
+        "Query full execution data; for everyday results use task show instead.",
+    ),
+)
 def task_result(ctx: typer.Context, task_id: Annotated[str | None, typer.Argument()] = None):
-    """查詢完整執行資料；一般查看成果可用 task show。"""
     service, project = bridge(ctx), project_id(ctx)
     output(service.get_task_result(project, task_id or service.project_workstream_task(project)))
 
 
-@task_app.command("show")
+@task_app.command(
+    "show",
+    help=t(
+        "合併顯示任務狀態、結果摘要、Worktree 與用量；只有一個任務時可省略編號。",
+        "Combined view of task state, result summary, worktree and usage; the task ID can "
+        "be omitted when there's only one task.",
+    ),
+)
 def task_show(ctx: typer.Context, task_id: Annotated[str | None, typer.Argument()] = None):
-    """合併顯示任務狀態、結果摘要、Worktree 與用量；只有一個任務時可省略編號。"""
     service = bridge(ctx)
     project = project_id(ctx)
     if task_id is None:
@@ -342,42 +487,66 @@ def task_show(ctx: typer.Context, task_id: Annotated[str | None, typer.Argument(
             task_id = tasks[-1]["id"]
         elif len(tasks) != 1:
             raise typer.BadParameter(
-                "請用 task list 查看編號，再執行 task show TASK-xxxx；只有一個任務時才能省略編號。"
+                t(
+                    "請用 task list 查看編號，再執行 task show TASK-xxxx；只有一個任務時才能省略編號。",
+                    "Run task list to find the ID, then task show TASK-xxxx; the ID can only be omitted when there's exactly one task.",
+                )
             )
         task_id = tasks[0]["id"]
     task = service.task(project, task_id)
-    typer.echo(f"專案：{project}　任務：{task_id}　狀態：{task['state']}")
+    typer.echo(t(f"專案：{project}　任務：{task_id}　狀態：{task['state']}", f"Project: {project}  Task: {task_id}  State: {task['state']}"))
     rows = service.get_task_result(project, task_id)
     if not rows:
-        typer.echo("尚無 Agent 執行紀錄。")
+        typer.echo(t("尚無 Agent 執行紀錄。", "No Agent execution recorded yet."))
     for row in rows:
         typer.echo(f"\n{row['id']}　{row['agent']} / {row['role']}　{row['status']}")
-        typer.echo(f"執行模式：{row['adapter']}")
+        typer.echo(t(f"執行模式：{row['adapter']}", f"Adapter: {row['adapter']}"))
         result = row.get("result") or {}
         report = result.get("report") or {}
         if report:
-            typer.echo(f"摘要：{report['summary']}")
-            typer.echo(f"需要修訂：{report.get('needs_revision', '未知')}")
+            typer.echo(t(f"摘要：{report['summary']}", f"Summary: {report['summary']}"))
+            typer.echo(
+                t(
+                    f"需要修訂：{report.get('needs_revision', '未知')}",
+                    f"Needs revision: {report.get('needs_revision', 'unknown')}",
+                )
+            )
         if row.get("error"):
-            typer.echo(f"錯誤：{row['error']}")
+            typer.echo(t(f"錯誤：{row['error']}", f"Error: {row['error']}"))
         if row.get("worktree"):
-            typer.echo(f"程式位置：{row['worktree']}")
+            typer.echo(t(f"程式位置：{row['worktree']}", f"Code location: {row['worktree']}"))
         invocation = result.get("invocation") or {}
-        typer.echo(f"CLI 呼叫：{invocation.get('cli_invoked', '未知')}")
+        typer.echo(
+            t(
+                f"CLI 呼叫：{invocation.get('cli_invoked', '未知')}",
+                f"CLI invoked: {invocation.get('cli_invoked', 'unknown')}",
+            )
+        )
         usage = invocation.get("usage") or {}
         models = usage.get("reported_models") or []
         if models:
-            typer.echo("CLI 回報模型：" + ", ".join(models))
+            typer.echo(t("CLI 回報模型：", "CLI-reported models: ") + ", ".join(models))
         if usage.get("available"):
-            typer.echo("Token：" + json.dumps(usage.get("tokens", {}), ensure_ascii=False))
+            typer.echo(t("Token：", "Tokens: ") + json.dumps(usage.get("tokens", {}), ensure_ascii=False))
         else:
-            typer.echo("Token：未提供，無法確認")
-    typer.echo("\n以上為執行摘要；是否通過測試請另查看 task test 產生的測試報告。")
+            typer.echo(t("Token：未提供，無法確認", "Tokens: not provided, cannot confirm"))
+    typer.echo(
+        t(
+            "\n以上為執行摘要；是否通過測試請另查看 task test 產生的測試報告。",
+            "\nThe above is an execution summary; check the report from task test "
+            "separately to see whether tests actually passed.",
+        )
+    )
 
 
-@task_app.command("usage")
+@task_app.command(
+    "usage",
+    help=t(
+        "只顯示各次執行的 CLI、模型設定與可取得的用量；舊紀錄標示未知。",
+        "Show only each execution's CLI, model settings and available usage; older records show as unknown.",
+    ),
+)
 def task_usage(ctx: typer.Context, task_id: Annotated[str | None, typer.Argument()] = None):
-    """只顯示各次執行的 CLI、模型設定與可取得的用量；舊紀錄標示未知。"""
     service, project = bridge(ctx), project_id(ctx)
     output(service.get_task_usage(project, task_id or service.project_workstream_task(project)))
 
@@ -449,9 +618,15 @@ def task_accept(ctx: typer.Context, task_id: str):
     output(bridge(ctx).accept_local(project_id(ctx), task_id))
 
 
-@task_app.command("test")
+@task_app.command(
+    "test",
+    help=t(
+        "本機人工授權後，在任務 Worktree 執行測試命令（預設 pytest -q，或專案設定的 test-command）。",
+        "After local human confirmation, run the test command in the task's worktree "
+        "(pytest -q by default, or the project's configured test-command).",
+    ),
+)
 def task_test(ctx: typer.Context, task_id: str):
-    """本機人工授權後，在任務 Worktree 執行固定 pytest 命令。"""
     from ..adapters.test_runner import run_tests_local
 
     output(run_tests_local(bridge(ctx), project_id(ctx), task_id))
@@ -488,9 +663,13 @@ def task_decision(
     )
 
 
-@app.command()
+@app.command(
+    help=t(
+        "檢查環境；不執行模型、不假造登入狀態。",
+        "Check the environment; never invokes a model, never fakes login status.",
+    )
+)
 def doctor(ctx: typer.Context):
-    """檢查環境；不執行模型、不假造登入狀態。"""
     checks = {
         "python": sys.version.split()[0],
         "sqlite": sqlite3.sqlite_version,
@@ -509,7 +688,10 @@ def doctor(ctx: typer.Context):
         if not path:
             checks[executable] = {
                 "available": False,
-                "message": "未安裝；Fake 與 Context 功能仍可使用",
+                "message": t(
+                    "未安裝；Fake 與 Context 功能仍可使用",
+                    "Not installed; Fake adapter and Context features still work",
+                ),
             }
             continue
         try:
@@ -542,9 +724,14 @@ PROTOCOL_MODELS = {
 }
 
 
-@schema_app.command("export")
+@schema_app.command(
+    "export",
+    help=t(
+        "把發布給外部消費者的協議 JSON Schema 寫到指定目錄（見 docs/protocol.md）。",
+        "Write the protocol JSON Schema published for external consumers to a directory (see docs/protocol.md).",
+    ),
+)
 def schema_export(out_dir: Path):
-    """把發布給外部消費者的協議 JSON Schema 寫到指定目錄（見 docs/protocol.md）。"""
     out_dir.mkdir(parents=True, exist_ok=True)
     written = []
     for name, model in PROTOCOL_MODELS.items():
@@ -554,37 +741,60 @@ def schema_export(out_dir: Path):
     output({"written": written})
 
 
-@skill_app.command("install")
+@skill_app.command(
+    "install",
+    help=t(
+        "從本機路徑或 URL（.md 單檔／.zip 封存）安裝一個全局 Skill。",
+        "Install a global skill from a local path or URL (a single .md file, or a .zip archive).",
+    ),
+)
 def skill_install(ctx: typer.Context, source: str):
-    """從本機路徑或 URL（.md 單檔／.zip 封存）安裝一個全局 Skill。"""
     if source.startswith(("http://", "https://")):
-        typer.echo("提醒：skill 內容會直接放進 Agent 的 prompt，請只安裝你信任的來源。", err=True)
+        typer.echo(
+            t(
+                "提醒：skill 內容會直接放進 Agent 的 prompt，請只安裝你信任的來源。",
+                "Reminder: skill content goes straight into the Agent's prompt; only install sources you trust.",
+            ),
+            err=True,
+        )
     output(install_skill(bridge(ctx).home, source))
 
 
-@skill_app.command("list")
+@skill_app.command("list", help=t("列出所有已安裝的 Skill。", "List every installed skill."))
 def skill_list(ctx: typer.Context):
-    """列出所有已安裝的 Skill。"""
     output(list_skills(bridge(ctx).home))
 
 
-@skill_app.command("remove")
+@skill_app.command("remove", help=t("移除一個已安裝的 Skill。", "Remove an installed skill."))
 def skill_remove(ctx: typer.Context, skill_id: str):
-    """移除一個已安裝的 Skill。"""
     output(remove_skill(bridge(ctx).home, skill_id))
 
 
-@app.command()
+@app.command(
+    help=t(
+        "安裝並登入本機 Codex／Claude Code CLI（codex、claude 或 all）。",
+        "Install and log in to the local Codex/Claude Code CLI (codex, claude, or all).",
+    )
+)
 def setup(provider: Annotated[str, typer.Argument()] = "codex"):
-    """安裝並登入本機 Codex／Claude Code CLI（codex、claude 或 all）。"""
     if provider not in {"codex", "claude", "all"}:
         raise BridgeError("Unsupported provider: use codex, claude, or all")
     providers = ["codex", "claude"] if provider == "all" else [provider]
     ready = [setup_provider(name) for name in providers]
-    output({"ready": ready, "next_action": "ccc-mcp connect tunnel_你的實際ID"})
+    output(
+        {
+            "ready": ready,
+            "next_action": t("ccc-mcp connect tunnel_你的實際ID", "ccc-mcp connect tunnel_YOUR_ACTUAL_ID"),
+        }
+    )
 
 
-@app.command()
+@app.command(
+    help=t(
+        "啟動 MCP；HTTP 預設唯讀，啟用寫入需 OAuth。",
+        "Start the MCP server; HTTP defaults to read-only, enabling writes needs OAuth.",
+    )
+)
 def serve(
     ctx: typer.Context,
     transport: str = "stdio",
@@ -592,7 +802,6 @@ def serve(
     port: int = 8765,
     enable_writes: bool = False,
 ):
-    """啟動 MCP；HTTP 預設唯讀，啟用寫入需 OAuth。"""
     if transport not in {"stdio", "streamable-http"}:
         raise BridgeError("Unsupported transport")
     from .server import serve as run_server
@@ -637,9 +846,14 @@ def _profile_is_stale(profile_path: Path) -> bool:
     return result.returncode != 0
 
 
-@app.command()
+@app.command(
+    help=t(
+        "連接 ChatGPT：安裝/驗證 tunnel-client 並啟動長駐連線（取代 scripts/connect-chatgpt.sh）。",
+        "Connect to ChatGPT: install/verify tunnel-client and start a persistent connection "
+        "(replaces scripts/connect-chatgpt.sh).",
+    )
+)
 def connect(ctx: typer.Context, tunnel_id: str):
-    """連接 ChatGPT：安裝/驗證 tunnel-client 並啟動長駐連線（取代 scripts/connect-chatgpt.sh）。"""
     if not re.fullmatch(r"tunnel_[a-z0-9]{32}", tunnel_id):
         raise BridgeError("Usage: ccc-mcp connect tunnel_YOUR_ID")
     home = bridge(ctx).home
@@ -757,13 +971,17 @@ def connect(ctx: typer.Context, tunnel_id: str):
         raise BridgeError("tunnel-client run exited with an error")
 
 
-@app.command()
+@app.command(
+    help=t(
+        "更新 ccc-mcp；--dev 在原始碼目錄重新可編輯安裝，--tunnel-client 一併更新 tunnel-client。",
+        "Update ccc-mcp; --dev reinstalls editable from the source directory, --tunnel-client also updates tunnel-client.",
+    )
+)
 def update(
     ctx: typer.Context,
     dev: bool = False,
     tunnel_client: bool = False,
 ):
-    """更新 ccc-mcp；--dev 在原始碼目錄重新可編輯安裝，--tunnel-client 一併更新 tunnel-client。"""
     if dev:
         repo_root = None
         for parent in Path(__file__).resolve().parents:
@@ -787,7 +1005,12 @@ def update(
     if tunnel_client:
         path = ensure_tunnel_client(bridge(ctx).home, force=True)
         typer.echo(f"tunnel-client updated: {path}")
-    typer.echo("更新完成；請重新執行 ccc-mcp connect <tunnel_id> 讓新版生效。")
+    typer.echo(
+        t(
+            "更新完成；請重新執行 ccc-mcp connect <tunnel_id> 讓新版生效。",
+            "Update complete; re-run ccc-mcp connect <tunnel_id> for the new version to take effect.",
+        )
+    )
 
 
 def main():

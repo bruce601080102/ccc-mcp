@@ -18,6 +18,14 @@ def setting_env(name, default=None):
     return os.environ.get("CCC_MCP_" + name, os.environ.get("AGENTBRIDGE_" + name, default))
 
 
+def cli_language(default="zh-TW"):
+    """The CLI's own displayed language (help text, usage errors) via CCC_MCP_LANG —
+    independent from a project's `language` setting, which controls what Codex/Claude/
+    ChatGPT receive in their reports, not what the operator's terminal shows."""
+    value = setting_env("LANG", default)
+    return value if value in {"zh-TW", "en"} else default
+
+
 def metadata_name(root):
     """Keep historical report paths intact; new projects use the new brand."""
     root = Path(root)

@@ -50,6 +50,45 @@ def test_cli_workflow(tmp_path):
     assert json.loads(imported.output)["context_version"] == 2
 
 
+def test_cli_language_defaults_to_zh_tw_and_rejects_unsupported_values(monkeypatch):
+    from ccc_mcp.infra.config import cli_language
+
+    monkeypatch.delenv("CCC_MCP_LANG", raising=False)
+    assert cli_language() == "zh-TW"
+    monkeypatch.setenv("CCC_MCP_LANG", "en")
+    assert cli_language() == "en"
+    monkeypatch.setenv("CCC_MCP_LANG", "fr")
+    assert cli_language() == "zh-TW"  # unsupported value falls back to the default
+
+
+def test_cli_help_text_switches_to_english_with_env_var():
+    """Regression: CCC_MCP_LANG=en must switch the CLI's own --help text to English.
+    This is a subprocess test, not CliRunner, because help= strings are built once at
+    module import time — a later env var change inside the same process can't affect
+    an already-imported Typer app."""
+    en = subprocess.run(
+        [sys.executable, "-m", "ccc_mcp", "--help"],
+        capture_output=True,
+        env={**os.environ, "CCC_MCP_LANG": "en"},
+        shell=False,
+        timeout=30,
+        check=False,
+    )
+    assert en.returncode == 0
+    assert b"Register a project" in en.stdout
+
+    zh = subprocess.run(
+        [sys.executable, "-m", "ccc_mcp", "--help"],
+        capture_output=True,
+        env={k: v for k, v in os.environ.items() if k != "CCC_MCP_LANG"},
+        shell=False,
+        timeout=30,
+        check=False,
+    )
+    assert zh.returncode == 0
+    assert "註冊專案".encode() in zh.stdout
+
+
 def test_task_show_infers_project_but_refuses_ambiguous_task(bridge, monkeypatch):
     from conftest import dispatch
 
