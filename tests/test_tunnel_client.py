@@ -30,7 +30,9 @@ class FakeResponse:
         return False
 
 
-def fake_urlopen_factory(archive_bytes, checksums_text, archive_name="tunnel-client-v1.0.0-windows-amd64.zip"):
+def fake_urlopen_factory(
+    archive_bytes, checksums_text, archive_name="tunnel-client-v1.0.0-windows-amd64.zip"
+):
     release = {
         "assets": [
             {
@@ -60,6 +62,7 @@ def fake_urlopen_factory(archive_bytes, checksums_text, archive_name="tunnel-cli
 @pytest.fixture(autouse=True)
 def windows_amd64(monkeypatch):
     monkeypatch.setattr(tunnel_client.platform, "machine", lambda: "AMD64")
+    monkeypatch.setattr(tunnel_client.platform, "system", lambda: "Windows")
 
 
 def test_ensure_tunnel_client_downloads_and_verifies(tmp_path, monkeypatch):
@@ -103,3 +106,38 @@ def test_ensure_tunnel_client_skips_network_when_already_installed(tmp_path, mon
 
     assert result == target
     assert result.read_bytes() == b"already installed"
+
+
+def test_ensure_tunnel_client_downloads_darwin_arm64_and_sets_executable_bit(tmp_path, monkeypatch):
+    monkeypatch.setattr(tunnel_client.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(tunnel_client.platform, "machine", lambda: "arm64")
+    archive_bytes = make_zip("tunnel-client", b"fake macos binary")
+    digest = hashlib.sha256(archive_bytes).hexdigest()
+    archive_name = "tunnel-client-v1.0.0-darwin-arm64.zip"
+    checksums = f"{digest}  {archive_name}\n"
+    monkeypatch.setattr(
+        tunnel_client.urllib.request,
+        "urlopen",
+        fake_urlopen_factory(archive_bytes, checksums, archive_name=archive_name),
+    )
+
+    target = tunnel_client.ensure_tunnel_client(tmp_path)
+
+    assert target == tmp_path / "tools" / "tunnel-client" / "tunnel-client"
+    assert target.read_bytes() == b"fake macos binary"
+    assert target.stat().st_mode & 0o111
+
+
+def test_ensure_tunnel_client_rejects_unsupported_architecture(tmp_path, monkeypatch):
+    monkeypatch.setattr(tunnel_client.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(tunnel_client.platform, "machine", lambda: "ppc64le")
+
+    with pytest.raises(BridgeError, match="Unsupported CPU architecture"):
+        tunnel_client.ensure_tunnel_client(tmp_path)
+
+
+def test_ensure_tunnel_client_rejects_unsupported_os(tmp_path, monkeypatch):
+    monkeypatch.setattr(tunnel_client.platform, "system", lambda: "SunOS")
+
+    with pytest.raises(BridgeError, match="Unsupported operating system"):
+        tunnel_client.ensure_tunnel_client(tmp_path)

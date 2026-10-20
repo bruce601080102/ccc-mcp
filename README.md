@@ -4,13 +4,13 @@
 
 預設流程：**ChatGPT（PM）→ Codex（SA）→ Claude Code（SD/RD）→ Codex（REVIEW）→ ChatGPT 整理 Context**。真正派工、檔案修改和 Context 更新都應留下紀錄，不能只憑聊天回覆判定成功。
 
-## 快速開始（Windows Git Bash）
+## 快速開始（Windows Git Bash／macOS／Linux）
 
 需要 Git、Python 3.11+，以及可登入的 Codex／Claude Code 帳戶。連接 ChatGPT 另需可使用 Tunnel 的 OpenAI Platform 帳戶。以下全部以 `hello-demo` 為例。
 
 ### 1. 安裝並登入
 
-在 Git Bash 執行：
+Windows 用 Git Bash；macOS／Linux 用系統內建的 bash 或 zsh（macOS 預設終端機就是 zsh，可直接用）。四個系統都執行同樣的指令：
 
 ```bash
 git clone https://github.com/bruce601080102/ccc-mcp.git
@@ -19,7 +19,9 @@ source scripts/setup-real-agents.sh
 ccc-mcp setup all
 ```
 
-第一步只建立 `.venv`、把 ccc-mcp 本身裝起來（這是唯一需要腳本的地方：`ccc-mcp` 指令此時還不存在）。`ccc-mcp setup all` 接手檢查／安裝、登入 Codex 與 Claude Code，純 Python 執行，不需要先 `source` 任何東西。若安裝 Node.js 後提示重開終端，開新的 Git Bash，在 `ccc-mcp` 目錄重跑 `ccc-mcp setup all` 即可。
+第一步只建立 `.venv`、把 ccc-mcp 本身裝起來（這是唯一需要腳本的地方：`ccc-mcp` 指令此時還不存在）。`ccc-mcp setup all` 接手檢查／安裝、登入 Codex 與 Claude Code，純 Python 執行，不需要先 `source` 任何東西。若安裝 Node.js 後提示重開終端，開新的終端機，在 `ccc-mcp` 目錄重跑 `ccc-mcp setup all` 即可。
+
+`source scripts/setup-real-agents.sh` 必須用 `source`（不能直接執行 `./scripts/...`），且必須在 `ccc-mcp` 目錄下執行；腳本會自動找系統裡 3.11 以上的 Python 建立 venv。macOS 若只裝了 Anaconda 或系統內建的舊版 Python（`python3 --version` 低於 3.11），先用 Homebrew 裝一個新版：`brew install python@3.12`，腳本會自動挑到它，不需要手動切換 PATH。
 
 ### 2. 建立並授權專案
 
@@ -41,7 +43,7 @@ Windows 路徑也可用引號包住反斜線寫法（例如 `"C:\Users\你的帳
 
 ### 3. 連接 ChatGPT
 
-先依[連線指南](docs/chatgpt.md)建立 Tunnel、取得 `tunnel_...` ID 與 runtime API key，再於**同一個 Git Bash 終端**執行：
+先依[連線指南](docs/chatgpt.md)建立 Tunnel、取得 `tunnel_...` ID 與 runtime API key，再於**同一個終端機**（已 `source` 過 setup 腳本的那個）執行：
 
 ```bash
 ccc-mcp connect tunnel_你的實際ID
@@ -55,7 +57,7 @@ ccc-mcp connect tunnel_你的實際ID
 
 > 請在 hello-demo 建立 `hello.py`，執行時輸出 `Hello, World!`，並加入驗證輸出的測試。
 
-不必在提示詞要求「使用 Codex」或「更新 Context」；這是 ccc-mcp 工作流程的責任。完成後在 Git Bash 查實際狀態：
+不必在提示詞要求「使用 Codex」或「更新 Context」；這是 ccc-mcp 工作流程的責任。完成後在終端機查實際狀態：
 
 ```bash
 ccc-mcp --project hello-demo task status

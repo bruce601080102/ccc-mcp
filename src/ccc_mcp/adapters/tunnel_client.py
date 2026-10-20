@@ -17,15 +17,26 @@ from ..infra.config import setting_env
 from ..infra.errors import BridgeError
 
 DEFAULT_RELEASE_API = "https://api.github.com/repos/openai/tunnel-client/releases/latest"
+OS_TAGS = {"windows": "windows", "darwin": "darwin", "linux": "linux"}
 
 
 def _platform_tag():
+    system = platform.system().lower()
+    os_tag = OS_TAGS.get(system)
+    if os_tag is None:
+        raise BridgeError(f"Unsupported operating system: {platform.system()}")
     machine = platform.machine().lower()
     if machine in {"x86_64", "amd64"}:
-        return "windows-amd64"
-    if machine in {"arm64", "aarch64"}:
-        return "windows-arm64"
-    raise BridgeError(f"Unsupported Windows architecture: {platform.machine()}")
+        arch_tag = "amd64"
+    elif machine in {"arm64", "aarch64"}:
+        arch_tag = "arm64"
+    else:
+        raise BridgeError(f"Unsupported CPU architecture: {platform.machine()}")
+    return f"{os_tag}-{arch_tag}"
+
+
+def _binary_name():
+    return "tunnel-client.exe" if platform.system().lower() == "windows" else "tunnel-client"
 
 
 def _fetch_json(url):
@@ -51,8 +62,9 @@ def _expected_sha256(checksums_text, archive_name):
 
 
 def ensure_tunnel_client(home: Path, force: bool = False) -> Path:
-    """Return a verified tunnel-client.exe under `home`, downloading it if needed."""
-    target = Path(home) / "tools" / "tunnel-client" / "tunnel-client.exe"
+    """Return a verified tunnel-client binary under `home`, downloading it if needed."""
+    binary_name = _binary_name()
+    target = Path(home) / "tools" / "tunnel-client" / binary_name
     if target.is_file() and not force:
         return target
 
@@ -64,7 +76,7 @@ def ensure_tunnel_client(home: Path, force: bool = False) -> Path:
     matches = [name for name in assets if pattern.match(name)]
     if len(matches) != 1 or "SHA256SUMS.txt" not in assets:
         raise BridgeError(
-            "Official tunnel-client release does not contain the expected Windows archive/checksum"
+            f"Official tunnel-client release does not contain the expected {platform_tag} archive/checksum"
         )
     archive_name = matches[0]
 
@@ -80,9 +92,12 @@ def ensure_tunnel_client(home: Path, force: bool = False) -> Path:
         archive_path.write_bytes(archive_bytes)
         with zipfile.ZipFile(archive_path) as zf:
             zf.extractall(tmp)
-        extracted = next(Path(tmp).rglob("tunnel-client.exe"), None)
+        extracted = next(Path(tmp).rglob(binary_name), None)
         if extracted is None:
-            raise BridgeError("Downloaded archive does not contain tunnel-client.exe")
+            raise BridgeError(f"Downloaded archive does not contain {binary_name}")
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(extracted.read_bytes())
+        if platform.system().lower() != "windows":
+            # write_bytes above does not carry over the executable bit from the zip.
+            target.chmod(target.stat().st_mode | 0o111)
     return target
