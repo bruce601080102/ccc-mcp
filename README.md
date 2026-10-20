@@ -95,11 +95,37 @@ ccc-mcp skill list
 ccc-mcp skill remove my-skill
 ```
 
-Skill 是全局安裝（`~/.ccc-mcp/skills/`），裝一次所有專案都能用。從 URL 安裝時內容會直接進入 Agent 的 prompt，只安裝你信任的來源。
+Skill 是全局安裝（`~/.ccc-mcp/skills/<id>/`），裝一次所有專案都能用。從 URL 安裝時內容會直接進入 Agent 的 prompt，只安裝你信任的來源。
 
 **實際生效的時機**：Skill 內容附在 `bootstrap_project`、`get_context`，以及每次派工（`start_project_request`／`advance_project`／`dispatch_agent`）回傳的 `available_skills` 欄位裡。真正執行角色的是誰，就是誰看到——SA/SD/RD/REVIEW 設成 `codex`／`claude` 時由本機 CLI 看到；設成 `chatgpt` 時（`ccc-mcp --project 你的專案ID config show` 可查），就是 ChatGPT 自己要照著做。
 
 **實務上要注意**：Skill 要不要用，完全由 Agent 自己判斷，ccc-mcp 不強制。跟這次任務的程式碼或分析工作直接相關的 skill（例如「一律加型別標註」「commit 訊息要符合某種格式」）比較容易被真的採用，因為會自然融進它本來就要產出的東西；跟任務內容無關的格式性要求（例如「回覆開頭先打招呼」）很容易被模型當成次要資訊忽略，不代表機制壞掉。改完 Skill 內容後記得 `ccc-mcp connect` 重啟才會生效。
+
+### 如果 SKILL.md 還引用了其他檔案
+
+三種安裝方式，對「SKILL.md 以外的檔案」處理不一樣：
+
+| 安裝方式 | 額外檔案（腳本、`references/`、`assets/`…） |
+|---|---|
+| `ccc-mcp skill install ./資料夾` | 整個資料夾底下全部帶走，含多層子目錄 |
+| `ccc-mcp skill install https://.../xxx.zip` | 只帶走**找到的第一個 `SKILL.md` 所在資料夾**底下的檔案；該資料夾以外（例如整包 repo 根目錄共用的東西）不會跟著裝 |
+| `ccc-mcp skill install https://.../SKILL.md`（單一檔案） | 只有這份文字，**其他檔案完全不會跟著裝**；SKILL.md 裡任何「見 `xxx.md`」「執行 `scripts/xxx`」之類的引用都會變成裝不到 |
+
+如果 repo 是多個 skill 放在一起的 monorepo（同一包裡有不只一個 `SKILL.md`），用整包 `.zip` 安裝會抓到哪一個是不確定的——先 `git clone` 下來，直接把 `ccc-mcp skill install` 指向你要的那一個子資料夾最保險。不確定裝有沒有裝全，直接看實際裝到哪裡：`ls -R ~/.ccc-mcp/skills/<skill-id>/`。
+
+### 如果 SKILL.md 要求執行 CLI 指令
+
+Skill 的文字內容（連同它的絕對安裝路徑）會被整個序列化成 JSON，透過 stdin 餵給 CLI 當 prompt——**只有文字進了 prompt，skill 資料夾裡的其他檔案本身並沒有跟著塞進 context**，Agent 要自己依路徑去找。而這個路徑在 `~/.ccc-mcp/skills/...`，跟這次任務的 Git worktree 是不同地方，能不能讀到、能不能執行，要看派給誰：
+
+- **Claude Code**（SA/REVIEW 或 SD/RD 皆同）：adapter 直接把可用工具鎖定在 `Read,Glob,Grep`（唯讀角色）或 `Read,Edit,Write,Glob,Grep`（實作角色），**完全沒有 Bash 工具**。Skill 寫「請執行 xxx」，Claude Code 連嘗試都辦不到，這是刻意的安全限制。
+- **Codex**：`codex exec` 本身有 shell 能力，但受 sandbox 限制——SA/REVIEW 是 `read-only`（能跑指令、不能寫檔），SD/RD 是 `workspace-write`（寫入侷限在那次任務的 worktree）。即使如此，**那個 CLI 工具必須早就裝在跑 worker 的那台機器、且在 PATH 裡**；`ccc-mcp skill install` 只負責複製檔案，不會幫你 `npm install`／`pip install`／加 PATH。另外目前裝進去的額外檔案**不會保留執行權限**（即使 zip 裡原本是 `+x`），Codex 真要跑 skill 自帶的腳本，得自己先 `chmod +x`。
+- **`chatgpt` 角色**：沒有 shell，只有 ccc-mcp 自己的 `read_workspace`／`write_workspace` 等 MCP 工具，一樣不能跑任意 CLI。
+
+### 不支援：MCP 類型的工具（CodeGraph、Memory MCP 之類）
+
+Skill 只能是文字＋檔案，**不是** MCP server，`ccc-mcp skill install` 沒有也不會支援裝這種東西。更進一步：就算你自己平常的 Codex／Claude Code CLI 已經接了 CodeGraph 或 Memory MCP，ccc-mcp 派工時也完全看不到——Claude adapter 直接傳 `--mcp-config '{"mcpServers":{}}'`（空清單），Codex adapter 傳 `--ignore-user-config`（跳過你平常登記這些 MCP server 的 `~/.codex/config.toml`）。這是故意的信任邊界：被派工的 Agent 讀的是不可信的 repo 內容，不該連帶繼承你個人環境裡設定的強力工具。
+
+如果你想用這類工具，目前唯一的路是讓 **ChatGPT（PM）自己接**（這是 ChatGPT 自己的 connector 設定，跟 ccc-mcp 無關，要唯讀就在那邊只開讀取 scope），查到的東西整理成文字後，透過 `instruction` 參數轉交給下游的 Codex／Claude——`instruction` 是自由文字，沒有格式限制。如果想讓這個結論變成長期保留在共用 Context 的「既定事實」（而不只是這次派工用一次），走 `propose_context_patch` 時必須附上專案裡真實檔案的路徑＋SHA256 當佐證（`verify_refs` 會重新讀檔比對雜湊），不能只憑「CodeGraph 說的」就寫成定論。
 
 ## 遇到問題
 
