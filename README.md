@@ -100,6 +100,43 @@ ccc-mcp --project hello-demo config language ch
 
 只安裝 Codex 時，可把 `SD/RD` 也改成 `codex`；不用本機 CLI 時，可選 `chatgpt`，但這就**不是** Codex／Claude 的真實執行。更多選項見[角色設定](docs/configuration.md)。
 
+不確定目前設定值、或想一次看懂「哪些是我能改的」跟「哪些是系統授權狀態」，用：
+
+```bash
+ccc-mcp --project hello-demo config providers
+```
+
+這個指令會分開顯示可編輯設定（roles／language／test_command）與唯讀的授權狀態，並列出目前支援的 provider（`ADAPTERS` 註冊了哪些）及各自支援的 effort。**注意**：自動流程（`advance_project`）只會派合併角色 `SD/RD`，從不單獨派 `SD` 或 `RD`；單獨改 `config role SD ...` 不會影響自動派工，只有你自己手動呼叫 `dispatch_agent(role="SD")` 才會用到。未來要新增其他 provider（例如 Grok、地端模型），只需要新寫一個 `adapters/agents/<name>.py` 繼承 `BaseAgentAdapter`、在 `ADAPTERS` 註冊一行，這裡就會自動列出來，不用改其他地方。
+
+想知道每個角色實際會收到什麼提示文字，不用真的派工也能看：
+
+```bash
+ccc-mcp --project hello-demo config prompt SA
+ccc-mcp --project hello-demo config prompt REVIEW
+```
+
+會印出該角色目前指到的 provider、唯讀或可寫、以及三段實際會送出的文字——Adapter 的操作政策、（Codex 限定）角色附加說明、Context 交接的政策文字。這份輸出直接重用派工時真正呼叫的同一批函式組成，不是另外寫一份說明文件，所以不會跟實際送出的內容不同步。
+
+## Context 交接太大？設定 token 預算
+
+長期運作的專案，交接給 Agent 的 Context 可能累積很多歷史決策／報告。預設不限制大小；要設定上限：
+
+```bash
+ccc-mcp --project hello-demo config context-budget 150000
+```
+
+超過預算時，ccc-mcp 會壓縮已驗證的歷史清單（決策、待整理的 Agent 結果），只保留最近幾筆並改成一行摘要＋指向 `get_context_history` 的指標；**不會**裁切 `invariants`、來源引用或當前任務的實際報告／核准方案。回傳的 `budget_omitted` 會列出到底省略了什麼，不會讓你猜。清除設定用 `ccc-mcp --project hello-demo config context-budget --clear`。
+
+## 想要「完成」前自動跑測試？
+
+`project authorize`（第 2 步的持續授權）同時代表你同意：在每輪實作完成、REVIEW 派工之前，ccc-mcp 會在本機自動執行你設定的固定測試命令，並把結果存成 `TEST-RESULT.md` 證據。預設**不會**自動跑任何測試，直到你明確設定：
+
+```bash
+ccc-mcp --project hello-demo config test-command "pytest -q"
+```
+
+沒有設定、或專案尚未 `project authorize` 時，`ccc-mcp --project hello-demo task status` 的 `brief.tests` 會明確顯示 `executed_by_host: false` 及原因，不會被當成「已測試通過」；這與 Agent 本身不執行測試是同一件事——測試永遠是本機實際執行、有紀錄的動作，不是聊天回覆自稱的結果。想清除設定，用 `ccc-mcp --project hello-demo config test-command --clear`。這跟手動的 `ccc-mcp task test`（一次性、需要在終端機確認）是兩條獨立路徑，互不影響。
+
 ## 安裝本機 Skill（選用）
 
 Skill 是一份 `SKILL.md`（說明用途與觸發時機，可附帶輔助腳本），裝好之後**不分 Codex、Claude 還是 ChatGPT，每次派工都會自動看到**，由 Agent 自己判斷要不要用：
@@ -142,6 +179,24 @@ Skill 的文字內容（連同它的絕對安裝路徑）會被整個序列化�
 Skill 只能是文字＋檔案，**不是** MCP server，`ccc-mcp skill install` 沒有也不會支援裝這種東西。更進一步：就算你自己平常的 Codex／Claude Code CLI 已經接了 CodeGraph 或 Memory MCP，ccc-mcp 派工時也完全看不到——Claude adapter 直接傳 `--mcp-config '{"mcpServers":{}}'`（空清單），Codex adapter 傳 `--ignore-user-config`（跳過你平常登記這些 MCP server 的 `~/.codex/config.toml`）。這是故意的信任邊界：被派工的 Agent 讀的是不可信的 repo 內容，不該連帶繼承你個人環境裡設定的強力工具。
 
 如果你想用這類工具，目前唯一的路是讓 **ChatGPT（PM）自己接**（這是 ChatGPT 自己的 connector 設定，跟 ccc-mcp 無關，要唯讀就在那邊只開讀取 scope），查到的東西整理成文字後，透過 `instruction` 參數轉交給下游的 Codex／Claude——`instruction` 是自由文字，沒有格式限制。如果想讓這個結論變成長期保留在共用 Context 的「既定事實」（而不只是這次派工用一次），走 `propose_context_patch` 時必須附上專案裡真實檔案的路徑＋SHA256 當佐證（`verify_refs` 會重新讀檔比對雜湊），不能只憑「CodeGraph 說的」就寫成定論。
+
+## 安全邊界：Claude 角色目前沒有等同 Codex 的 OS 沙箱
+
+Codex 角色的邊界是作業系統強制的：`--sandbox read-only`（SA／REVIEW）或 `workspace-write`（SD/RD），寫入實際被系統侷限在那次任務的 worktree，即使 Codex 自己想寫到別的地方也做不到。Claude 角色目前**沒有等價的強制邊界**：Adapter 把可用工具鎖在 `Read,Edit,Write,Glob,Grep`、工作目錄設成該次任務的 worktree（[claude.py](src/ccc_mcp/adapters/agents/claude.py)），但這是「CLI 工具自己遵守 `cwd`」這個慣例，不是作業系統層級強制的沙箱——沒有實測到真的能越界寫出 worktree 外，但也沒有證據證明不能，這是已知、尚未補強的風險，不是「已驗證安全」。
+
+ccc-mcp 自己這一層能強制、也已經用回歸測試釘住的，是 project_id／task_id／檔案路徑一律經過嚴格格式驗證（[identifier](src/ccc_mcp/core/context.py:36)）與路徑穿越防護（[safe_path](src/ccc_mcp/infra/security.py:15)），確保派工時解析出的 worktree 路徑本身不會被偽造的 ID 牽到專案目錄之外；但這不等於「Claude CLI 執行期間不會自己寫到 cwd 以外」。縱深防禦建議：以最低權限的系統帳號跑 ccc-mcp 與其 worker，不要用你平常登入、擁有完整個人檔案存取權的帳號。
+
+幫 Claude 角色補上等價的 OS 級隔離（例如 Windows Sandbox 或容器化 worktree）是已知的後續項目，需要另外決定要用哪種機制，不在目前版本範圍內。
+
+## 整合驗收：不要只信模型自己說「測試通過」
+
+本機已裝好、登入 Codex 與 Claude CLI 時，有一支會真的跑完整條流程（Codex SA → Claude SD/RD → 主機執行測試 → Codex REVIEW）、且只憑後端狀態判斷有沒有完成的腳本：
+
+```bash
+.venv/Scripts/python.exe -m pytest -m real_agents tests/test_real_agents.py -v
+```
+
+細節與「尚未 `project authorize`」時手動逐步核准的操作方式，見 [docs/real-agents.md](docs/real-agents.md)。
 
 ## 遇到問題
 

@@ -7,9 +7,27 @@ import portalocker
 from .adapters.agents import ADAPTERS, FakeAgentAdapter
 from .adapters.git import git, tracked_snapshot, working_snapshot, worktree
 from .infra.errors import AgentCancelled, AgentTimeout, BridgeError
-from .infra.security import comment_check, redact, reject_secrets, same_text_content
+from .infra.security import canonical, comment_check, redact, reject_secrets, same_text_content
 from .infra.telemetry import audit_scope, is_quota_error
 from .service import CCCMCP
+
+
+def record_fallback_outcome(bridge, execution_id, fallback_info):
+    """Attach whether/why a quota fallback started onto the already-finished execution's
+    own result, instead of that information disappearing after finish_execution commits."""
+    row = bridge.store.one(
+        "SELECT project_id,result FROM agent_executions WHERE id=?", (execution_id,)
+    )
+    with bridge.lock(row["project_id"]):
+        with bridge.store.transaction() as conn:
+            current = conn.execute(
+                "SELECT result FROM agent_executions WHERE id=?", (execution_id,)
+            ).fetchone()
+            result = json.loads(current["result"]) if current["result"] else {}
+            result["fallback"] = fallback_info
+            conn.execute(
+                "UPDATE agent_executions SET result=? WHERE id=?", (canonical(result), execution_id)
+            )
 
 
 def run_execution(bridge, execution_id):
@@ -108,7 +126,8 @@ def run_execution(bridge, execution_id):
                     "executed_by_host": False,
                     "reason": "Fake simulation"
                     if row["adapter"] == "fake"
-                    else "Tests require separately authorized `ccc-mcp task test`",
+                    else "Not yet run: advance_project auto-runs a configured test_command "
+                    "under project authorization, or run `ccc-mcp task test` manually",
                 },
             }
             state = None
@@ -168,30 +187,60 @@ def run_execution(bridge, execution_id):
                     "failure_kind": "QUOTA_EXHAUSTED" if quota else "ERROR",
                 },
             )
-            fallback = json.loads(row["options"]).get("agent_settings", {}).get("quota_fallback")
-            if (
-                quota
-                and fallback
-                and fallback != row["agent"]
-                and not json.loads(row["options"]).get("fallback_from")
-            ):
-                try:
-                    bridge.dispatch_agent(
-                        row["project_id"],
-                        row["task_id"],
-                        fallback,
-                        row["role"],
-                        row["context_version"],
-                        row["instruction"],
-                        "real",
-                        fallback_from=execution_id,
-                    )
-                except Exception:
-                    # Keep the failed execution; stale context/approval must not be bypassed.
-                    # Catch everything (not just BridgeError): a lock timeout or any other
-                    # failure here must not crash this worker subprocess silently (stdout/stderr
-                    # are discarded) and strand a QUEUED fallback execution nobody can promote.
-                    pass
+            # Only attempted now, after finish_execution frees this task's "active
+            # agent" slot — dispatch_agent would otherwise refuse the fallback while
+            # this (still QUEUED/RUNNING) execution occupies it.
+            fallback_agent = json.loads(row["options"]).get("agent_settings", {}).get(
+                "quota_fallback"
+            )
+            already_fallback = bool(json.loads(row["options"]).get("fallback_from"))
+            if quota and fallback_agent:
+                if fallback_agent == row["agent"]:
+                    fallback_info = {
+                        "attempted": False,
+                        "target": fallback_agent,
+                        "reason": "Configured fallback equals the primary provider",
+                    }
+                elif already_fallback:
+                    fallback_info = {
+                        "attempted": False,
+                        "target": fallback_agent,
+                        "reason": "This execution was itself a fallback; not chaining further",
+                    }
+                else:
+                    try:
+                        dispatched = bridge.dispatch_agent(
+                            row["project_id"],
+                            row["task_id"],
+                            fallback_agent,
+                            row["role"],
+                            row["context_version"],
+                            row["instruction"],
+                            "real",
+                            fallback_from=execution_id,
+                        )
+                        fallback_info = {
+                            "attempted": True,
+                            "target": fallback_agent,
+                            "dispatched": True,
+                            "fallback_execution_id": dispatched["execution_id"],
+                        }
+                    except Exception as fallback_exc:
+                        # Keep the failed execution; stale context/approval must not be
+                        # bypassed. Catch everything (not just BridgeError): a lock timeout
+                        # or any other failure here must not crash this worker subprocess
+                        # silently (stdout/stderr are discarded) and strand a QUEUED
+                        # fallback execution nobody can promote. Unlike before, the reason
+                        # is recorded instead of being dropped.
+                        fallback_info = {
+                            "attempted": True,
+                            "target": fallback_agent,
+                            "dispatched": False,
+                            "failed_reason": redact(
+                                f"{type(fallback_exc).__name__}: {fallback_exc}"
+                            )[:500],
+                        }
+                record_fallback_outcome(bridge, execution_id, fallback_info)
     finally:
         lease.release()
 

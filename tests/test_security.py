@@ -9,6 +9,7 @@ from conftest import approve, dispatch
 
 from ccc_mcp.adapters.agents.base import parse_report, run_process
 from ccc_mcp.core.approval import confirm_local
+from ccc_mcp.core.context import identifier
 from ccc_mcp.infra.errors import AgentCancelled, AgentTimeout, BridgeError, PermissionDenied
 from ccc_mcp.infra.security import atomic_write, comment_check, redact, safe_path
 from ccc_mcp.worker import run_execution
@@ -29,6 +30,32 @@ from ccc_mcp.worker import run_execution
 def test_path_traversal(bridge, path):
     with pytest.raises(BridgeError):
         bridge.source_ref("demo", path)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "../TASK-0001",
+        "TASK-0001/../other",
+        "..\\TASK-0001",
+        "/etc/passwd",
+        "C:\\Windows",
+        "TASK 0001",
+        "TASK/0001",
+        "",
+    ],
+)
+def test_identifier_rejects_path_escaping_values(value):
+    """Regression (P0-3): task_id/project_id gate every worktree and artifact path
+    (task_worktree, save_artifact, ...) that pins a dispatched Agent's cwd inside the
+    intended directory. A crafted id must never be able to smuggle a path segment."""
+    with pytest.raises(BridgeError):
+        identifier(value)
+
+
+def test_task_worktree_rejects_a_crafted_task_id(bridge):
+    with pytest.raises(BridgeError):
+        bridge.task_worktree("demo", "../escape")
 
 
 def test_unregistered_project(bridge):

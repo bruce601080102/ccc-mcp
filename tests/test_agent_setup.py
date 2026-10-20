@@ -51,7 +51,10 @@ def test_setup_provider_installs_then_logs_in(monkeypatch):
 
 
 def test_setup_provider_claude_requires_node_22(monkeypatch):
+    """npm/Node are already present (so _ensure_npm is a no-op) but Node is too old —
+    the only case that should still hard-fail asking for a manual upgrade."""
     monkeypatch.setattr(agent_setup, "native_executable", lambda name: (_ for _ in ()).throw(BridgeError("missing")))
+    monkeypatch.setattr(agent_setup.shutil, "which", lambda name: "C:/npm/npm.cmd")
     monkeypatch.setattr(
         agent_setup.subprocess,
         "run",
@@ -59,6 +62,24 @@ def test_setup_provider_claude_requires_node_22(monkeypatch):
     )
     with pytest.raises(BridgeError, match="Node.js 22"):
         agent_setup.setup_provider("claude")
+
+
+def test_setup_provider_claude_on_a_node_less_machine_still_attempts_auto_install(monkeypatch):
+    """Regression (P1-2): previously the Node-version check ran *before* _ensure_npm,
+    so a brand-new machine with no Node.js at all failed here before auto-install
+    (winget) ever got a chance to run."""
+    calls = []
+    monkeypatch.setattr(agent_setup, "native_executable", lambda name: (_ for _ in ()).throw(BridgeError("missing")))
+    monkeypatch.setattr(agent_setup.shutil, "which", lambda name: None)
+
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+        return FakeResult(returncode=0)
+
+    monkeypatch.setattr(agent_setup.subprocess, "run", fake_run)
+    with pytest.raises(BridgeError, match="WinGet"):
+        agent_setup.setup_provider("claude")
+    assert calls == [], "must reach _ensure_npm's WinGet check before anything else runs"
 
 
 def test_ensure_npm_raises_without_winget(monkeypatch):

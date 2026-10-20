@@ -70,6 +70,33 @@ TRANSITIONS = {
     "REJECTED": set(),
 }
 
+# Terminal task states map onto themselves; every other combination is derived
+# below from signals that already exist (task state, the latest execution's
+# status, whether it's an orphaned worker, and unrefined-report backlog).
+_TERMINAL_WAITING_ON = {"COMPLETED", "CANCELLED", "REJECTED"}
+
+
+def waiting_on(state, execution_status, orphaned, needs_pm_refinement):
+    """Collapse task.state + execution status + context_sync into one readable value.
+
+    A PM or operator otherwise has to cross-reference four separate fields to answer
+    "what is this task waiting on right now"; this is purely derived, read-only, and
+    never stored, so it cannot drift from the state machine it summarizes.
+    """
+    if state in _TERMINAL_WAITING_ON:
+        return state
+    if execution_status in {"QUEUED", "RUNNING"}:
+        return "BLOCKED" if orphaned else "AGENT_RUNNING"
+    if needs_pm_refinement:
+        return "PM_REFINEMENT"
+    if state == "AWAITING_USER_APPROVAL":
+        return "USER_APPROVAL"
+    if state in {"AWAITING_PM_DECISION", "AWAITING_PM_REVIEW", "NEEDS_REVISION"}:
+        return "PM_DECISION"
+    if state in {"FAILED", "BLOCKED"}:
+        return state
+    return "PM_DECISION"
+
 
 class TaskHub:
     def task(self, project_id, task_id):
@@ -320,13 +347,22 @@ class TaskHub:
                 fake_scenario=fake_scenario,
             )
         elif role in {"SD", "RD", "SD/RD"}:
+            test_evidence = self.run_configured_test_command(project_id, execution["task_id"])
+            result["test_evidence"] = test_evidence
+            instruction = "Review the implementation and verify reported evidence. " + (
+                f"Host-executed test command {'passed' if test_evidence.get('passed') else 'FAILED'}: "
+                f"{' '.join(test_evidence['command'])}."
+                if test_evidence["executed_by_host"]
+                else f"No host test evidence was collected ({test_evidence['reason']}); "
+                "treat completion as unverified."
+            )
             result["next_execution"] = self.dispatch_agent(
                 project_id,
                 execution["task_id"],
                 "auto",
                 "REVIEW",
                 self.latest(project_id)["version"],
-                "Review the implementation and verify reported evidence",
+                instruction,
                 adapter=adapter,
                 fake_scenario=fake_scenario,
             )
@@ -791,7 +827,9 @@ class TaskHub:
                     )
                 ):
                     raise BridgeError("Project-mode implementation is exclusive within a project")
-            package = self.build_handoff(project_id, role, task_id)
+            package = self.build_handoff(
+                project_id, role, task_id, project_settings.get("context_token_budget")
+            )
             package["target_agent"] = agent
             package["agent_settings"] = settings
             package["workspace_mode"] = workspace_mode
@@ -925,9 +963,17 @@ class TaskHub:
                     "orphaned": orphaned,
                     "note": note,
                 }
+            needs_pm_refinement = self.context_sync_status(project_id)["needs_pm_refinement"]
+            test_result = self._latest_test_result(project_id, task_id)
             task["brief"] = {
                 "task_id": task_id,
                 "state": task["state"],
+                "waiting_on": waiting_on(
+                    task["state"],
+                    latest["status"] if latest else None,
+                    bool(progress and progress["orphaned"]),
+                    needs_pm_refinement,
+                ),
                 "agent": latest["agent"] if latest else None,
                 "role": latest["role"] if latest else None,
                 "adapter": latest["adapter"] if latest else None,
@@ -938,11 +984,70 @@ class TaskHub:
                 "next_action": report.get("next_action"),
                 "error": latest["error"] if latest else None,
                 "context_version": self.latest(project_id)["version"],
-                "context_refinement_pending": self.context_sync_status(project_id)[
-                    "needs_pm_refinement"
-                ],
+                "context_refinement_pending": needs_pm_refinement,
+                "tests": {
+                    "executed_by_host": bool(test_result and test_result.get("executed_by_host")),
+                    "passed": test_result.get("passed") if test_result else None,
+                    "reason": None if (test_result or {}).get("executed_by_host") else (
+                        (test_result or {}).get("reason")
+                        or "No test evidence recorded for this task yet"
+                    ),
+                },
+                "fallback": saved.get("fallback"),
             }
             return task
+
+    def run_configured_test_command(self, project_id, task_id):
+        """Auto-run the project's configured test command before REVIEW is dispatched.
+
+        `project authorize` (the durable read-write grant) is the consent for this — the
+        same grant that already lets the configured Agent workflow modify project files
+        without per-step approval now also covers running this fixed, project-chosen
+        command. Without both a continuous authorization and a configured command, no
+        command runs and the reason is recorded instead of silently skipping.
+        """
+        from ..adapters.test_runner import execute_test_command, record_test_evidence
+
+        access = self.get_project_access(project_id)
+        if access["mode"] != "read-write":
+            return record_test_evidence(
+                self,
+                project_id,
+                task_id,
+                {
+                    "executed_by_host": False,
+                    "reason": "Project is not continuously authorized; run project authorize",
+                },
+            )
+        command = self.get_project_settings(project_id).get("test_command")
+        if not command:
+            return record_test_evidence(
+                self,
+                project_id,
+                task_id,
+                {
+                    "executed_by_host": False,
+                    "reason": "No project-level test_command configured "
+                    "(ccc-mcp config test-command)",
+                },
+            )
+        return execute_test_command(self, project_id, task_id, command, access["identity"])
+
+    def _latest_test_result(self, project_id, task_id):
+        root = self.project(project_id)["root"]
+        path = f"{metadata_name(root)}/tasks/{task_id}/TEST-RESULT.md"
+        row = self.store.one(
+            "SELECT content FROM artifacts WHERE project_id=? AND path=?", (project_id, path)
+        )
+        if not row:
+            return None
+        try:
+            # The JSON payload is always the last "\n\n"-separated block, whether the
+            # artifact came from execute_test_command (no attribution line) or the
+            # finish_execution default (heading + attribution line + JSON).
+            return json.loads(row["content"].rsplit("\n\n", 1)[-1])
+        except ValueError:
+            return None
 
     def get_task_result(self, project_id, task_id):
         with self.lock(project_id):

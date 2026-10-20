@@ -8,6 +8,18 @@ from .base import BaseAgentAdapter, parse_report, probe, run_process, schema_fil
 
 
 class CodexAdapter(BaseAgentAdapter):
+    # Appended to the shared operator policy for every Codex dispatch. A class constant
+    # (not built inline in run()) so `config prompt`/preview_role_prompt can show exactly
+    # this text without actually dispatching Codex.
+    EXTRA_INSTRUCTION = (
+        "\nUse permitted shell and file tools for the assigned role; SA/REVIEW is read-only. "
+        "If an external skill file or graph tool is unavailable or denied, record that "
+        "limitation and continue independent permitted repository reads. Do not retry "
+        "denied paths, change permissions, request escalation, or claim graph validation "
+        "without evidence. A failed external read does not prove repository reads are "
+        "unavailable. Cite actual source paths and line numbers in your findings."
+    )
+
     def run(self, package, instruction, cwd, timeout, cancelled):
         if package["role"] not in {"SA", "REVIEW", "SD", "RD", "SD/RD"}:
             raise BridgeError("Unsupported Codex role")
@@ -51,14 +63,7 @@ class CodexAdapter(BaseAgentAdapter):
                 argv[4:4] = ["--model", options["model"]]
             if options.get("effort"):
                 argv[4:4] = ["-c", "model_reasoning_effort=" + options["effort"]]
-            prompt = self.prompt(package, instruction) + (
-                "\nUse permitted shell and file tools for the assigned role; SA/REVIEW is read-only. "
-                "If an external skill file or graph tool is unavailable or denied, record that "
-                "limitation and continue independent permitted repository reads. Do not retry "
-                "denied paths, change permissions, request escalation, or claim graph validation "
-                "without evidence. A failed external read does not prove repository reads are "
-                "unavailable. Cite actual source paths and line numbers in your findings."
-            )
+            prompt = self.prompt(package, instruction) + self.EXTRA_INSTRUCTION
             stdout, stderr = run_process(argv, cwd, prompt, timeout, cancelled)
             record_output("codex", stdout, stderr)
             if not output.is_file():

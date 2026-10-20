@@ -168,7 +168,10 @@ def create_server(
         task_id: str | None = None,
         token_budget: int | None = None,
     ) -> dict[str, Any]:
-        """Build a role-specific handoff; budgets are advisory and never truncate invariants."""
+        """Build a role-specific handoff. Over budget, bounded history lists (decisions,
+        agent_results_awaiting_refinement) are compressed oldest-first; budget_omitted
+        lists what was cut. invariants, source_document_refs, approved_plan, task and
+        reports are never truncated."""
         return await call(bridge.build_handoff, project_id, role, task_id, token_budget)
 
     @server.tool(annotations=readonly)
@@ -213,6 +216,12 @@ def create_server(
     async def get_project_settings(project_id: str) -> dict[str, Any]:
         """Read role/provider/model/effort/fallback and operator-authorized paths."""
         return await call(bridge.public_project_settings, project_id)
+
+    @server.tool(annotations=readonly)
+    async def preview_role_prompt(project_id: str, role: str) -> dict[str, Any]:
+        """Preview exactly what a role (SA/SD/RD/SD-RD/REVIEW) would be sent given
+        current settings, without dispatching anything."""
+        return await call(bridge.role_prompt_preview, project_id, role)
 
     @server.tool(annotations=readonly)
     async def list_workspace(

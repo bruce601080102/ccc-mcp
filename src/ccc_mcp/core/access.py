@@ -46,6 +46,8 @@ class ProjectAccessHub:
             "授權後由設定的 SA／實作／審查 Agent 持續處理需求，不需逐檔核准；"
             "工作串與 PLAN 由 ccc-mcp 內部管理，不需逐次 approve 或 accept。\n"
             "修改會核對 SHA256 並保存原始內容及紀錄；憑證、管理資料與外部路徑仍不開放。\n"
+            "此授權同時代表同意：若有設定 test_command（ccc-mcp config test-command），"
+            "每輪實作完成、REVIEW 派工前會自動在本機執行該命令並存證；未設定則不會自動執行任何命令。\n"
             "授權持續有效，直到執行 project revoke。",
             project_id,
         )

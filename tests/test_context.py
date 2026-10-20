@@ -122,6 +122,47 @@ def test_recovery_with_no_chat_history(bridge, human):
     assert restarted.build_handoff("demo", token_budget=1)["budget_exceeded"]
 
 
+def test_build_handoff_compresses_history_over_budget_without_touching_invariants(bridge):
+    """Regression (P1-4): a token_budget previously only set an advisory
+    `budget_exceeded` flag and never actually shrank the package — real dispatch never
+    even passed one. Now it compresses bounded-history lists and reports what it cut,
+    while invariants/source_document_refs/reports are never touched."""
+    from ccc_mcp.adapters.storage import now
+
+    task_id = bridge.create_task("demo", "需求")["id"]
+    for i in range(20):
+        bridge.store.execute(
+            "INSERT INTO decisions VALUES(?,?,?,?,?,?,?,?,?)",
+            (f"DEC-test-{i:02d}", "demo", task_id, f"decision {i}", "reason", "tester", "Approved", 1, now()),
+        )
+    full = bridge.build_handoff("demo", "PM")
+    assert len(full["content"]["decisions"]) == 20
+    assert full["budget_omitted"] == []
+
+    trimmed = bridge.build_handoff("demo", "PM", token_budget=50)
+    assert trimmed["budget_exceeded"] is True
+    assert len(trimmed["content"]["decisions"]) == 5
+    assert any("decisions" in note for note in trimmed["budget_omitted"])
+    # Protected sections must survive trimming untouched.
+    assert trimmed["content"]["invariants"] == full["content"]["invariants"]
+    assert trimmed["source_document_refs"] == full["source_document_refs"]
+
+
+def test_build_handoff_without_a_budget_never_trims(bridge):
+    from ccc_mcp.adapters.storage import now
+
+    task_id = bridge.create_task("demo", "需求")["id"]
+    for i in range(20):
+        bridge.store.execute(
+            "INSERT INTO decisions VALUES(?,?,?,?,?,?,?,?,?)",
+            (f"DEC-test-{i:02d}", "demo", task_id, f"decision {i}", "reason", "tester", "Approved", 1, now()),
+        )
+    package = bridge.build_handoff("demo", "PM")
+    assert len(package["content"]["decisions"]) == 20
+    assert package["budget_exceeded"] is False
+    assert package["budget_omitted"] == []
+
+
 def test_invariants_and_semantic_ack(bridge):
     with pytest.raises(BridgeError, match="invariant"):
         bridge.propose_context_patch("demo", patch(bridge, invariants=[]))

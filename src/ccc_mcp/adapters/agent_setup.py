@@ -80,11 +80,19 @@ def setup_provider(provider: str) -> dict:
         raise BridgeError(f"Unsupported provider: {provider}")
     path = _resolve_or_none(provider)
     if path is None:
+        # _ensure_npm() first: on a machine with no Node.js at all, this is what
+        # actually installs it (via winget). Checking the Node version before this
+        # ran meant a brand-new machine failed here before auto-install ever had a
+        # chance to run — a one-line Node install would have fixed it, but the
+        # error told the user to do it manually instead.
+        _ensure_npm()
         if provider == "claude":
             node_major = _node_major_version()
             if node_major is None or node_major < 22:
-                raise BridgeError("Claude Code npm installation requires Node.js 22+")
-        _ensure_npm()
+                raise BridgeError(
+                    "Claude Code npm installation requires Node.js 22+; the Node.js "
+                    "already installed here is older — upgrade it manually and retry"
+                )
         subprocess.run(["npm", "install", "-g", NPM_PACKAGE[provider]], shell=False, check=True)
         path = native_executable(provider)
     if not _logged_in(path, provider):

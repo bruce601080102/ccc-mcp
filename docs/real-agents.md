@@ -97,7 +97,9 @@ Codex 的唯讀 SA/Review 支援尚未建立 Git 的已註冊專案：Adapter �
 
 在 ccc-mcp 本專案第一次建立 Git 基準，可先 `git init`、以 `git add` 加入你已審閱的原始碼，再 `git commit`。若要開發另一個已有 Git 的專案，改用 `ccc-mcp project add 路徑 --id 專案ID` 註冊該專案。
 
-## 4. 在 ChatGPT 發起真實任務
+## 4. 若尚未執行 `project authorize`（逐步人工核准模式）
+
+**先確認你要走哪條路**：README 的 [hello-demo 快速開始](../README.md#快速開始windows-git-bashmacoslinux) 是預設、建議的路徑——執行一次 `project authorize` 之後，PM 會自動派工、整理 Context、完成任務，不需要你每輪手動建立任務、手動核准計畫。**下面這一節是另一條路**：專案還沒執行 `project authorize`（停留在唯讀模式）時，每個計畫都需要你在本機逐次核准，流程如下。兩條路都是真的在跑 Codex／Claude，差別只在要不要逐次核准。
 
 請建立新的需求任務。先前僅允許 fake 的測試任務不要拿來直接轉成真實開發任務。
 
@@ -127,8 +129,18 @@ SA 完成後，PM 用 propose_plan 提出具體方案，request_approval 建立 
 
 目前的實作使用獨立 CLI 程序。結果存於 ccc-mcp，可由網頁工具或 CLI 查詢；未與目前 VS Code Codex 對話視窗同步。
 
-## 操作與核准規則
+## 操作與核准規則（逐步人工核准模式）
 
-真實 SD/RD 派工前必須有本機人工核准。相同計畫與 Context Version 的有效核准可供重試使用，不需要每次派工重複核准；計畫內容、計畫版本或 Context Version 改變時，原核准不再適用。
+真實 SD/RD 派工前必須有本機人工核准。相同計畫與 Context Version 的有效核准可供重試使用，不需要每次派工重複核准；計畫內容、計畫版本或 Context Version 改變時，原核准不再適用。已執行 `project authorize` 的專案不受本節限制——持續授權本身就是核准，見 README。
 
 `bootstrap_project` 用來恢復專案，不是必須逐字寫在每則聊天訊息中的指令，也不是 dispatch 的唯一前置讀取方式。PM 必須取得正確專案與目前 Context Version；新對話或切換專案時適合先 bootstrap。使用者可以直接說「請繼續 hello-world 已核准的任務，完成後回報」，讓 PM 選擇適當工具。
+
+## 機械可驗證的整合驗收
+
+不要只憑模型聊天回覆判定「整合測試通過」。本機已安裝並登入 Codex 與 Claude CLI 時，可直接跑這支腳本，它會真的派 Codex SA、Claude SD/RD、Codex REVIEW，並讓主機實際執行一次設定的測試命令，全程只依賴後端狀態（`get_task_status`／資料庫紀錄）判定是否完成，不採信任何 Agent 自己宣稱的文字：
+
+```bash
+.venv/Scripts/python.exe -m pytest -m real_agents tests/test_real_agents.py -v
+```
+
+這支測試預設**不會**跟著一般 `pytest` 一起跑（見 `pyproject.toml` 的 `addopts`），因為它需要本機已經裝好、登入兩個 CLI，且會真的花費額度／時間；CI 與一般開發迴圈用的是 `FakeAgentAdapter` 版本（`tests/test_test_evidence.py`、`tests/test_continuous_workflow.py`），行為邏輯相同，只是不呼叫真正的 CLI。

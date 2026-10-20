@@ -131,6 +131,7 @@ def is_quota_error(message):
             "insufficient credits",
             "credit balance",
             "you've hit your limit",
+            "hit your session limit",
             "rate_limit_exceeded",
         )
     )

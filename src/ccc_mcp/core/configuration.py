@@ -1,12 +1,13 @@
 import json
 from pathlib import Path
 
-from ..adapters.agents import ADAPTERS
+from ..adapters.agents import ADAPTERS, CodexAdapter
+from ..adapters.agents.base import operator_policy
 from ..adapters.git import git
 from ..infra.config import metadata_name
 from ..infra.errors import BridgeError
 from ..infra.security import atomic_write, canonical, reject_secrets, safe_path
-from .context import identifier
+from .context import context_policy, identifier
 from .models import PROTOCOL_VERSION
 
 # "chatgpt" is interactive, not CLI-dispatched, so it is not in the ADAPTERS registry
@@ -46,7 +47,7 @@ class ConfigurationHub:
         ):
             raise BridgeError("Invalid model identifier")
         if effort is not None and (
-            not isinstance(effort, str) or effort not in EFFORTS[provider]
+            not isinstance(effort, str) or effort not in EFFORTS.get(provider, set())
         ):
             raise BridgeError("Effort not supported by this provider")
         if provider == "chatgpt" and model:
@@ -63,6 +64,29 @@ class ConfigurationHub:
         }
         reject_secrets(result)
         return result
+
+    @staticmethod
+    def _validated_context_token_budget(budget):
+        if budget is not None and (
+            not isinstance(budget, int) or isinstance(budget, bool) or budget < 1000
+        ):
+            raise BridgeError("context_token_budget must be an integer >= 1000, or null to disable")
+        return budget
+
+    @staticmethod
+    def _validated_test_command(command):
+        """A fixed argv (never a shell string) run via run_process's shell=False."""
+        if command is None:
+            return None
+        if (
+            not isinstance(command, list)
+            or not command
+            or len(command) > 32
+            or not all(isinstance(part, str) and part and len(part) <= 4096 for part in command)
+        ):
+            raise BridgeError("test_command must be a non-empty list of argv strings")
+        reject_secrets(command)
+        return command
 
     def _editable_file_settings(self, settings, defaults, root):
         """Import operator-editable settings; never trust file-based authorization."""
@@ -101,6 +125,12 @@ class ConfigurationHub:
             if not isinstance(language, str) or language not in LANGUAGES:
                 raise BridgeError("Language must be zh-TW, ch or en")
             updated["language"] = language
+        if "test_command" in document:
+            updated["test_command"] = self._validated_test_command(document["test_command"])
+        if "context_token_budget" in document:
+            updated["context_token_budget"] = self._validated_context_token_budget(
+                document["context_token_budget"]
+            )
         return updated
 
     def resolve_agent_settings(self, project_id, role, agent="auto", model=None, effort=None):
@@ -124,7 +154,7 @@ class ConfigurationHub:
             resolved["model"] = model
         if effort is not None:
             resolved["effort"] = effort
-        if resolved["effort"] and resolved["effort"] not in EFFORTS[provider]:
+        if resolved["effort"] and resolved["effort"] not in EFFORTS.get(provider, set()):
             raise BridgeError("Unsupported effort for this provider")
         if resolved["model"] and (
             provider == "chatgpt"
@@ -198,6 +228,8 @@ class ConfigurationHub:
                 "workspace_mode", "worktree"
             ),
             "worktree_dir": settings.get("worktree_dir", str(self.home / "worktrees")),
+            "test_command": settings.get("test_command"),
+            "context_token_budget": settings.get("context_token_budget"),
         }
 
     def _save_settings(self, project_id, settings):
@@ -301,6 +333,71 @@ class ConfigurationHub:
             },
         }
 
+    def provider_overview(self, project_id):
+        """A beginner-friendly view that separates what you can edit (roles/language/
+        test_command) from read-only system state (authorization), and lists every
+        registered provider — adding a new one (adapters/agents/<x>.py + one line in
+        ADAPTERS) shows up here automatically, nothing else to wire up by hand."""
+        settings = self.get_project_settings(project_id)
+        return {
+            "editable": {
+                "roles": settings["roles"],
+                "language": settings["language"],
+                "test_command": settings["test_command"],
+                "context_token_budget": settings["context_token_budget"],
+            },
+            "read_only_status": {
+                "project_access": settings["project_access"],
+            },
+            "available_providers": {
+                provider: sorted(EFFORTS.get(provider, set())) for provider in sorted(PROVIDERS)
+            },
+            "notes": [
+                "新增一個 provider：寫一個 adapters/agents/<name>.py 繼承 BaseAgentAdapter，"
+                "在 ADAPTERS 註冊一行即可在這裡看到；只有支援 effort 分級時才需要補 EFFORTS。",
+                "自動流程（advance_project）只會派合併角色 \"SD/RD\"，從不單獨派 \"SD\" 或 \"RD\"；"
+                "單獨設定 roles.SD / roles.RD 不會影響自動派工，只有手動呼叫 "
+                "dispatch_agent(role=\"SD\") 這類直接指定角色時才會用到。",
+            ],
+        }
+
+    def role_prompt_preview(self, project_id, role):
+        """Exactly what a role would currently be sent, without dispatching anything.
+
+        Composed from the same functions the real dispatch path uses (operator_policy,
+        CodexAdapter.EXTRA_INSTRUCTION, context_policy), so this can never drift from
+        what actually gets sent — there is no second copy of the text to keep in sync.
+        """
+        if role not in ROLES:
+            raise BridgeError("Unsupported role")
+        settings = self.get_project_settings(project_id)
+        language = settings["language"]
+        provider = settings["roles"][role]["provider"]
+        readonly = role in {"SA", "REVIEW"}
+        if provider == "claude":
+            tool_access = (
+                "Read/Glob/Grep（唯讀）" if readonly else "Read/Edit/Write/Glob/Grep（可寫）"
+            )
+        elif provider == "codex":
+            tool_access = (
+                "codex --sandbox read-only（唯讀）"
+                if readonly
+                else "codex --sandbox workspace-write（可寫，侷限在任務 worktree）"
+            )
+        else:
+            tool_access = "互動式 ChatGPT：沒有 shell，透過 read_workspace／write_workspace 等 MCP 工具操作"
+        return {
+            "role": role,
+            "provider": provider,
+            "language": language,
+            "tool_access": tool_access,
+            "adapter_operator_policy": operator_policy(language),
+            "provider_extra_instruction": CodexAdapter.EXTRA_INSTRUCTION
+            if provider == "codex"
+            else None,
+            "context_handoff_policy": context_policy(language),
+        }
+
     def configure_language(self, project_id, language):
         if language not in LANGUAGES:
             raise BridgeError("Language must be zh-TW, ch or en")
@@ -310,6 +407,25 @@ class ConfigurationHub:
             saved = self._save_settings(project_id, settings)
             self.sync_documents(project_id)
             return saved
+
+    def configure_test_command(self, project_id, command):
+        """The fixed host-run test command; project authorize also consents to running it
+        automatically before REVIEW. `command=None` clears it (tasks fall back to unverified)."""
+        validated = self._validated_test_command(command)
+        with self.lock(project_id):
+            settings = self.get_project_settings(project_id)
+            settings["test_command"] = validated
+            return self._save_settings(project_id, settings)
+
+    def configure_context_token_budget(self, project_id, budget):
+        """A per-project default passed into every real dispatch's build_handoff.
+        `budget=None` (the default) disables enforcement entirely, preserving today's
+        behavior unless you opt in."""
+        validated = self._validated_context_token_budget(budget)
+        with self.lock(project_id):
+            settings = self.get_project_settings(project_id)
+            settings["context_token_budget"] = validated
+            return self._save_settings(project_id, settings)
 
     def execution_workspace(self, row):
         options = row.get("options") or {}

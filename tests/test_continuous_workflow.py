@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from ccc_mcp.infra.errors import BridgeError
+from ccc_mcp.infra.errors import BridgeError, PermissionDenied
 from ccc_mcp.worker import run_execution
 
 
@@ -105,6 +105,59 @@ def test_review_revision_automatically_returns_to_implementation(bridge, human):
         "SELECT agent,role FROM agent_executions WHERE id=?", (revision["execution_id"],)
     )
     assert saved == {"agent": "claude", "role": "SD/RD"}
+
+
+def test_waiting_on_tracks_each_stage_of_the_pipeline(bridge, human):
+    """Regression: brief.waiting_on must reflect agent/PM/completion without cross-referencing fields."""
+    bridge.authorize_project_local("demo")
+    task_id = bridge.create_task("demo", "Implement a change")["id"]
+
+    def waiting_on():
+        return bridge.get_task_status("demo", task_id)["brief"]["waiting_on"]
+
+    sa = bridge.dispatch_agent(
+        "demo", task_id, "codex", "SA", bridge.latest("demo")["version"], "Analyze", adapter="fake"
+    )
+    assert waiting_on() == "AGENT_RUNNING"
+    run_execution(bridge, sa["execution_id"])
+    assert waiting_on() == "PM_REFINEMENT"
+
+    implementation = bridge.advance_project(
+        "demo", pending_patch(bridge, sa["execution_id"]), "Implement the approved change",
+        adapter="fake",
+    )["next_execution"]
+    assert waiting_on() == "AGENT_RUNNING"
+    run_execution(bridge, implementation["execution_id"])
+    assert waiting_on() == "PM_REFINEMENT"
+
+    review = bridge.advance_project(
+        "demo", pending_patch(bridge, implementation["execution_id"]), adapter="fake"
+    )["next_execution"]
+    assert waiting_on() == "AGENT_RUNNING"
+    run_execution(bridge, review["execution_id"])
+    assert waiting_on() == "PM_REFINEMENT"
+
+    bridge.advance_project("demo", pending_patch(bridge, review["execution_id"]), adapter="fake")
+    assert waiting_on() == "COMPLETED"
+
+
+def test_accept_local_rejects_unrefined_report_even_when_authorized(bridge, human):
+    """Regression: a continuously-authorized project must never be accepted as COMPLETED
+    while an Agent report is still unrefined, even bypassing the normal advance_project path."""
+    bridge.authorize_project_local("demo")
+    task_id = bridge.create_task("demo", "Implement a change")["id"]
+    sa = dispatch(bridge, task_id, "SA")
+    implementation = bridge.advance_project(
+        "demo", pending_patch(bridge, sa), "Implement the approved change", adapter="fake"
+    )["next_execution"]
+    run_execution(bridge, implementation["execution_id"])
+    assert bridge.task("demo", task_id)["state"] == "AWAITING_PM_REVIEW"
+    assert bridge.context_sync_status("demo")["needs_pm_refinement"] is True
+
+    with pytest.raises(PermissionDenied, match="unrefined reports"):
+        bridge.accept_local("demo", task_id)
+
+    assert bridge.task("demo", task_id)["state"] == "AWAITING_PM_REVIEW"
 
 
 def test_project_authorization_drives_one_continuous_workstream(bridge, human):

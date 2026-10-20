@@ -115,6 +115,37 @@ def config_show(ctx: typer.Context):
     output(bridge(ctx).public_project_settings(project_id(ctx)))
 
 
+@config_app.command("providers")
+def config_providers(ctx: typer.Context):
+    """新手友善總覽：可編輯設定（roles/language/test_command）與唯讀授權狀態分開顯示，
+    並列出目前所有可用的 provider 及支援的 effort。"""
+    output(bridge(ctx).provider_overview(project_id(ctx)))
+
+
+@config_app.command("prompt")
+def config_prompt(ctx: typer.Context, role: str):
+    """純讀取：依目前設定印出該角色實際會收到的操作政策／提示文字，不會真的派工。"""
+    output(bridge(ctx).role_prompt_preview(project_id(ctx), role))
+
+
+@config_app.command("context-budget")
+def config_context_budget(
+    ctx: typer.Context,
+    budget: Annotated[
+        int | None, typer.Argument(help="單位約為字元數/3；留空並加 --clear 可清除設定")
+    ] = None,
+    clear: bool = False,
+):
+    """設定派工時 build_handoff 的 token 預算；超額時會壓縮歷史清單並列出省略了什麼。
+    未設定時維持現狀，不限制任何交接內容。"""
+    if clear:
+        output(bridge(ctx).configure_context_token_budget(project_id(ctx), None))
+        return
+    if budget is None:
+        raise BridgeError("請提供預算數字，或加 --clear 清除現有設定")
+    output(bridge(ctx).configure_context_token_budget(project_id(ctx), budget))
+
+
 @config_app.command("role")
 def config_role(
     ctx: typer.Context,
@@ -137,6 +168,23 @@ def config_read_root(ctx: typer.Context, name: str, path: Path):
 @config_app.command("worktree-dir")
 def config_worktree_dir(ctx: typer.Context, path: Path):
     output(bridge(ctx).configure_worktree_dir(project_id(ctx), path))
+
+
+@config_app.command("test-command")
+def config_test_command(
+    ctx: typer.Context,
+    command: Annotated[
+        str | None, typer.Argument(help='例如："pytest -q"；留空並加 --clear 可清除設定')
+    ] = None,
+    clear: bool = False,
+):
+    """設定 `project authorize` 後、每輪 REVIEW 前自動執行的固定測試命令（本機實際執行，非 Agent）。"""
+    if clear:
+        output(bridge(ctx).configure_test_command(project_id(ctx), None))
+        return
+    if not command:
+        raise BridgeError("請提供測試命令字串，或加 --clear 清除現有設定")
+    output(bridge(ctx).configure_test_command(project_id(ctx), shlex.split(command)))
 
 
 @config_app.command("write-file", hidden=True)

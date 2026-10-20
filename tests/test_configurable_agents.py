@@ -10,7 +10,7 @@ from ccc_mcp.adapters.agents import ClaudeCodeAdapter, CodexAdapter
 from ccc_mcp.adapters.agents.base import run_process
 from ccc_mcp.core.models import AgentReport
 from ccc_mcp.infra.errors import AgentProcessError, BridgeError, PermissionDenied, VersionConflict
-from ccc_mcp.infra.telemetry import audit_scope, usage_from_output
+from ccc_mcp.infra.telemetry import audit_scope, is_quota_error, usage_from_output
 from ccc_mcp.interfaces.cli import app
 from ccc_mcp.service import CCCMCP
 from ccc_mcp.worker import run_execution
@@ -137,6 +137,143 @@ def test_invalid_manual_settings_json_fails_closed(bridge, human, content):
 def test_role_is_independent_of_provider(bridge, role, provider):
     bridge.configure_role("demo", role, provider)
     assert bridge.resolve_agent_settings("demo", role)["provider"] == provider
+
+
+def test_configure_test_command_persists_as_argv(bridge):
+    assert bridge.get_project_settings("demo")["test_command"] is None
+    bridge.configure_test_command("demo", [sys.executable, "-m", "pytest", "-q"])
+    assert bridge.get_project_settings("demo")["test_command"] == [
+        sys.executable, "-m", "pytest", "-q",
+    ]
+    bridge.configure_test_command("demo", None)
+    assert bridge.get_project_settings("demo")["test_command"] is None
+
+
+@pytest.mark.parametrize("command", ["pytest -q", [], [123], [""], ["a" * 5000]])
+def test_configure_test_command_rejects_non_argv(bridge, command):
+    with pytest.raises(BridgeError):
+        bridge.configure_test_command("demo", command)
+
+
+def test_config_test_command_cli_round_trip(bridge):
+    runner = CliRunner()
+    set_result = runner.invoke(
+        app,
+        ["--home", str(bridge.home), "--project", "demo", "config", "test-command", "pytest -q"],
+    )
+    assert set_result.exit_code == 0, set_result.output
+    assert bridge.get_project_settings("demo")["test_command"] == ["pytest", "-q"]
+
+    clear_result = runner.invoke(
+        app, ["--home", str(bridge.home), "--project", "demo", "config", "test-command", "--clear"]
+    )
+    assert clear_result.exit_code == 0, clear_result.output
+    assert bridge.get_project_settings("demo")["test_command"] is None
+
+
+def test_provider_overview_separates_editable_from_read_only(bridge, human):
+    bridge.authorize_project_local("demo")
+    overview = bridge.provider_overview("demo")
+
+    assert set(overview["editable"]) == {
+        "roles", "language", "test_command", "context_token_budget",
+    }
+    assert overview["read_only_status"]["project_access"]["mode"] == "read-write"
+    assert overview["available_providers"]["codex"]
+    assert overview["available_providers"]["claude"]
+    assert overview["available_providers"]["chatgpt"] == []
+    assert any("SD/RD" in note for note in overview["notes"])
+
+
+def test_config_providers_cli_reports_current_roles(bridge):
+    result = CliRunner().invoke(
+        app, ["--home", str(bridge.home), "--project", "demo", "config", "providers"]
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["editable"]["roles"]["SA"]["provider"] == "codex"
+    assert "read_only_status" in payload
+
+
+@pytest.mark.parametrize("role", ["SA", "SD", "RD", "SD/RD", "REVIEW"])
+def test_role_prompt_preview_matches_what_dispatch_would_actually_send(bridge, role):
+    """Regression (Feature 2): the preview must be built from the same functions the
+    real adapters use, not a second hand-written copy that can drift."""
+    from ccc_mcp.adapters.agents import CodexAdapter
+    from ccc_mcp.adapters.agents.base import operator_policy
+    from ccc_mcp.core.context import context_policy
+
+    preview = bridge.role_prompt_preview("demo", role)
+
+    assert preview["role"] == role
+    assert preview["adapter_operator_policy"] == operator_policy("zh-TW")
+    assert preview["context_handoff_policy"] == context_policy("zh-TW")
+    if preview["provider"] == "codex":
+        assert preview["provider_extra_instruction"] == CodexAdapter.EXTRA_INSTRUCTION
+    else:
+        assert preview["provider_extra_instruction"] is None
+
+
+def test_role_prompt_preview_rejects_unknown_role(bridge):
+    with pytest.raises(BridgeError):
+        bridge.role_prompt_preview("demo", "QA")
+
+
+def test_config_prompt_cli_is_read_only_and_does_not_dispatch(bridge):
+    result = CliRunner().invoke(
+        app, ["--home", str(bridge.home), "--project", "demo", "config", "prompt", "SA"]
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["provider"] == "codex"
+    assert "tool_access" in payload
+    assert bridge.list_tasks("demo") == []
+
+
+def test_configure_context_token_budget_persists_and_validates(bridge):
+    assert bridge.get_project_settings("demo")["context_token_budget"] is None
+    bridge.configure_context_token_budget("demo", 50000)
+    assert bridge.get_project_settings("demo")["context_token_budget"] == 50000
+    bridge.configure_context_token_budget("demo", None)
+    assert bridge.get_project_settings("demo")["context_token_budget"] is None
+    with pytest.raises(BridgeError):
+        bridge.configure_context_token_budget("demo", 10)
+    with pytest.raises(BridgeError):
+        bridge.configure_context_token_budget("demo", "50000")
+
+
+def test_dispatch_agent_passes_configured_budget_into_the_real_handoff(bridge):
+    """Regression (P1-4): dispatch_agent previously called build_handoff with no
+    token_budget at all, so a configured budget never applied to real dispatches —
+    only to the MCP build_handoff/get_context tools when a caller passed one by hand."""
+    bridge.configure_context_token_budget("demo", 1000)
+    task_id = bridge.create_task("demo", "需求")["id"]
+    for i in range(20):
+        bridge.store.execute(
+            "INSERT INTO decisions VALUES(?,?,?,?,?,?,?,?,?)",
+            (
+                f"DEC-test-{i:02d}", "demo", task_id, f"decision {i}", "reason", "tester",
+                "Approved", bridge.latest("demo")["version"], "2026-01-01T00:00:00+00:00",
+            ),
+        )
+    dispatch(bridge, "SA", adapter="fake")
+    package = bridge.get_task_result("demo", task_id)[-1]["package"]
+    assert package["token_budget"] == 1000
+    assert package["budget_omitted"], "the configured budget never reached build_handoff"
+
+
+def test_manual_settings_json_edit_validates_test_command(bridge, human):
+    bridge.authorize_project_local("demo")
+    path = Path(bridge.project("demo")["root"]) / ".ccc-mcp/settings.json"
+    document = json.loads(path.read_text(encoding="utf-8"))
+    document["test_command"] = ["pytest", "-q"]
+    path.write_text(json.dumps(document), encoding="utf-8")
+    assert bridge.get_project_settings("demo")["test_command"] == ["pytest", "-q"]
+
+    document["test_command"] = "pytest -q"
+    path.write_text(json.dumps(document), encoding="utf-8")
+    with pytest.raises(BridgeError):
+        bridge.get_project_settings("demo")
 
 
 def test_invalid_config_and_chatgpt_model_not_faked(bridge):
@@ -350,6 +487,12 @@ def test_quota_fallback_queues_chatgpt_without_reapproval(bridge, human, monkeyp
     assert len(results) == (2 if quota else 1)
     if quota:
         assert results[0]["result"]["failure_kind"] == "QUOTA_EXHAUSTED"
+        assert results[0]["result"]["fallback"] == {
+            "attempted": True,
+            "target": "chatgpt",
+            "dispatched": True,
+            "fallback_execution_id": results[1]["id"],
+        }
         assert results[1]["agent"] == "chatgpt"
         assert results[1]["options"]["fallback_from"] == results[0]["id"]
         assert bridge.bootstrap_project("demo")["pending_chatgpt_handoffs"]
@@ -434,6 +577,34 @@ def test_quota_fallback_does_not_bypass_stale_context(bridge, monkeypatch):
     results = bridge.get_task_result("demo", "TASK-0001")
     assert len(results) == 1 and results[0]["result"]["failure_kind"] == "QUOTA_EXHAUSTED"
     assert not bridge.pending_chatgpt_handoffs("demo")
+    # Regression (P1-1): the fallback attempt's failure must be recorded, not silently
+    # dropped — this is the exact "備援派工失敗也會被靜默略過" gap from the review.
+    fallback = results[0]["result"]["fallback"]
+    assert fallback["attempted"] is True
+    assert fallback["dispatched"] is False
+    assert fallback["target"] == "chatgpt"
+    assert fallback["failed_reason"]
+    brief = bridge.get_task_status("demo", "TASK-0001")["brief"]
+    assert brief["fallback"] == fallback
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "You've hit your session limit, try again in 2 hours.",
+        "Error code: rate_limit_error",
+        "insufficient_quota",
+    ],
+)
+def test_is_quota_error_recognizes_observed_messages(message):
+    """Regression (P1-1): "you've hit your session limit" was previously NOT a substring
+    of the only marker on file ("you've hit your limit"), so a real observed quota
+    message silently failed to trigger the fallback mechanism at all."""
+    assert is_quota_error(message) is True
+
+
+def test_is_quota_error_does_not_flag_unrelated_errors():
+    assert is_quota_error("Not logged in") is False
 
 
 def test_native_usage_is_not_taken_from_agent_report():
