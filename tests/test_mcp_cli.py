@@ -391,7 +391,7 @@ def test_connect_uses_forward_slash_mcp_command_and_existing_profile(tmp_path, m
     assert [call[1] for call in calls] == ["admin", "init", "doctor", "run"]
     command = calls[1][calls[1].index("--mcp-command") + 1]
     assert "\\" not in command
-    assert Path(cli_module.sys.executable).resolve().as_posix() in command
+    assert Path(cli_module.sys.executable).absolute().as_posix() in command
     assert (tmp_path / "home").resolve().as_posix() in command
 
     calls.clear()
@@ -400,6 +400,52 @@ def test_connect_uses_forward_slash_mcp_command_and_existing_profile(tmp_path, m
     # "-c" is the saved profile's interpreter getting re-validated (it's still the
     # same interpreter running this test, so it stays usable and init is skipped).
     assert [call[1] for call in calls] == ["admin", "-c", "doctor", "run"]
+
+
+def test_connect_mcp_command_keeps_symlinked_interpreter_path(tmp_path, monkeypatch):
+    """Regression test for the real bug: `python -m venv` makes bin/python a *symlink*
+    to the base interpreter on POSIX (Windows uses a copy instead, which is why this
+    was never an issue there). The old code called .resolve() on sys.executable, which
+    follows that symlink to the base interpreter -- one with no pyvenv.cfg next to it,
+    so it can't see the venv's site-packages and the spawned `-m ccc_mcp` process fails
+    with ModuleNotFoundError. The generated --mcp-command must keep the symlink path,
+    not the resolved target."""
+    from ccc_mcp.interfaces import cli as cli_module
+
+    real_target = tmp_path / "real-python"
+    real_target.write_text("#!/bin/sh\n")
+    venv_python = tmp_path / "venv-python"
+    venv_python.symlink_to(real_target)
+
+    monkeypatch.setenv("CONTROL_PLANE_API_KEY", "secret-key")
+    monkeypatch.setattr(cli_module.sys, "executable", str(venv_python))
+    monkeypatch.setattr(
+        cli_module, "ensure_tunnel_client", lambda home: tmp_path / "tunnel-client.exe"
+    )
+    monkeypatch.setattr(
+        cli_module, "native_executable", lambda name: (_ for _ in ()).throw(BridgeError("missing"))
+    )
+
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+        if argv[1] == "init":
+            profile_dir = Path(argv[argv.index("--profile-dir") + 1])
+            profile = argv[argv.index("--profile") + 1]
+            (profile_dir / f"{profile}.yaml").write_text("test profile", encoding="utf-8")
+        return subprocess.CompletedProcess(argv, 0)
+
+    monkeypatch.setattr(cli_module.subprocess, "run", fake_run)
+    result = CliRunner().invoke(
+        app, ["--home", str(tmp_path / "home"), "connect", "tunnel_" + "a" * 32]
+    )
+
+    assert result.exit_code == 0, result.output
+    init_call = next(call for call in calls if call[1] == "init")
+    command = init_call[init_call.index("--mcp-command") + 1]
+    assert str(venv_python) in command
+    assert str(real_target) not in command
 
 
 def test_connect_recreates_profile_with_unusable_saved_interpreter(tmp_path, monkeypatch):

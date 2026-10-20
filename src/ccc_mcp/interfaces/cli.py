@@ -649,8 +649,15 @@ def connect(ctx: typer.Context, tunnel_id: str):
     profile_dir.mkdir(parents=True, exist_ok=True)
     # tunnel-client parses --mcp-command as a command line. Backslashes in
     # Windows paths are consumed as escapes, so use forward slashes here.
+    # Deliberately .absolute(), never .resolve(): on POSIX, `python -m venv` makes
+    # bin/python a *symlink* to the base interpreter (Windows uses a copy, so this
+    # was never an issue there). .resolve() follows that symlink to the base
+    # interpreter, which has no pyvenv.cfg next to it and therefore no idea it
+    # should see this venv's site-packages — the spawned `-m ccc_mcp` then fails
+    # with ModuleNotFoundError. sys.executable from a console-script invocation is
+    # already absolute, so .absolute() is just a defensive no-op for the normal case.
     mcp_command = (
-        f'"{Path(sys.executable).resolve().as_posix()}" '
+        f'"{Path(sys.executable).absolute().as_posix()}" '
         f'-m ccc_mcp --home "{home.resolve().as_posix()}" serve'
     )
     profile_paths = (profile_dir / f"{profile}.yaml", profile_dir / f"{profile}.yml")
