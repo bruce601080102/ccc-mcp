@@ -32,6 +32,22 @@ ccc-mcp project authorize hello-demo
 
 第二個指令會顯示實際路徑，確認後輸入 `hello-demo`。預設新專案位於使用者目錄的 `ccc-mcpProjects/hello-demo`。授權持續有效，直到你撤銷；它允許工作流程修改此專案，不會授權專案外的檔案。
 
+**想換預設位置？** 兩種情境：
+
+- 只是這一個專案想放別的地方，用 `--path`，不會動到全域預設：
+
+  ```bash
+  ccc-mcp project create hello-demo --path "/Users/你的帳號/Code/hello-demo"
+  ```
+
+- 以後所有新專案都要改成另一個目錄，用 `config projects-dir`——這是全域設定、不用帶 `--project`，之後每次 `project create`（不手動指定路徑時）都會用這個新位置：
+
+  ```bash
+  ccc-mcp config projects-dir "/Users/你的帳號/Code/ccc-mcp-projects"
+  ```
+
+  只影響之後新建的專案，已經建好的專案不會被搬動。
+
 若 `hello-demo` 資料夾**已經存在但尚未註冊**，不要再執行 `project create`，改用：
 
 ```bash
