@@ -3,6 +3,7 @@ import importlib.metadata
 import json
 import os
 import re
+import shlex
 import shutil
 import sqlite3
 import subprocess
@@ -551,6 +552,43 @@ def serve(
     run_server(bridge(ctx).home, transport, host, port, enable_writes)
 
 
+def _profile_mcp_interpreter(profile_path: Path) -> str | None:
+    """Pull the python executable out of a generated profile's mcp_command, or None."""
+    match = re.search(r'command:\s*"((?:[^"\\]|\\.)*)"', profile_path.read_text(encoding="utf-8"))
+    if not match:
+        return None
+    unescaped = match.group(1).replace('\\"', '"').replace("\\\\", "\\")
+    try:
+        parts = shlex.split(unescaped)
+    except ValueError:
+        return None
+    return parts[0] if parts else None
+
+
+def _profile_is_stale(profile_path: Path) -> bool:
+    """True if the profile's mcp_command no longer points to a usable ccc_mcp install.
+
+    This happens when `connect` was first run from a different venv/conda env than the
+    one that has ccc_mcp installed: the saved command keeps that old interpreter forever,
+    since the profile is only (re)written when it does not already exist.
+    """
+    interpreter = _profile_mcp_interpreter(profile_path)
+    if not interpreter:
+        return True
+    try:
+        result = subprocess.run(
+            [interpreter, "-c", "import ccc_mcp"],
+            capture_output=True,
+            stdin=subprocess.DEVNULL,
+            timeout=15,
+            shell=False,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return True
+    return result.returncode != 0
+
+
 @app.command()
 def connect(ctx: typer.Context, tunnel_id: str):
     """連接 ChatGPT：安裝/驗證 tunnel-client 並啟動長駐連線（取代 scripts/connect-chatgpt.sh）。"""
@@ -616,6 +654,14 @@ def connect(ctx: typer.Context, tunnel_id: str):
         f'-m ccc_mcp --home "{home.resolve().as_posix()}" serve'
     )
     profile_paths = (profile_dir / f"{profile}.yaml", profile_dir / f"{profile}.yml")
+    existing_profile = next((path for path in profile_paths if path.is_file()), None)
+    if existing_profile is not None and _profile_is_stale(existing_profile):
+        typer.echo(
+            f"Existing tunnel profile {existing_profile} points to a Python that can no "
+            "longer import ccc_mcp (connect was likely first run from a different venv/conda "
+            "env). Recreating it with the interpreter running this command now."
+        )
+        existing_profile.unlink()
     if not any(path.is_file() for path in profile_paths):
         initialized = subprocess.run(
             [

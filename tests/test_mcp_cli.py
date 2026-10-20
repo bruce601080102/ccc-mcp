@@ -376,7 +376,12 @@ def test_connect_uses_forward_slash_mcp_command_and_existing_profile(tmp_path, m
         if argv[1] == "init":
             profile_dir = Path(argv[argv.index("--profile-dir") + 1])
             profile = argv[argv.index("--profile") + 1]
-            (profile_dir / f"{profile}.yaml").write_text("test profile", encoding="utf-8")
+            mcp_command = argv[argv.index("--mcp-command") + 1]
+            escaped = mcp_command.replace("\\", "\\\\").replace('"', '\\"')
+            (profile_dir / f"{profile}.yaml").write_text(
+                f'mcp:\n  commands:\n    - channel: main\n      command: "{escaped}"\n',
+                encoding="utf-8",
+            )
         return subprocess.CompletedProcess(argv, 0)
 
     monkeypatch.setattr(cli_module.subprocess, "run", fake_run)
@@ -392,7 +397,55 @@ def test_connect_uses_forward_slash_mcp_command_and_existing_profile(tmp_path, m
     calls.clear()
     again = CliRunner().invoke(app, args)
     assert again.exit_code == 0, again.output
-    assert [call[1] for call in calls] == ["admin", "doctor", "run"]
+    # "-c" is the saved profile's interpreter getting re-validated (it's still the
+    # same interpreter running this test, so it stays usable and init is skipped).
+    assert [call[1] for call in calls] == ["admin", "-c", "doctor", "run"]
+
+
+def test_connect_recreates_profile_with_unusable_saved_interpreter(tmp_path, monkeypatch):
+    """Simulates the real bug: connect was first run from a venv/conda env that no
+    longer (or never did) has ccc_mcp installed, so the saved profile's mcp_command
+    points to a dead interpreter. connect should detect that and regenerate the
+    profile instead of silently reusing it forever."""
+    from ccc_mcp.interfaces import cli as cli_module
+
+    monkeypatch.setenv("CONTROL_PLANE_API_KEY", "secret-key")
+    monkeypatch.setattr(
+        cli_module, "ensure_tunnel_client", lambda home: tmp_path / "tunnel-client.exe"
+    )
+    monkeypatch.setattr(
+        cli_module, "native_executable", lambda name: (_ for _ in ()).throw(BridgeError("missing"))
+    )
+    home = tmp_path / "home"
+    profile_dir = home / "tunnel"
+    profile_dir.mkdir(parents=True)
+    profile_path = profile_dir / ("ccc-mcp-" + "a" * 32 + ".yaml")
+    stale_python = tmp_path / "gone" / "bin" / "python3"
+    profile_path.write_text(
+        f'mcp:\n  commands:\n    - channel: main\n      command: "\\"{stale_python}\\" -m ccc_mcp serve"\n',
+        encoding="utf-8",
+    )
+
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+        if argv[0] == str(stale_python):
+            # Simulates the dead interpreter failing to import ccc_mcp.
+            return subprocess.CompletedProcess(argv, 1)
+        if argv[1] == "init":
+            profile_dir = Path(argv[argv.index("--profile-dir") + 1])
+            profile = argv[argv.index("--profile") + 1]
+            (profile_dir / f"{profile}.yaml").write_text("regenerated", encoding="utf-8")
+        return subprocess.CompletedProcess(argv, 0)
+
+    monkeypatch.setattr(cli_module.subprocess, "run", fake_run)
+    result = CliRunner().invoke(app, ["--home", str(home), "connect", "tunnel_" + "a" * 32])
+
+    assert result.exit_code == 0, result.output
+    assert [call[1] for call in calls] == ["admin", "-c", "init", "doctor", "run"]
+    assert profile_path.read_text(encoding="utf-8") == "regenerated"
+    assert "Recreating it" in result.output
 
 
 def test_update_invokes_pip_upgrade(tmp_path, monkeypatch):
