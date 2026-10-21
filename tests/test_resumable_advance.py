@@ -221,3 +221,72 @@ def test_host_test_failure_overrides_an_optimistic_review_report(bridge, human):
         "dependencies": NO_MANIFEST_DETECTED, "no_tests_collected": False,
     }
     assert brief["waiting_on"] == "AGENT_RUNNING"
+
+
+def test_no_tests_collected_also_blocks_auto_completion(bridge, human):
+    """Regression (Codex review): the original requirement is explicit — "測試失敗或
+    未驗證時，不可對外宣稱完整驗收成功" (a failure OR an unverified round must never
+    count as full acceptance). DEFAULT_TEST_COMMAND runs pytest automatically with no
+    test_command configured; a fresh worktree has no tests at all, so this is exactly
+    the "unverified" case (pytest exit 5, not a failure) — it must be treated the same
+    as a host test failure for completion purposes, not silently let REVIEW complete
+    the round on an agent's self-report alone."""
+    task_id, sa = advance_to_implementation(bridge)
+    implementation = bridge.advance_project(
+        "demo", pending_patch(bridge, sa), "Implement the approved change", adapter="fake"
+    )["next_execution"]
+    run_execution(bridge, implementation["execution_id"])
+
+    after_tests = bridge.advance_project(
+        "demo", pending_patch(bridge, implementation["execution_id"]), adapter="fake"
+    )
+    assert after_tests["test_evidence"]["executed_by_host"] is True
+    assert after_tests["test_evidence"]["no_tests_collected"] is True
+    review_execution_id = after_tests["next_execution"]["execution_id"]
+    run_execution(bridge, review_execution_id)  # fake adapter: needs_revision=False
+
+    result = bridge.advance_project(
+        "demo", pending_patch(bridge, review_execution_id), adapter="fake"
+    )
+
+    assert bridge.task("demo", task_id)["state"] != "COMPLETED"
+    assert "completed_workstreams" not in result
+    assert bridge.store.one(
+        "SELECT role FROM agent_executions WHERE id=?",
+        (result["next_execution"]["execution_id"],),
+    )["role"] == "SD/RD"
+    brief = bridge.get_task_status("demo", task_id)["brief"]
+    assert brief["tests"]["no_tests_collected"] is True
+
+
+def test_commit_context_patch_writes_pending_dispatch_atomically_with_the_commit(
+    bridge, human
+):
+    """Regression (Codex review): committing Context and recording the
+    pending_dispatch pointer used to be two separate writes, leaving a real crash
+    window — context committed, but no pointer yet to resume from, and no way to
+    re-propose the same (now-consumed) report. They must land as one atomic SQL
+    transaction: immediately after commit_context_patch returns, the pointer already
+    exists, with no further write needed to make the two consistent."""
+    task_id, sa = advance_to_implementation(bridge)
+    patch = pending_patch(bridge, sa)
+    proposed = bridge.propose_context_patch("demo", patch)
+
+    committed = bridge.commit_context_patch(
+        "demo",
+        proposed["patch_id"],
+        next_dispatch={
+            "task_id": task_id,
+            "source_execution_id": sa,
+            "role": "SA",
+            "plan_content": "Implement the approved change",
+            "adapter": "fake",
+            "fake_scenario": "success",
+        },
+    )
+
+    pointer = bridge._pending_dispatch_row("demo", task_id)
+    assert pointer is not None
+    assert pointer["context_version"] == committed["context_version"]
+    assert pointer["source_execution_id"] == sa
+    assert bridge.context_sync_status("demo")["pending_reports"] == []

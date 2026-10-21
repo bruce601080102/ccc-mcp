@@ -137,7 +137,7 @@ ccc-mcp --project hello-demo config context-budget 150000
 ccc-mcp --project hello-demo config test-command "pytest -q"
 ```
 
-專案尚未 `project authorize` 時，`ccc-mcp --project hello-demo task status` 的 `brief.tests` 會明確顯示 `executed_by_host: false` 及原因，不會被當成「已測試通過」；這與 Agent 本身不執行測試是同一件事——測試永遠是本機實際執行、有紀錄的動作，不是聊天回覆自稱的結果。專案還沒寫任何測試時，預設的 `pytest -q` 會回報 `brief.tests.no_tests_collected: true`（pytest 的「沒收集到測試」退出碼，不是失敗，也不會擋住完成）。想換回自訂命令，用 `ccc-mcp --project hello-demo config test-command --clear` 清掉後再重新設定；這跟手動的 `ccc-mcp task test`（一次性、需要在終端機確認）是兩條獨立路徑，互不影響。
+專案尚未 `project authorize` 時，`ccc-mcp --project hello-demo task status` 的 `brief.tests` 會明確顯示 `executed_by_host: false` 及原因，不會被當成「已測試通過」；這與 Agent 本身不執行測試是同一件事——測試永遠是本機實際執行、有紀錄的動作，不是聊天回覆自稱的結果。專案還沒寫任何測試時，預設的 `pytest -q` 會回報 `brief.tests.no_tests_collected: true`（pytest 的「沒收集到測試」退出碼，不是失敗，但也代表這輪什麼都沒被驗證過——跟測試失敗一樣會擋住 REVIEW 自動結案，接力會自動退回 SD/RD 請它補測試，不會悄悄算完整驗收通過）。想換回自訂命令，用 `ccc-mcp --project hello-demo config test-command --clear` 清掉後再重新設定；這跟手動的 `ccc-mcp task test`（一次性、需要在終端機確認）是兩條獨立路徑，互不影響。
 
 執行測試前，ccc-mcp 會先自動偵測任務目錄下的 `requirements.txt`／`pyproject.toml`／`package.json`，偵測到就先執行對應的安裝指令（`pip install`／`npm ci`／`npm install`），省去「程式改完才發現沒裝套件、測試一路 import error」的手動排錯。**Python 專案會自動建立並重複使用一個專屬 venv**（`~/.ccc-mcp/venvs/<project_id>/`），所以 `test_command` 設成單純的 `"pytest -q"` 就夠，不需要自己找出並填入某個 venv 的絕對路徑。**這代表 `project authorize` 的同意範圍也涵蓋執行 Agent 寫入的套件清單**——套件安裝過程（`setup.py`、npm `postinstall`）本身可以執行任意程式碼，等同於信任這些清單內容，請在審閱 Diff 時一併檢查相依套件異動。安裝結果（成功與否）會記錄在 `brief.tests.dependencies`；安裝失敗視為真正的測試失敗（不是「未執行」），REVIEW 無法覆蓋這個結果。細節見 [docs/reliability.md](docs/reliability.md#5-自動偵測並安裝相依套件)。
 

@@ -374,6 +374,13 @@ class TaskHub:
                 "revision needed; host test evidence takes precedence. Fix the implementation "
                 "so the configured test command passes.",
             )
+        if self._host_tests_unverified(project_id, task_id):
+            return (
+                "revise",
+                "The host-executed test command collected zero tests, so nothing about this "
+                "change was actually verified; add tests that exercise it before this round "
+                "can be accepted.",
+            )
         return "revise", "Revise the implementation to address the latest REVIEW findings"
 
     def _complete_pending_dispatch(self, project_id, pointer):
@@ -478,30 +485,23 @@ class TaskHub:
         if role != "SA" and plan_content is not None:
             raise BridgeError("A plan is only accepted after SA")
         proposed = self.propose_context_patch(project_id, patch)
-        committed = self.commit_context_patch(project_id, proposed["patch_id"])
+        # The pending_dispatch pointer is written atomically inside commit_context_patch's
+        # own transaction (see its docstring) — a crash between "context committed" and
+        # "pointer recorded" is exactly the gap that made this unsafe before; now either
+        # both land together or neither does.
+        committed = self.commit_context_patch(
+            project_id,
+            proposed["patch_id"],
+            next_dispatch={
+                "task_id": task_id,
+                "source_execution_id": source_execution_id,
+                "role": role,
+                "plan_content": plan_content,
+                "adapter": adapter,
+                "fake_scenario": fake_scenario,
+            },
+        )
         result = {"context": committed, "source_execution_id": execution["id"]}
-
-        with self.lock(project_id):
-            self.store.execute(
-                "INSERT INTO pending_dispatch VALUES(?,?,?,?,?,?,?,?,?,?) "
-                "ON CONFLICT(project_id,task_id) DO UPDATE SET "
-                "source_execution_id=excluded.source_execution_id,role=excluded.role,"
-                "context_version=excluded.context_version,plan_content=excluded.plan_content,"
-                "adapter=excluded.adapter,fake_scenario=excluded.fake_scenario,"
-                "committed_json=excluded.committed_json,created=excluded.created",
-                (
-                    project_id,
-                    task_id,
-                    source_execution_id,
-                    role,
-                    committed["context_version"],
-                    plan_content,
-                    adapter,
-                    fake_scenario,
-                    canonical(committed),
-                    now(),
-                ),
-            )
         pointer = self._pending_dispatch_row(project_id, task_id)
         result.update(self._complete_pending_dispatch(project_id, pointer))
         return result
@@ -1247,6 +1247,15 @@ class TaskHub:
         from overriding host-observed evidence (see commit_context_patch/_review_outcome)."""
         result = self._latest_test_result(project_id, task_id)
         return bool(result and result.get("executed_by_host") and result.get("passed") is False)
+
+    def _host_tests_unverified(self, project_id, task_id):
+        """True when the host ran the test command but it collected zero tests
+        (pytest exit 5) — distinct from a real pass and from "never executed at all".
+        Per the original requirement ("測試失敗或未驗證時，不可對外宣稱完整驗收成功"),
+        nothing was actually verified here, so — like a host test failure — this must
+        not silently let REVIEW auto-complete the task."""
+        result = self._latest_test_result(project_id, task_id)
+        return bool(result and result.get("executed_by_host") and result.get("no_tests_collected"))
 
     def get_task_result(self, project_id, task_id):
         with self.lock(project_id):

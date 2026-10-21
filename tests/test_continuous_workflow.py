@@ -1,3 +1,4 @@
+import sys
 from pathlib import Path
 
 import pytest
@@ -59,6 +60,10 @@ def pending_patch(bridge, execution_id):
 
 def test_project_advance_automatically_dispatches_claude_then_codex(bridge, human):
     bridge.authorize_project_local("demo")
+    # Without this, DEFAULT_TEST_COMMAND (pytest -q) finds zero tests in the fresh
+    # worktree and no_tests_collected correctly blocks auto-completion — this test is
+    # about role progression, not test evidence, so give it a trivially-passing command.
+    bridge.configure_test_command("demo", [sys.executable, "-c", "print('ok')"])
     task_id = bridge.create_task("demo", "Implement a change")["id"]
     sa = dispatch(bridge, task_id, "SA")
     with pytest.raises(BridgeError, match="reviewed implementation plan"):
@@ -110,6 +115,10 @@ def test_review_revision_automatically_returns_to_implementation(bridge, human):
 def test_waiting_on_tracks_each_stage_of_the_pipeline(bridge, human):
     """Regression: brief.waiting_on must reflect agent/PM/completion without cross-referencing fields."""
     bridge.authorize_project_local("demo")
+    # See test_project_advance_automatically_dispatches_claude_then_codex: without a
+    # passing test_command, DEFAULT_TEST_COMMAND finds zero tests and correctly blocks
+    # auto-completion, which isn't what this test is about.
+    bridge.configure_test_command("demo", [sys.executable, "-c", "print('ok')"])
     task_id = bridge.create_task("demo", "Implement a change")["id"]
 
     def waiting_on():

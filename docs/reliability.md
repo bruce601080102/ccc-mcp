@@ -6,7 +6,7 @@
 
 `advance_project` 每次執行分兩個階段：先把 PM 整理好的 ContextPatch 提交進共用 Context，再自動派出下一個角色。這兩步**不是同一個不可分割的操作**——如果第二步失敗（worker 行程起不來、暫時性版本衝突、CLI 當掉），Context 已經提交，不能重來一次（重送同一份 Patch 會被拒絕，因為來源報告已經「消化」過了），但下一個角色也還沒真的派出去。
 
-ccc-mcp 把這個「已提交、未派工」的狀態寫進資料庫的 `pending_dispatch`（不是只留在記憶體），所以就算整個 MCP 連線斷線、Tunnel 重啟，這個狀態也不會丟失：
+ccc-mcp 把這個「已提交、未派工」的狀態寫進資料庫的 `pending_dispatch`，而且**跟 Context 提交是同一個 SQL transaction**——commit_context_patch 把 `context_versions` 的新版本與 `pending_dispatch` 的指標用同一個 `conn` 寫入，要嘛兩者一起成功，要嘛一起失敗。（初版實作曾經把這兩個寫入拆成先後兩步，中間若真的當機，會留下「Context 已提交、指標沒寫入」的窗口；已改成上述的單一交易，不會再有這個中間狀態。）所以就算整個 MCP 連線斷線、Tunnel 重啟、甚至是寫入指標那一步自己當機，這個狀態也不會丟失或卡在不上不下的地方：
 
 ```bash
 ccc-mcp --project hello-demo task status
@@ -136,11 +136,11 @@ or reduce decision/report history, then dispatch again. Already omitted: [...]
 {"executed_by_host": true, "passed": true, "no_tests_collected": true}
 ```
 
-不會被當成失敗擋住完成，也不會被誤認為「已經有測試且通過」——`brief.tests.no_tests_collected` 讓這個狀態保持可見，PM／操作者可以自行判斷是否該請 Agent 補測試，而不是被動地在兩種極端（擋住所有新專案 vs. 悄悄放行真正的失敗）之間二選一。這個退出碼判斷只在實際執行的命令看起來是 `pytest` 時生效，不會誤判其他自訂 `test_command` 的退出碼。
+`passed: true` 只代表「pytest 本身沒有爆錯」，不代表「有東西被驗證過」——依照最初的要求「測試失敗或未驗證時，不可對外宣稱完整驗收成功」，這個狀態**一樣會擋住 REVIEW 自動結案**：`commit_context_patch` 把它跟第 2 節的主機測試失敗用同一個條件處理（`_host_tests_unverified`，與 `_host_test_failed` 並列），REVIEW 說沒問題也一樣會被退回 SD/RD，指令會明確寫「這輪什麼都沒被驗證，請補測試再提交」。`brief.tests.no_tests_collected` 讓這個狀態保持可見，不會被誤認為「已經有測試且通過」。這個退出碼判斷只在實際執行的命令看起來是 `pytest` 時生效，不會誤判其他自訂 `test_command` 的退出碼。
 
 ## 測試涵蓋
 
-- [tests/test_resumable_advance.py](../tests/test_resumable_advance.py)：派工失敗後的恢復、拒絕不相關的 Patch、`resume_pending_dispatch`、`task cancel` 清理指標、主機測試失敗覆蓋 REVIEW 自述。
+- [tests/test_resumable_advance.py](../tests/test_resumable_advance.py)：派工失敗後的恢復、拒絕不相關的 Patch、`resume_pending_dispatch`、`task cancel` 清理指標、主機測試失敗覆蓋 REVIEW 自述、未收集到測試一樣擋住自動結案、Context 提交與 `pending_dispatch` 指標確實寫在同一個交易裡。
 - [tests/test_context_budget_enforcement.py](../tests/test_context_budget_enforcement.py)：Skill 裁剪順序、預算仍超標時硬性拒絕、裁剪後成功派工、沒設預算時維持原樣。
 - [tests/test_fallback_classification.py](../tests/test_fallback_classification.py)：CLI 未安裝類錯誤不觸發 fallback、額度不足時的分類與 `CHATGPT_HANDOFF_PENDING`。
 - [tests/test_dependency_install.py](../tests/test_dependency_install.py)：各種 manifest 的偵測優先順序、安裝成功／失敗／執行檔不存在、安裝失敗會擋住 REVIEW 自動完成、專屬 venv 的建立與重複使用、`_resolve_against_venv` 的 Windows 解析修正、`execute_test_command` 端到端驗證 venv 真的生效。偵測邏輯是純函式測試；安裝成功/失敗路徑用可控的假指令測試（不會真的呼叫網路上的 pip／npm）；venv 建立與 PATH 解析則是真實建立虛擬環境測試（無需網路，只用 `ensurepip` 內附的 wheel），避免測試依賴網路又不失去端到端真實性。

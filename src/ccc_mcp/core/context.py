@@ -434,7 +434,20 @@ class ContextHub:
                 "semantic_review": "PM acknowledgement recorded; semantic equivalence is not provable",
             }
 
-    def commit_context_patch(self, project_id, patch_id):
+    def commit_context_patch(self, project_id, patch_id, next_dispatch=None):
+        """Commit a proposed patch.
+
+        `next_dispatch`, when given — {task_id, source_execution_id, role,
+        plan_content, adapter, fake_scenario} — atomically records the
+        `pending_dispatch` resumability pointer in the *same* SQL transaction as the
+        context commit itself. Writing them as two separate statements (as an earlier
+        version of this did) left a real window: a crash between "context committed"
+        and "pointer recorded" would leave the source execution's report already
+        consumed with no pointer to resume from, and no way to re-propose the same
+        patch (it's no longer "awaiting PM refinement"). Making them one transaction
+        means either both land or neither does — a crash before this returns always
+        leaves the original execution exactly where it was, safe to retry from scratch.
+        """
         with self.lock(project_id):
             row = self.store.one(
                 "SELECT * FROM context_patches WHERE id=? AND project_id=?",
@@ -488,6 +501,7 @@ class ContextHub:
                             and execution["status"] == "SUCCEEDED"
                             and not report.get("needs_revision")
                             and not self._host_test_failed(project_id, execution["task_id"])
+                            and not self._host_tests_unverified(project_id, execution["task_id"])
                             and not any(
                                 result.task_id == execution["task_id"]
                                 for result in snapshot.agent_results
@@ -506,6 +520,39 @@ class ContextHub:
                                     "PM committed the successful review into shared Context",
                                 )
                                 completed.append(execution["task_id"])
+                if next_dispatch is not None:
+                    conn.execute(
+                        "INSERT INTO pending_dispatch VALUES(?,?,?,?,?,?,?,?,?,?) "
+                        "ON CONFLICT(project_id,task_id) DO UPDATE SET "
+                        "source_execution_id=excluded.source_execution_id,role=excluded.role,"
+                        "context_version=excluded.context_version,"
+                        "plan_content=excluded.plan_content,adapter=excluded.adapter,"
+                        "fake_scenario=excluded.fake_scenario,"
+                        "committed_json=excluded.committed_json,created=excluded.created",
+                        (
+                            project_id,
+                            next_dispatch["task_id"],
+                            next_dispatch["source_execution_id"],
+                            next_dispatch["role"],
+                            version,
+                            next_dispatch.get("plan_content"),
+                            next_dispatch["adapter"],
+                            next_dispatch["fake_scenario"],
+                            # next_action is intentionally omitted here (it needs a
+                            # settings read best done outside this transaction, see
+                            # below) — a resumed/retried call recomputes it fresh from
+                            # `completed`, which is otherwise identical to what the
+                            # fresh-commit return value carries.
+                            canonical(
+                                {
+                                    "context_version": version,
+                                    "metadata": metadata,
+                                    "completed_workstreams": completed,
+                                }
+                            ),
+                            now(),
+                        ),
+                    )
             # SQLite is authoritative. A crash here leaves a recoverable Markdown projection.
             self.sync_documents(project_id)
             language = self.get_project_settings(project_id)["language"]
