@@ -879,6 +879,23 @@ def task_recover(ctx: typer.Context):
 
 
 @task_app.command(
+    "resume",
+    help=t(
+        "接續上一輪因派工失敗而中斷的 advance_project（task status 顯示 "
+        "waiting_on=DISPATCH_RETRY_NEEDED 時使用）；不需重新提供 ContextPatch，也不會重複提交 "
+        "Context 或重複派工。例如：ccc-mcp task resume TASK-0001",
+        "Resume a previous round's advance_project that was interrupted before the next "
+        "role was confirmed dispatched (use when task status shows "
+        "waiting_on=DISPATCH_RETRY_NEEDED); needs no ContextPatch and never re-submits "
+        "Context or double-dispatches. Example: ccc-mcp task resume TASK-0001",
+    ),
+)
+def task_resume(ctx: typer.Context, task_id: Annotated[str | None, typer.Argument()] = None):
+    service, project = bridge(ctx), project_id(ctx)
+    output(service.resume_pending_dispatch(project, task_id or service.project_workstream_task(project)))
+
+
+@task_app.command(
     "accept",
     hidden=True,
     help=t(

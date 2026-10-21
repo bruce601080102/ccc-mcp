@@ -32,8 +32,14 @@ def terminate_tree(process):
     process.wait(timeout=10)
 
 
-def run_process(argv, cwd, prompt, timeout, cancelled):
-    """Bound output, redact diagnostics, and stop the complete subprocess tree."""
+def run_process(argv, cwd, prompt, timeout, cancelled, env=None):
+    """Bound output, redact diagnostics, and stop the complete subprocess tree.
+
+    `env=None` (the default) inherits this process's environment unchanged, exactly as
+    before `env` existed. Pass an explicit mapping (e.g. with a venv's Scripts/bin
+    directory prepended to PATH) to run argv against a different interpreter/toolchain
+    without needing an absolute executable path in argv itself.
+    """
     start = time.monotonic()
     # Agent output can contain secrets. Spool only to anonymous temporary handles.
     with (
@@ -50,6 +56,7 @@ def run_process(argv, cwd, prompt, timeout, cancelled):
             stdout=out,
             stderr=err,
             shell=False,
+            env=env,
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
             start_new_session=os.name != "nt",
         )

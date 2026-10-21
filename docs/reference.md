@@ -139,7 +139,7 @@ ccc-mcp context import-patch examples/context-patch.json
 
 `semantic_review_ack` 是 PM 審閱語意差異的紀錄，不是人工實作核准。雜湊只能證明引用的檔案版本，無法證明 AI 的技術解讀正確。架構陳述必須有來源；程式碼/文件內容或原始報告漂移時會提示重新驗證。尚未完成的需求、驗收與限制由結構化 invariant 及不可被 Patch 修改的任務資料保護。現有 invariant 不能直接刪除或改寫；完成狀態另記錄於 Task/Decision，避免摘要無聲移除規則。
 
-兩個 Patch 都基於版本 1 時，第一個提交得到版本 2，第二個會收到 Version Conflict。方案及人工核准亦綁定 Context 版本；Context 更新後必須重新提出目前版本的方案並核准。token_budget 是提示，超出時標示 budget_exceeded，絕不截斷必要資訊。
+兩個 Patch 都基於版本 1 時，第一個提交得到版本 2，第二個會收到 Version Conflict。方案及人工核准亦綁定 Context 版本；Context 更新後必須重新提出目前版本的方案並核准。`token_budget` 超出時會先嘗試裁剪（Skill 全文優先、再壓縮歷史紀錄），絕不截斷必要資訊（`invariants`、來源引用、當前任務報告／核准方案）；裁完仍超出時，`dispatch_agent` 會直接拒絕派工而不是送出超額內容，唯讀查詢工具（`build_handoff`／`get_context`）則仍回傳裁剪後內容供檢查。細節見 [reliability.md](reliability.md)。
 
 ## 新 ChatGPT Session 恢復
 

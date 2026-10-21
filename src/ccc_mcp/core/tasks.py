@@ -70,21 +70,49 @@ TRANSITIONS = {
     "REJECTED": set(),
 }
 
+def _dependency_summary(test_result):
+    """Terse view of the auto dependency-install step for brief.tests (full stdout/
+    stderr stays in the raw TEST-RESULT.md artifact, same pattern as test output)."""
+    deps = (test_result or {}).get("dependencies")
+    if not deps:
+        return None
+    return {
+        "detected": deps.get("detected", False),
+        "manifest": deps.get("manifest"),
+        "installed": deps.get("installed"),
+        "venv": bool(deps.get("venv_scripts_dir")),
+        "reason": deps.get("reason"),
+    }
+
+
 # Terminal task states map onto themselves; every other combination is derived
 # below from signals that already exist (task state, the latest execution's
 # status, whether it's an orphaned worker, and unrefined-report backlog).
 _TERMINAL_WAITING_ON = {"COMPLETED", "CANCELLED", "REJECTED"}
 
 
-def waiting_on(state, execution_status, orphaned, needs_pm_refinement):
+def waiting_on(
+    state, execution_status, orphaned, needs_pm_refinement, pending_dispatch=False,
+    chatgpt_handoff=False,
+):
     """Collapse task.state + execution status + context_sync into one readable value.
 
-    A PM or operator otherwise has to cross-reference four separate fields to answer
+    A PM or operator otherwise has to cross-reference several separate fields to answer
     "what is this task waiting on right now"; this is purely derived, read-only, and
     never stored, so it cannot drift from the state machine it summarizes.
     """
     if state in _TERMINAL_WAITING_ON:
         return state
+    if pending_dispatch:
+        # Context was already committed for the prior round, but the next role was
+        # never confirmed dispatched (crash, worker spawn failure, stale version).
+        # Nothing is running; an operator/PM action (resume_pending_dispatch) is needed.
+        return "DISPATCH_RETRY_NEEDED"
+    if chatgpt_handoff:
+        # The *current* interactive ChatGPT PM conversation must act as the role
+        # (write_task_file/submit_agent_report) — distinct from an autonomous CLI
+        # worker that just needs waiting for.
+        return "CHATGPT_HANDOFF_PENDING"
     if execution_status in {"QUEUED", "RUNNING"}:
         return "BLOCKED" if orphaned else "AGENT_RUNNING"
     if needs_pm_refinement:
@@ -296,21 +324,146 @@ class TaskHub:
         )
         return {"workstream": task, "sa_execution": dispatch}
 
+    def _pending_dispatch_row(self, project_id, task_id):
+        return self.store.one(
+            "SELECT * FROM pending_dispatch WHERE project_id=? AND task_id=?",
+            (project_id, task_id),
+        )
+
+    def _clear_pending_dispatch(self, project_id, task_id):
+        self.store.execute(
+            "DELETE FROM pending_dispatch WHERE project_id=? AND task_id=?",
+            (project_id, task_id),
+        )
+
+    def _dispatch_or_adopt(self, project_id, task_id, role, instruction, adapter, fake_scenario):
+        """Dispatch `role`, unless a resume attempt already dispatched it and only
+        crashed before the pointer could be cleared — then adopt that live execution
+        instead of dispatching (and losing track of) a second one."""
+        live = self.store.one(
+            "SELECT id,role FROM agent_executions WHERE project_id=? AND task_id=? "
+            "AND status IN ('QUEUED','RUNNING') ORDER BY created DESC LIMIT 1",
+            (project_id, task_id),
+        )
+        if live and live["role"] == role:
+            return {"task_id": task_id, "execution_id": live["id"], "status": "QUEUED", "adopted": True}
+        return self.dispatch_agent(
+            project_id,
+            task_id,
+            "auto",
+            role,
+            self.latest(project_id)["version"],
+            instruction,
+            adapter=adapter,
+            fake_scenario=fake_scenario,
+        )
+
+    def _review_outcome(self, project_id, task_id):
+        """Whether a just-committed REVIEW round is actually done, from durable facts only
+        (task state after commit_context_patch, and host-recorded test evidence) — never
+        from re-reading the Agent's own report a second time. commit_context_patch already
+        refuses to mark the task COMPLETED when host test evidence shows a failure even if
+        REVIEW itself reported no revision needed (see _host_test_failed); this mirrors
+        that same decision so the two can never disagree."""
+        if self.task(project_id, task_id)["state"] == "COMPLETED":
+            return "completed", None
+        if self._host_test_failed(project_id, task_id):
+            return (
+                "revise",
+                "Host-executed tests failed after REVIEW even though REVIEW reported no "
+                "revision needed; host test evidence takes precedence. Fix the implementation "
+                "so the configured test command passes.",
+            )
+        return "revise", "Revise the implementation to address the latest REVIEW findings"
+
+    def _complete_pending_dispatch(self, project_id, pointer):
+        """Perform (or retry) exactly the dispatch decision recorded by a prior advance_project
+        call. Idempotent: propose_plan no-ops on an identical retry, dispatch_agent's active-
+        execution guard rejects a true double-dispatch, and the pointer is cleared only once
+        dispatch_agent has actually succeeded — so a failure here always leaves the pointer in
+        place for the next resume attempt, never a silently lost or duplicated step."""
+        task_id, role = pointer["task_id"], pointer["role"]
+        adapter, fake_scenario = pointer["adapter"], pointer["fake_scenario"]
+        result = {}
+        if role == "SA":
+            result["plan"] = self.propose_plan(
+                project_id, task_id, "PLAN-A", pointer["plan_content"], pointer["context_version"]
+            )
+            result["next_execution"] = self._dispatch_or_adopt(
+                project_id, task_id, "SD/RD", pointer["plan_content"], adapter, fake_scenario
+            )
+        elif role in {"SD", "RD", "SD/RD"}:
+            test_evidence = self.run_configured_test_command(project_id, task_id)
+            result["test_evidence"] = test_evidence
+            instruction = "Review the implementation and verify reported evidence. " + (
+                f"Host-executed test command {'passed' if test_evidence.get('passed') else 'FAILED'}: "
+                f"{' '.join(test_evidence['command'])}."
+                if test_evidence["executed_by_host"]
+                else f"No host test evidence was collected ({test_evidence['reason']}); "
+                "treat completion as unverified."
+            )
+            result["next_execution"] = self._dispatch_or_adopt(
+                project_id, task_id, "REVIEW", instruction, adapter, fake_scenario
+            )
+        else:
+            outcome, instruction = self._review_outcome(project_id, task_id)
+            if outcome == "completed":
+                result["completed_workstreams"] = json.loads(pointer["committed_json"]).get(
+                    "completed_workstreams", []
+                )
+            else:
+                result["next_execution"] = self._dispatch_or_adopt(
+                    project_id, task_id, "SD/RD", instruction, adapter, fake_scenario
+                )
+        # Only reached once every step above has actually succeeded.
+        self._clear_pending_dispatch(project_id, task_id)
+        return result
+
     def advance_project(
         self, project_id, patch, plan_content=None, adapter="real", fake_scenario="success"
     ):
-        """Commit PM refinement and dispatch the next configured role automatically."""
+        """Commit PM refinement and dispatch the next configured role automatically.
+
+        Resumable by construction: once propose_context_patch/commit_context_patch succeed,
+        the decision of what to dispatch next is durably recorded in `pending_dispatch`
+        *before* attempting that dispatch. If the dispatch step itself fails or this process
+        never returns (crash, worker spawn failure, transient VersionConflict), calling
+        advance_project again with the exact same patch — or resume_pending_dispatch with no
+        patch at all — resumes from that pointer instead of re-deciding, re-committing the
+        Context, or losing the original execution's record.
+        """
         if self.get_project_access(project_id)["mode"] != "read-write":
             raise PermissionDenied("Project authorization is required")
         source_ids = patch.get("source_execution_ids", [])
         if len(source_ids) != 1:
             raise BridgeError("Advancement requires exactly one completed Agent execution")
+        source_execution_id = source_ids[0]
         execution = self.store.one(
             "SELECT id,task_id,role,status FROM agent_executions WHERE project_id=? AND id=?",
-            (project_id, source_ids[0]),
+            (project_id, source_execution_id),
         )
         if not execution or execution["status"] != "SUCCEEDED":
             raise BridgeError("Source Agent execution has not succeeded")
+        task_id = execution["task_id"]
+
+        pointer = self._pending_dispatch_row(project_id, task_id)
+        if pointer:
+            if pointer["source_execution_id"] != source_execution_id:
+                raise BridgeError(
+                    "Task has an unresolved pending dispatch from a previous round "
+                    f"(source execution {pointer['source_execution_id']}); call "
+                    "resume_pending_dispatch to finish it before advancing a different execution"
+                )
+            result = {
+                "context": json.loads(pointer["committed_json"]),
+                "source_execution_id": source_execution_id,
+                "resumed": True,
+                "note": "Context was already committed in a previous attempt; only the "
+                "pending next dispatch was retried. The patch argument was ignored.",
+            }
+            result.update(self._complete_pending_dispatch(project_id, pointer))
+            return result
+
         pending = {
             item["execution_id"]
             for item in self.context_sync_status(project_id)["pending_reports"]
@@ -327,63 +480,50 @@ class TaskHub:
         proposed = self.propose_context_patch(project_id, patch)
         committed = self.commit_context_patch(project_id, proposed["patch_id"])
         result = {"context": committed, "source_execution_id": execution["id"]}
-        if role == "SA":
-            plan = self.propose_plan(
-                project_id,
-                execution["task_id"],
-                "PLAN-A",
-                plan_content,
-                committed["context_version"],
-            )
-            result["plan"] = plan
-            result["next_execution"] = self.dispatch_agent(
-                project_id,
-                execution["task_id"],
-                "auto",
-                "SD/RD",
-                self.latest(project_id)["version"],
-                plan_content,
-                adapter=adapter,
-                fake_scenario=fake_scenario,
-            )
-        elif role in {"SD", "RD", "SD/RD"}:
-            test_evidence = self.run_configured_test_command(project_id, execution["task_id"])
-            result["test_evidence"] = test_evidence
-            instruction = "Review the implementation and verify reported evidence. " + (
-                f"Host-executed test command {'passed' if test_evidence.get('passed') else 'FAILED'}: "
-                f"{' '.join(test_evidence['command'])}."
-                if test_evidence["executed_by_host"]
-                else f"No host test evidence was collected ({test_evidence['reason']}); "
-                "treat completion as unverified."
-            )
-            result["next_execution"] = self.dispatch_agent(
-                project_id,
-                execution["task_id"],
-                "auto",
-                "REVIEW",
-                self.latest(project_id)["version"],
-                instruction,
-                adapter=adapter,
-                fake_scenario=fake_scenario,
-            )
-        else:
-            saved = self.store.one(
-                "SELECT result FROM agent_executions WHERE id=?", (execution["id"],)
-            )
-            report = (json.loads(saved["result"]).get("report") or {}) if saved["result"] else {}
-            if report.get("needs_revision"):
-                result["next_execution"] = self.dispatch_agent(
+
+        with self.lock(project_id):
+            self.store.execute(
+                "INSERT INTO pending_dispatch VALUES(?,?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(project_id,task_id) DO UPDATE SET "
+                "source_execution_id=excluded.source_execution_id,role=excluded.role,"
+                "context_version=excluded.context_version,plan_content=excluded.plan_content,"
+                "adapter=excluded.adapter,fake_scenario=excluded.fake_scenario,"
+                "committed_json=excluded.committed_json,created=excluded.created",
+                (
                     project_id,
-                    execution["task_id"],
-                    "auto",
-                    "SD/RD",
-                    self.latest(project_id)["version"],
-                    "Revise the implementation to address the latest REVIEW findings",
-                    adapter=adapter,
-                    fake_scenario=fake_scenario,
-                )
-            else:
-                result["completed_workstreams"] = committed["completed_workstreams"]
+                    task_id,
+                    source_execution_id,
+                    role,
+                    committed["context_version"],
+                    plan_content,
+                    adapter,
+                    fake_scenario,
+                    canonical(committed),
+                    now(),
+                ),
+            )
+        pointer = self._pending_dispatch_row(project_id, task_id)
+        result.update(self._complete_pending_dispatch(project_id, pointer))
+        return result
+
+    def resume_pending_dispatch(self, project_id, task_id=None):
+        """Explicitly retry the last interrupted advance_project dispatch without needing
+        the original ContextPatch again — everything required was already captured durably
+        in `pending_dispatch` at commit time."""
+        task_id = task_id or self.project_workstream_task(project_id)
+        pointer = self._pending_dispatch_row(project_id, task_id)
+        if not pointer:
+            return {
+                "resumed": False,
+                "task_id": task_id,
+                "reason": "No pending dispatch is recorded for this task; nothing to resume.",
+            }
+        result = {
+            "context": json.loads(pointer["committed_json"]),
+            "source_execution_id": pointer["source_execution_id"],
+            "resumed": True,
+        }
+        result.update(self._complete_pending_dispatch(project_id, pointer))
         return result
 
     def propose_plan(self, project_id, task_id, plan_id, content, context_version):
@@ -391,10 +531,34 @@ class TaskHub:
         reject_secrets(content)
         if not content.strip():
             raise BridgeError("Plan content is required")
+        plan_hash = digest(content.encode())
         with self.lock(project_id):
             self.task(project_id, task_id)
             if context_version != self.latest(project_id)["version"]:
                 raise VersionConflict("Plan context is stale")
+            access = self.get_project_access(project_id)
+            latest_plan = self.store.one(
+                "SELECT version,context_version,hash FROM plans WHERE project_id=? AND "
+                "task_id=? AND id=? ORDER BY version DESC LIMIT 1",
+                (project_id, task_id, plan_id),
+            )
+            if (
+                access["mode"] == "read-write"
+                and latest_plan
+                and latest_plan["context_version"] == context_version
+                and latest_plan["hash"] == plan_hash
+            ):
+                # A retry (e.g. resuming an interrupted advance_project dispatch) must
+                # not create a duplicate plan version/approval/decision for the exact
+                # same content and context — only the dispatch step needs retrying.
+                return {
+                    "plan_id": plan_id,
+                    "version": latest_plan["version"],
+                    "hash": plan_hash,
+                    "context_version": context_version,
+                    "status": "APPROVED",
+                    "idempotent": True,
+                }
             with self.store.transaction() as conn:
                 if conn.execute(
                     "SELECT 1 FROM agent_executions WHERE project_id=? AND task_id=? "
@@ -410,7 +574,6 @@ class TaskHub:
                     "WHERE project_id=? AND task_id=? AND id=?",
                     (project_id, task_id, plan_id),
                 ).fetchone()[0]
-                plan_hash = digest(content.encode())
                 conn.execute(
                     "INSERT INTO plans VALUES(?,?,?,?,?,?,?,?)",
                     (
@@ -830,6 +993,15 @@ class TaskHub:
             package = self.build_handoff(
                 project_id, role, task_id, project_settings.get("context_token_budget")
             )
+            if package["budget_exceeded"]:
+                raise BridgeError(
+                    "Context handoff exceeds context_token_budget "
+                    f"({package['estimated_tokens']} estimated tokens > "
+                    f"{package['token_budget']}) even after trimming Skill text and "
+                    "compressible history; raise context_token_budget, remove Skills, or "
+                    "reduce decision/report history, then dispatch again. Already omitted: "
+                    f"{package['budget_omitted']}"
+                )
             package["target_agent"] = agent
             package["agent_settings"] = settings
             package["workspace_mode"] = workspace_mode
@@ -965,6 +1137,12 @@ class TaskHub:
                 }
             needs_pm_refinement = self.context_sync_status(project_id)["needs_pm_refinement"]
             test_result = self._latest_test_result(project_id, task_id)
+            pointer = self._pending_dispatch_row(project_id, task_id)
+            chatgpt_handoff = bool(
+                latest
+                and latest["status"] == "RUNNING"
+                and json.loads(latest["options"] or "{}").get("interactive")
+            )
             task["brief"] = {
                 "task_id": task_id,
                 "state": task["state"],
@@ -973,6 +1151,8 @@ class TaskHub:
                     latest["status"] if latest else None,
                     bool(progress and progress["orphaned"]),
                     needs_pm_refinement,
+                    pending_dispatch=bool(pointer),
+                    chatgpt_handoff=chatgpt_handoff,
                 ),
                 "agent": latest["agent"] if latest else None,
                 "role": latest["role"] if latest else None,
@@ -983,6 +1163,7 @@ class TaskHub:
                 "needs_revision": report.get("needs_revision"),
                 "next_action": report.get("next_action"),
                 "error": latest["error"] if latest else None,
+                "failure_kind": saved.get("failure_kind"),
                 "context_version": self.latest(project_id)["version"],
                 "context_refinement_pending": needs_pm_refinement,
                 "tests": {
@@ -992,21 +1173,42 @@ class TaskHub:
                         (test_result or {}).get("reason")
                         or "No test evidence recorded for this task yet"
                     ),
+                    "dependencies": _dependency_summary(test_result),
+                    "no_tests_collected": bool((test_result or {}).get("no_tests_collected")),
                 },
                 "fallback": saved.get("fallback"),
+                "pending_dispatch": (
+                    {
+                        "source_execution_id": pointer["source_execution_id"],
+                        "role_completed": pointer["role"],
+                        "context_version": pointer["context_version"],
+                        "created": pointer["created"],
+                        "next_action": "Context for this round was already committed; call "
+                        "resume_pending_dispatch to finish dispatching the next role "
+                        "without resubmitting a ContextPatch.",
+                    }
+                    if pointer
+                    else None
+                ),
             }
             return task
 
     def run_configured_test_command(self, project_id, task_id):
-        """Auto-run the project's configured test command before REVIEW is dispatched.
+        """Auto-run the project's test command before REVIEW is dispatched.
 
         `project authorize` (the durable read-write grant) is the consent for this — the
         same grant that already lets the configured Agent workflow modify project files
-        without per-step approval now also covers running this fixed, project-chosen
-        command. Without both a continuous authorization and a configured command, no
-        command runs and the reason is recorded instead of silently skipping.
+        without per-step approval also covers running a fixed, host-executed test
+        command. Without continuous authorization, no command runs and the reason is
+        recorded instead of silently skipping. A project that never explicitly configured
+        `test_command` still gets `DEFAULT_TEST_COMMAND` (`python -m pytest -q`) run
+        automatically — `config test-command` only needs to be set to use something else.
         """
-        from ..adapters.test_runner import execute_test_command, record_test_evidence
+        from ..adapters.test_runner import (
+            DEFAULT_TEST_COMMAND,
+            execute_test_command,
+            record_test_evidence,
+        )
 
         access = self.get_project_access(project_id)
         if access["mode"] != "read-write":
@@ -1019,18 +1221,7 @@ class TaskHub:
                     "reason": "Project is not continuously authorized; run project authorize",
                 },
             )
-        command = self.get_project_settings(project_id).get("test_command")
-        if not command:
-            return record_test_evidence(
-                self,
-                project_id,
-                task_id,
-                {
-                    "executed_by_host": False,
-                    "reason": "No project-level test_command configured "
-                    "(ccc-mcp config test-command)",
-                },
-            )
+        command = self.get_project_settings(project_id).get("test_command") or DEFAULT_TEST_COMMAND
         return execute_test_command(self, project_id, task_id, command, access["identity"])
 
     def _latest_test_result(self, project_id, task_id):
@@ -1048,6 +1239,14 @@ class TaskHub:
             return json.loads(row["content"].rsplit("\n\n", 1)[-1])
         except ValueError:
             return None
+
+    def _host_test_failed(self, project_id, task_id):
+        """True only when the host actually ran the configured test command and it
+        failed — never for "not executed"/unverified, which is a separate signal
+        (brief.tests.executed_by_host). Used to stop a REVIEW Agent's own self-report
+        from overriding host-observed evidence (see commit_context_patch/_review_outcome)."""
+        result = self._latest_test_result(project_id, task_id)
+        return bool(result and result.get("executed_by_host") and result.get("passed") is False)
 
     def get_task_result(self, project_id, task_id):
         with self.lock(project_id):
@@ -1113,6 +1312,10 @@ class TaskHub:
                 )
                 self._transition(
                     conn, project_id, task_id, "CANCELLED", "PM cancelled task; stop requested"
+                )
+                conn.execute(
+                    "DELETE FROM pending_dispatch WHERE project_id=? AND task_id=?",
+                    (project_id, task_id),
                 )
             self.sync_documents(project_id)
         for row in self.store.all(

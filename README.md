@@ -127,17 +127,19 @@ ccc-mcp --project hello-demo config prompt REVIEW
 ccc-mcp --project hello-demo config context-budget 150000
 ```
 
-超過預算時，ccc-mcp 會壓縮已驗證的歷史清單（決策、待整理的 Agent 結果），只保留最近幾筆並改成一行摘要＋指向 `get_context_history` 的指標；**不會**裁切 `invariants`、來源引用或當前任務的實際報告／核准方案。回傳的 `budget_omitted` 會列出到底省略了什麼，不會讓你猜。清除設定用 `ccc-mcp --project hello-demo config context-budget --clear`。
+超過預算時，ccc-mcp 會先清空 Skill 全文（保留 id/name/description，它是選用指引不是約束），不夠才壓縮已驗證的歷史清單（決策、待整理的 Agent 結果），只保留最近幾筆並改成一行摘要＋指向 `get_context_history` 的指標；**不會**裁切 `invariants`、來源引用或當前任務的實際報告／核准方案。回傳的 `budget_omitted` 會列出到底省略了什麼，不會讓你猜。**裁完仍然超過預算時，派工會直接被拒絕**（不會送出超額內容），請調高預算或移除部分 Skill 後再派工一次。清除設定用 `ccc-mcp --project hello-demo config context-budget --clear`。細節見 [docs/reliability.md](docs/reliability.md#4-context-預算超過就拒絕派工不悄悄截斷)。
 
 ## 想要「完成」前自動跑測試？
 
-`project authorize`（第 2 步的持續授權）同時代表你同意：在每輪實作完成、REVIEW 派工之前，ccc-mcp 會在本機自動執行你設定的固定測試命令，並把結果存成 `TEST-RESULT.md` 證據。預設**不會**自動跑任何測試，直到你明確設定：
+`project authorize`（第 2 步的持續授權）同時代表你同意：在每輪實作完成、REVIEW 派工之前，ccc-mcp 會在本機自動執行測試命令，並把結果存成 `TEST-RESULT.md` 證據。沒有另外設定時，預設跑 `python -m pytest -q`；想換成別的命令：
 
 ```bash
 ccc-mcp --project hello-demo config test-command "pytest -q"
 ```
 
-沒有設定、或專案尚未 `project authorize` 時，`ccc-mcp --project hello-demo task status` 的 `brief.tests` 會明確顯示 `executed_by_host: false` 及原因，不會被當成「已測試通過」；這與 Agent 本身不執行測試是同一件事——測試永遠是本機實際執行、有紀錄的動作，不是聊天回覆自稱的結果。想清除設定，用 `ccc-mcp --project hello-demo config test-command --clear`。這跟手動的 `ccc-mcp task test`（一次性、需要在終端機確認）是兩條獨立路徑，互不影響。
+專案尚未 `project authorize` 時，`ccc-mcp --project hello-demo task status` 的 `brief.tests` 會明確顯示 `executed_by_host: false` 及原因，不會被當成「已測試通過」；這與 Agent 本身不執行測試是同一件事——測試永遠是本機實際執行、有紀錄的動作，不是聊天回覆自稱的結果。專案還沒寫任何測試時，預設的 `pytest -q` 會回報 `brief.tests.no_tests_collected: true`（pytest 的「沒收集到測試」退出碼，不是失敗，也不會擋住完成）。想換回自訂命令，用 `ccc-mcp --project hello-demo config test-command --clear` 清掉後再重新設定；這跟手動的 `ccc-mcp task test`（一次性、需要在終端機確認）是兩條獨立路徑，互不影響。
+
+執行測試前，ccc-mcp 會先自動偵測任務目錄下的 `requirements.txt`／`pyproject.toml`／`package.json`，偵測到就先執行對應的安裝指令（`pip install`／`npm ci`／`npm install`），省去「程式改完才發現沒裝套件、測試一路 import error」的手動排錯。**Python 專案會自動建立並重複使用一個專屬 venv**（`~/.ccc-mcp/venvs/<project_id>/`），所以 `test_command` 設成單純的 `"pytest -q"` 就夠，不需要自己找出並填入某個 venv 的絕對路徑。**這代表 `project authorize` 的同意範圍也涵蓋執行 Agent 寫入的套件清單**——套件安裝過程（`setup.py`、npm `postinstall`）本身可以執行任意程式碼，等同於信任這些清單內容，請在審閱 Diff 時一併檢查相依套件異動。安裝結果（成功與否）會記錄在 `brief.tests.dependencies`；安裝失敗視為真正的測試失敗（不是「未執行」），REVIEW 無法覆蓋這個結果。細節見 [docs/reliability.md](docs/reliability.md#5-自動偵測並安裝相依套件)。
 
 ## 安裝本機 Skill（選用）
 
@@ -190,6 +192,17 @@ ccc-mcp 自己這一層能強制、也已經用回歸測試釘住的，是 proje
 
 幫 Claude 角色補上等價的 OS 級隔離（例如 Windows Sandbox 或容器化 worktree）是已知的後續項目，需要另外決定要用哪種機制，不在目前版本範圍內。
 
+## 接力中斷了？不用重提需求，接著跑就好
+
+某一輪派工如果失敗（worker 沒啟動、暫時性錯誤），`task status` 的 `brief.waiting_on` 會顯示 `DISPATCH_RETRY_NEEDED`，代表上一輪的 Context 其實已經提交成功，只是下一個角色還沒派出去。這時候：
+
+```bash
+ccc-mcp --project hello-demo task status   # 確認 waiting_on == DISPATCH_RETRY_NEEDED
+ccc-mcp --project hello-demo task resume   # 不需要重新提供需求或 ContextPatch，直接接著派工
+```
+
+主機實際測試失敗時，就算 REVIEW 自己回報「不用修改」，任務也不會被標成完成，會自動退回 SD/RD；額度不足轉交 ChatGPT 和單純的 CLI 錯誤（未安裝、未登入）也分開記錄在 `brief.failure_kind`，後者不會誤觸發轉交。完整機制見 [docs/reliability.md](docs/reliability.md)。
+
 ## 整合驗收：不要只信模型自己說「測試通過」
 
 本機已裝好、登入 Codex 與 Claude CLI 時，有一支會真的跑完整條流程（Codex SA → Claude SD/RD → 主機執行測試 → Codex REVIEW）、且只憑後端狀態判斷有沒有完成的腳本：
@@ -204,7 +217,7 @@ ccc-mcp 自己這一層能強制、也已經用回歸測試釘住的，是 proje
 
 - `Project ID is already registered`：用 `ccc-mcp project list` 找到原專案並沿用，不要刪資料重建。
 - ChatGPT 顯示 `Unknown tool`：先執行 `ccc-mcp update --dev`（原始碼目錄）或 `ccc-mcp update`（一般安裝）更新，重啟 `connect`，在 ChatGPT 重新整理連線工具並開新對話；不要把舊工具清單當成目前版本。
-- 派工失敗：用 `task status`、`task usage` 查失敗階段；缺少 CLI 或登入失敗不會自動冒充成 ChatGPT 執行。
+- 派工失敗：用 `task status`、`task usage` 查失敗階段；`brief.failure_kind` 會標示是 `QUOTA_EXHAUSTED`（額度不足，可能已轉交）還是 `ERROR`（缺少 CLI、未登入等一般錯誤，不會自動冒充成 ChatGPT 執行）。若 `waiting_on` 顯示 `DISPATCH_RETRY_NEEDED`，代表 Context 已提交但下一角色沒派成功，執行 `task resume` 即可續跑，不需要重提需求。
 - `--quota-fallback` 設定沒有自動切換：這個設定是每個專案各自獨立的，確認指令裡的 `--project` 是你實際在用的那個專案。
 - 任務狀態一直是 `RUNNING`：真正派工是背景執行，寫程式可能要花數分鐘；`task status` 會顯示已耗時與逾時上限，沒超過就是正常，過一下子再查一次即可。
 - 任務狀態變成 `BLOCKED`：不是失敗。系統只能自動驗證 `.py` 檔的註解有沒有被誤刪，改到其他類型的檔案會保守地停下來等你看過，照常讓下一個角色接手即可。

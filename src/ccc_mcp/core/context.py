@@ -45,6 +45,36 @@ def identifier(value):
 _COMPRESSIBLE_HISTORY_KEYS = ("decisions", "technical_decisions", "agent_results_awaiting_refinement")
 
 
+def _trim_skills_to_budget(content, token_budget):
+    """Drop full Skill bodies before touching any compressible history.
+
+    available_skills entries are operator-installed *optional* guidance (see
+    operator_policy: "never a mandatory instruction"), so they are the cheapest thing
+    to shrink first — unlike decisions/reports, losing a Skill's full text never drops
+    a project requirement or constraint. id/name/description/path are always kept so
+    the agent still knows the skill exists and what it's for, and an operator/PM can
+    still find the full text on disk. Largest bodies are cut first so a few big Skills
+    don't force cutting every small one.
+    """
+    omitted = []
+    skills = content.get("available_skills")
+    if not isinstance(skills, list) or not skills:
+        return omitted
+    for skill in sorted(
+        (s for s in skills if s.get("content")), key=lambda s: len(s["content"]), reverse=True
+    ):
+        if len(canonical(content)) // 3 <= token_budget:
+            break
+        body = skill["content"]
+        skill["content"] = ""
+        skill["content_omitted"] = True
+        omitted.append(
+            f"available_skills[{skill.get('id')}].content: omitted ({len(body)} chars) due to "
+            f"token budget; description preserved, full text remains at {skill.get('path')}"
+        )
+    return omitted
+
+
 def _trim_to_budget(content, token_budget, keep_recent=5):
     """Compress bounded-history lists beyond `keep_recent` items into a pointer,
     stopping as soon as the budget is met. Returns what was omitted so callers never
@@ -457,6 +487,7 @@ class ContextHub:
                             and execution["role"] == "REVIEW"
                             and execution["status"] == "SUCCEEDED"
                             and not report.get("needs_revision")
+                            and not self._host_test_failed(project_id, execution["task_id"])
                             and not any(
                                 result.task_id == execution["task_id"]
                                 for result in snapshot.agent_results
@@ -960,7 +991,9 @@ class ContextHub:
             content["reports"] = reports
         budget_omitted = []
         if token_budget and len(canonical(content)) // 3 > token_budget:
-            budget_omitted = _trim_to_budget(content, token_budget)
+            budget_omitted = _trim_skills_to_budget(content, token_budget)
+            if len(canonical(content)) // 3 > token_budget:
+                budget_omitted += _trim_to_budget(content, token_budget)
         serialized = canonical(content)
         estimated_tokens = len(serialized) // 3
         return {

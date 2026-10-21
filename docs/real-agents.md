@@ -144,3 +144,5 @@ SA 完成後，PM 用 propose_plan 提出具體方案，request_approval 建立 
 ```
 
 這支測試預設**不會**跟著一般 `pytest` 一起跑（見 `pyproject.toml` 的 `addopts`），因為它需要本機已經裝好、登入兩個 CLI，且會真的花費額度／時間；CI 與一般開發迴圈用的是 `FakeAgentAdapter` 版本（`tests/test_test_evidence.py`、`tests/test_continuous_workflow.py`），行為邏輯相同，只是不呼叫真正的 CLI。
+
+接力中斷後如何恢復、主機測試證據為何能覆蓋 REVIEW 自述、額度不足與一般 CLI 錯誤怎麼分開記錄，見 [reliability.md](reliability.md)；這些機制目前只在 Fake 測試驗證過，尚未在真實 CLI 環境下另外實測。

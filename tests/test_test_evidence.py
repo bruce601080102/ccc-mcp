@@ -2,6 +2,15 @@ import sys
 
 from ccc_mcp.worker import run_execution
 
+NO_MANIFEST_DETECTED = {
+    "detected": False,
+    "manifest": None,
+    "installed": None,
+    "venv": False,
+    "reason": "No recognized dependency manifest "
+    "(requirements.txt/pyproject.toml/package.json) found",
+}
+
 
 def pending_patch(bridge, execution_id):
     result = next(
@@ -62,23 +71,31 @@ def test_advance_project_auto_runs_configured_test_command_before_review(bridge,
     assert result["test_evidence"]["executed_by_host"] is True
     assert result["test_evidence"]["passed"] is True
     brief = bridge.get_task_status("demo", task_id)["brief"]
-    assert brief["tests"] == {"executed_by_host": True, "passed": True, "reason": None}
+    assert brief["tests"] == {
+        "executed_by_host": True, "passed": True, "reason": None,
+        "dependencies": NO_MANIFEST_DETECTED, "no_tests_collected": False,
+    }
 
 
-def test_advance_project_records_unverified_without_test_command(bridge, human):
-    """Regression (P0-2): completion must never be silently treated as verified when
-    no test command is configured — the reason has to be explicit, not just absent."""
+def test_advance_project_defaults_to_pytest_when_no_test_command_is_configured(bridge, human):
+    """Regression: `project authorize` alone is now consent enough to auto-run
+    DEFAULT_TEST_COMMAND (`python -m pytest -q`) even without an explicit
+    `config test-command` — but a repo with no tests yet (pytest exit code 5) must be
+    reported as "no tests collected", not as a generic failure and not as "not
+    executed"."""
     task_id, implementation_id = advance_to_implementation(bridge)
 
     result = bridge.advance_project(
         "demo", pending_patch(bridge, implementation_id), adapter="fake"
     )
 
-    assert result["test_evidence"]["executed_by_host"] is False
-    assert "test_command" in result["test_evidence"]["reason"]
+    assert result["test_evidence"]["executed_by_host"] is True
+    assert result["test_evidence"]["passed"] is True
+    assert result["test_evidence"]["no_tests_collected"] is True
     brief = bridge.get_task_status("demo", task_id)["brief"]
-    assert brief["tests"]["executed_by_host"] is False
-    assert "No project-level test_command configured" in brief["tests"]["reason"]
+    assert brief["tests"]["executed_by_host"] is True
+    assert brief["tests"]["passed"] is True
+    assert brief["tests"]["no_tests_collected"] is True
 
 
 def test_advance_project_surfaces_a_failing_test_command(bridge, human):
@@ -94,7 +111,10 @@ def test_advance_project_surfaces_a_failing_test_command(bridge, human):
     assert result["test_evidence"]["executed_by_host"] is True
     assert result["test_evidence"]["passed"] is False
     brief = bridge.get_task_status("demo", task_id)["brief"]
-    assert brief["tests"] == {"executed_by_host": True, "passed": False, "reason": None}
+    assert brief["tests"] == {
+        "executed_by_host": True, "passed": False, "reason": None,
+        "dependencies": NO_MANIFEST_DETECTED, "no_tests_collected": False,
+    }
 
 
 def test_full_pipeline_reaches_completed_with_host_verified_test_evidence(bridge, human):
@@ -124,6 +144,7 @@ def test_full_pipeline_reaches_completed_with_host_verified_test_evidence(bridge
     assert bridge.get_task_status("demo", task_id)["brief"]["waiting_on"] == "COMPLETED"
     assert bridge.get_task_status("demo", task_id)["brief"]["tests"] == {
         "executed_by_host": True, "passed": True, "reason": None,
+        "dependencies": NO_MANIFEST_DETECTED, "no_tests_collected": False,
     }
     assert bridge.context_sync_status("demo")["pending_reports"] == []
 

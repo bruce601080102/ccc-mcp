@@ -101,6 +101,13 @@ CREATE TRIGGER IF NOT EXISTS context_no_update BEFORE UPDATE ON context_versions
  BEGIN SELECT RAISE(ABORT, 'Context history is immutable'); END;
 CREATE TRIGGER IF NOT EXISTS context_no_delete BEFORE DELETE ON context_versions
  BEGIN SELECT RAISE(ABORT, 'Context history is immutable'); END;
+CREATE TABLE IF NOT EXISTS pending_dispatch (
+ project_id TEXT NOT NULL REFERENCES projects(id), task_id TEXT NOT NULL,
+ source_execution_id TEXT NOT NULL, role TEXT NOT NULL,
+ context_version INTEGER NOT NULL, plan_content TEXT,
+ adapter TEXT NOT NULL, fake_scenario TEXT NOT NULL,
+ committed_json TEXT NOT NULL, created TEXT NOT NULL,
+ PRIMARY KEY(project_id, task_id));
 """
 
 
