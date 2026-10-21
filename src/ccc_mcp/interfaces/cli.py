@@ -148,7 +148,15 @@ def init(
     output(bridge(ctx).register_project(path, id, purpose, language))
 
 
-@project_app.command("add")
+@project_app.command(
+    "add",
+    help=t(
+        "把一個已存在、尚未註冊的資料夾登記為專案（不會建立新目錄）。"
+        "例如：ccc-mcp project add ./my-folder --id my-project",
+        "Register an existing, not-yet-registered folder as a project (never creates a "
+        "new directory). Example: ccc-mcp project add ./my-folder --id my-project",
+    ),
+)
 def project_add(
     ctx: typer.Context,
     path: Annotated[Path, typer.Argument()] = Path("."),
@@ -159,7 +167,13 @@ def project_add(
     output(bridge(ctx).register_project(path, id, purpose, language))
 
 
-@project_app.command("list")
+@project_app.command(
+    "list",
+    help=t(
+        "列出所有已註冊專案的 ID 與實際路徑。",
+        "List every registered project's ID and actual path.",
+    ),
+)
 def project_list(ctx: typer.Context):
     output(bridge(ctx).list_projects())
 
@@ -194,7 +208,14 @@ def project_create(ctx: typer.Context, id: str, path: Path | None = None, langua
     output(bridge(ctx).create_project(id, path, language))
 
 
-@config_app.command("show")
+@config_app.command(
+    "show",
+    help=t(
+        "顯示目前專案設定的生效值（角色/語言/test_command 等）；唯讀，不會派工。",
+        "Show the current project's effective settings (roles/language/test_command, "
+        "etc.); read-only, never dispatches anything.",
+    ),
+)
 def config_show(ctx: typer.Context):
     output(bridge(ctx).public_project_settings(project_id(ctx)))
 
@@ -254,26 +275,91 @@ def config_context_budget(
     output(bridge(ctx).configure_context_token_budget(project_id(ctx), budget))
 
 
-@config_app.command("role")
+@config_app.command(
+    "role",
+    help=t(
+        "指定一個角色使用哪個 provider，並可選擇 model/effort/額度備援；每次呼叫會整組取代"
+        "該角色設定，要保留的選項請一起填。"
+        "例如：ccc-mcp config role REVIEW codex --effort high --quota-fallback chatgpt",
+        "Assign a role to a provider, with optional model/effort/quota fallback; each call "
+        "replaces the whole role config, so include every option you want to keep. "
+        "Example: ccc-mcp config role REVIEW codex --effort high --quota-fallback chatgpt",
+    ),
+)
 def config_role(
     ctx: typer.Context,
-    role: str,
-    provider: str,
-    model: str | None = None,
-    effort: str | None = None,
-    quota_fallback: str | None = None,
+    role: Annotated[
+        str, typer.Argument(help=t("SA、SD、RD、SD/RD 或 REVIEW", "SA, SD, RD, SD/RD, or REVIEW"))
+    ],
+    provider: Annotated[
+        str, typer.Argument(help=t("codex、claude 或 chatgpt", "codex, claude, or chatgpt"))
+    ],
+    model: Annotated[
+        str | None,
+        typer.Option(
+            help=t(
+                "該 provider 的模型 ID；留空用其 CLI 自身的預設值",
+                "A model ID for the provider; omit to use that CLI's own default",
+            )
+        ),
+    ] = None,
+    effort: Annotated[
+        str | None,
+        typer.Option(
+            help=t(
+                "該 provider 支援的 effort 等級；用 config providers 查詢清單",
+                "An effort level this provider supports; see config providers for the list",
+            )
+        ),
+    ] = None,
+    quota_fallback: Annotated[
+        str | None,
+        typer.Option(
+            help=t(
+                "主要 provider 額度不足時備援的 provider；只在額度不足時生效",
+                "A fallback provider used only when the primary provider is out of quota",
+            )
+        ),
+    ] = None,
 ):
     output(
         bridge(ctx).configure_role(project_id(ctx), role, provider, model, effort, quota_fallback)
     )
 
 
-@config_app.command("read-root")
-def config_read_root(ctx: typer.Context, name: str, path: Path):
+@config_app.command(
+    "read-root",
+    help=t(
+        "新增一個唯讀掛載點：Agent 可讀但不能寫入 path 底下的內容，用自訂 name 當識別碼。"
+        "例如：ccc-mcp config read-root shared-lib /Users/you/Code/shared-lib",
+        "Add a read-only mount: Agents can read, but never write, everything under path, "
+        "identified by name. Example: ccc-mcp config read-root shared-lib /Users/you/Code/shared-lib",
+    ),
+)
+def config_read_root(
+    ctx: typer.Context,
+    name: Annotated[
+        str,
+        typer.Argument(
+            help=t("識別碼；不可用 project 或 worktree", "An identifier; not project or worktree")
+        ),
+    ],
+    path: Annotated[
+        Path, typer.Argument(help=t("要開放讀取的本機目錄", "The local directory to expose read-only"))
+    ],
+):
     output(bridge(ctx).configure_read_root(project_id(ctx), name, path))
 
 
-@config_app.command("worktree-dir")
+@config_app.command(
+    "worktree-dir",
+    help=t(
+        "設定實作角色（SD/RD）worktree 的存放位置；已有任務 worktree 時不可更改。"
+        "例如：ccc-mcp config worktree-dir /Users/you/ccc-mcp-worktrees",
+        "Set where implementation-role (SD/RD) worktrees are created; cannot be changed "
+        "once a task already has one. Example: ccc-mcp config worktree-dir /Users/you/ccc-mcp-worktrees",
+    ),
+)
 def config_worktree_dir(ctx: typer.Context, path: Path):
     output(bridge(ctx).configure_worktree_dir(project_id(ctx), path))
 
@@ -389,34 +475,78 @@ def workspace_approve(ctx: typer.Context, edit_id: str):
     output(bridge(ctx).approve_workspace_edit_local(project_id(ctx), edit_id))
 
 
-@config_app.command("revoke-root")
+@config_app.command(
+    "revoke-root",
+    help=t(
+        "移除一個用 config read-root 新增的唯讀掛載點。例如：ccc-mcp config revoke-root shared-lib",
+        "Remove a read-only mount added with config read-root. Example: ccc-mcp config revoke-root shared-lib",
+    ),
+)
 def config_revoke_root(ctx: typer.Context, name: str):
     output(bridge(ctx).revoke_read_root(project_id(ctx), name))
 
 
-@config_app.command("projects-dir")
+@config_app.command(
+    "projects-dir",
+    help=t(
+        "設定全域預設：之後 project create（未帶 --path 時）新建專案的所在目錄；不影響既有專案。"
+        "例如：ccc-mcp config projects-dir /Users/you/Code/ccc-mcp-projects",
+        "Set the global default directory where project create (without --path) makes "
+        "new projects; existing projects are never moved. Example: "
+        "ccc-mcp config projects-dir /Users/you/Code/ccc-mcp-projects",
+    ),
+)
 def config_projects_dir(ctx: typer.Context, path: Path):
     output(bridge(ctx).set_projects_directory(path))
 
 
-@context_app.command("show")
+@context_app.command(
+    "show",
+    help=t(
+        "讀取角色專屬的 Context 套件（含版本號與來源佐證）；預設角色 PM。"
+        "例如：ccc-mcp context show --role REVIEW --task TASK-0001",
+        "Read a role-specific Context package (with a pinned version and provenance); "
+        "defaults to role PM. Example: ccc-mcp context show --role REVIEW --task TASK-0001",
+    ),
+)
 def context_show(
     ctx: typer.Context, role: str = "PM", task: str | None = None, scope: str | None = None
 ):
     output(bridge(ctx).get_context(project_id(ctx), role, task, scope))
 
 
-@context_app.command("collect")
+@context_app.command(
+    "collect",
+    help=t(
+        "彙整尚待 PM 整理進共用 Context 的事件、報告與決策。",
+        "Collect events, reports and decisions still awaiting PM compaction into the shared Context.",
+    ),
+)
 def context_collect(ctx: typer.Context):
     output(bridge(ctx).collect_context_updates(project_id(ctx)))
 
 
-@context_app.command("history")
+@context_app.command(
+    "history",
+    help=t(
+        "分頁讀取不可變的歷史 Context 版本與差異。例如：ccc-mcp context history --offset 0 --limit 20",
+        "Read immutable historical Context versions and diffs, paginated. Example: "
+        "ccc-mcp context history --offset 0 --limit 20",
+    ),
+)
 def context_history(ctx: typer.Context, offset: int = 0, limit: int = 20):
     output(bridge(ctx).get_context_history(project_id(ctx), offset, limit))
 
 
-@context_app.command("export")
+@context_app.command(
+    "export",
+    help=t(
+        "把目前共用 Context 輸出成 Markdown；不給 --out 就印到終端機。"
+        "例如：ccc-mcp context export --out CONTEXT.md",
+        "Export the current shared Context as Markdown; without --out it prints to the "
+        "terminal. Example: ccc-mcp context export --out CONTEXT.md",
+    ),
+)
 def context_export(ctx: typer.Context, out: Path | None = None):
     text = bridge(ctx).export_context(project_id(ctx))
     if out:
@@ -426,7 +556,13 @@ def context_export(ctx: typer.Context, out: Path | None = None):
         typer.echo(text)
 
 
-@context_app.command("validate")
+@context_app.command(
+    "validate",
+    help=t(
+        "檢查來源雜湊、投影漂移與證據完整性；驗證失敗會以非零結束碼退出。",
+        "Check source hashes, projection drift and evidence integrity; exits non-zero on failure.",
+    ),
+)
 def context_validate(ctx: typer.Context):
     result = bridge(ctx).validate_context(project_id(ctx))
     output(result)
@@ -445,13 +581,29 @@ def context_recover(ctx: typer.Context):
     output(bridge(ctx).recover_context(project_id(ctx)))
 
 
-@context_app.command("propose")
+@context_app.command(
+    "propose",
+    help=t(
+        "從本機 JSON 檔案提交一份 ContextPatch 提案，回傳可審閱的差異（尚未真的套用）。"
+        "例如：ccc-mcp context propose patch.json",
+        "Submit a ContextPatch proposal from a local JSON file and return a reviewable "
+        "diff (not yet applied). Example: ccc-mcp context propose patch.json",
+    ),
+)
 def context_propose(ctx: typer.Context, patch: Path):
     parsed = ContextPatch.model_validate_json(patch.read_text(encoding="utf-8-sig"))
     output(bridge(ctx).propose_context_patch(project_id(ctx), parsed.model_dump()))
 
 
-@context_app.command("commit")
+@context_app.command(
+    "commit",
+    help=t(
+        "重新驗證版本後，原子性套用一個已提案的 Patch（用 context propose 回傳的 patch_id）。"
+        "例如：ccc-mcp context commit PATCH-xxxx",
+        "Revalidate the version and atomically apply a proposed Patch (the patch_id from "
+        "context propose). Example: ccc-mcp context commit PATCH-xxxx",
+    ),
+)
 def context_commit(ctx: typer.Context, patch_id: str):
     output(bridge(ctx).commit_context_patch(project_id(ctx), patch_id))
 
@@ -469,12 +621,28 @@ def context_import(ctx: typer.Context, patch: Path):
     output(bridge(ctx).commit_context_patch(project_id(ctx), proposed["patch_id"]))
 
 
-@context_app.command("source")
+@context_app.command(
+    "source",
+    help=t(
+        "查詢一個專案相對路徑目前的 SHA256，作為佐證引用。例如：ccc-mcp context source src/app.py",
+        "Get the current SHA256 of one project-relative path, for use as a provenance "
+        "reference. Example: ccc-mcp context source src/app.py",
+    ),
+)
 def context_source(ctx: typer.Context, path: str):
     output(bridge(ctx).source_ref(project_id(ctx), path))
 
 
-@task_app.command("create")
+@task_app.command(
+    "create",
+    help=t(
+        "建立/重用工作串的需求與驗收條件（低階操作；一般請在 ChatGPT 直接提需求，它會自動呼叫）。"
+        '例如：ccc-mcp task create "新增 hello.py" --acceptance "執行輸出 Hello, World!"',
+        "Create/reuse the workstream's requirement and acceptance criteria (a low-level "
+        "operation; normally just ask ChatGPT, which calls this automatically). Example: "
+        'ccc-mcp task create "Add hello.py" --acceptance "Running it prints Hello, World!"',
+    ),
+)
 def task_create(
     ctx: typer.Context,
     requirement: str,
@@ -483,12 +651,26 @@ def task_create(
     output(bridge(ctx).create_task(project_id(ctx), requirement, acceptance))
 
 
-@task_app.command("list")
+@task_app.command(
+    "list",
+    help=t(
+        "列出此專案所有任務的 ID 與狀態。",
+        "List every task's ID and state for this project.",
+    ),
+)
 def task_list(ctx: typer.Context):
     output(bridge(ctx).list_tasks(project_id(ctx)))
 
 
-@task_app.command("status")
+@task_app.command(
+    "status",
+    help=t(
+        "查看任務目前狀態（進度、是否卡住、等待誰）；省略 task_id 時用目前的工作串任務。"
+        "例如：ccc-mcp task status TASK-0001",
+        "View a task's current state (progress, whether it's stuck, who it's waiting on); "
+        "omitting task_id uses the current workstream task. Example: ccc-mcp task status TASK-0001",
+    ),
+)
 def task_status(ctx: typer.Context, task_id: Annotated[str | None, typer.Argument()] = None):
     service, project = bridge(ctx), project_id(ctx)
     output(service.get_task_status(project, task_id or service.project_workstream_task(project)))
@@ -587,7 +769,16 @@ def task_usage(ctx: typer.Context, task_id: Annotated[str | None, typer.Argument
     output(service.get_task_usage(project, task_id or service.project_workstream_task(project)))
 
 
-@task_app.command("dispatch")
+@task_app.command(
+    "dispatch",
+    help=t(
+        "低階操作：手動派工單一角色，不經過 advance_project 的自動流程。"
+        '例如：ccc-mcp task dispatch TASK-0001 codex SA "分析需求" --version 3',
+        "Low-level operation: manually dispatch a single role, bypassing advance_project's "
+        'automatic flow. Example: ccc-mcp task dispatch TASK-0001 codex SA "Analyze the '
+        'requirement" --version 3',
+    ),
+)
 def task_dispatch(
     ctx: typer.Context,
     task_id: str,
@@ -616,7 +807,16 @@ def task_dispatch(
     )
 
 
-@task_app.command("plan")
+@task_app.command(
+    "plan",
+    help=t(
+        "提交一份計畫檔案給 PM 評估／核准；非持續授權專案仍需人工在終端機核准。"
+        "例如：ccc-mcp task plan TASK-0001 PLAN-A plan.md --version 3",
+        "Submit a plan file for PM evaluation/approval; without continuous authorization "
+        "it still needs local terminal approval. Example: ccc-mcp task plan TASK-0001 "
+        "PLAN-A plan.md --version 3",
+    ),
+)
 def task_plan(
     ctx: typer.Context, task_id: str, plan: str, file: Path, version: Annotated[int, typer.Option()]
 ):
@@ -627,29 +827,66 @@ def task_plan(
     )
 
 
-@task_app.command("request-approval", hidden=True)
+@task_app.command(
+    "request-approval",
+    hidden=True,
+    help=t(
+        "舊版流程：要求使用者核准一份計畫；持續授權專案的計畫已自動核准，不需要這個指令。",
+        "Legacy flow: request user approval for a plan; continuously authorized projects "
+        "already auto-approve plans and don't need this.",
+    ),
+)
 def request_approval(ctx: typer.Context, task_id: str, plan: str):
     output(bridge(ctx).request_approval(project_id(ctx), task_id, plan))
 
 
-@task_app.command("review")
+@task_app.command(
+    "review",
+    help=t(
+        "派出一次獨立的 Codex 唯讀審查（REVIEW 角色）。例如：ccc-mcp task review TASK-0001 --version 5",
+        "Dispatch one independent, read-only Codex review (REVIEW role). Example: "
+        "ccc-mcp task review TASK-0001 --version 5",
+    ),
+)
 def task_review(
     ctx: typer.Context, task_id: str, version: Annotated[int, typer.Option()], adapter: str = "real"
 ):
     output(bridge(ctx).review_changes(project_id(ctx), task_id, version, adapter=adapter))
 
 
-@task_app.command("cancel")
+@task_app.command(
+    "cancel",
+    help=t(
+        "取消任務並要求終止其 worker 的 Agent 行程樹。例如：ccc-mcp task cancel TASK-0001",
+        "Cancel a task and request termination of its worker's agent process tree. "
+        "Example: ccc-mcp task cancel TASK-0001",
+    ),
+)
 def task_cancel(ctx: typer.Context, task_id: str):
     output(bridge(ctx).cancel_task(project_id(ctx), task_id))
 
 
-@task_app.command("recover")
+@task_app.command(
+    "recover",
+    help=t(
+        "清除卡在 QUEUED/RUNNING、但沒有存活 worker 持有鎖的執行（worker 已崩潰或未啟動）。",
+        "Clear executions stuck QUEUED/RUNNING with no live worker holding their lock "
+        "(the worker crashed or never started).",
+    ),
+)
 def task_recover(ctx: typer.Context):
     output(bridge(ctx).recover_workers(project_id(ctx)))
 
 
-@task_app.command("accept", hidden=True)
+@task_app.command(
+    "accept",
+    hidden=True,
+    help=t(
+        "舊版流程：人工驗收已完成任務；持續授權專案會自動完成驗收，不需要這個指令。",
+        "Legacy flow: manually accept a finished task; continuously authorized projects "
+        "complete acceptance automatically and don't need this.",
+    ),
+)
 def task_accept(ctx: typer.Context, task_id: str):
     output(bridge(ctx).accept_local(project_id(ctx), task_id))
 
@@ -668,12 +905,26 @@ def task_test(ctx: typer.Context, task_id: str):
     output(run_tests_local(bridge(ctx), project_id(ctx), task_id))
 
 
-@app.command(hidden=True)
+@app.command(
+    hidden=True,
+    help=t(
+        "核准一個待核准計畫（需終端機確認）；持續授權專案不需要這個指令。",
+        "Approve a plan awaiting approval (needs terminal confirmation); not needed for "
+        "continuously authorized projects.",
+    ),
+)
 def approve(ctx: typer.Context, task_id: str, plan: Annotated[str, typer.Option()]):
     output(bridge(ctx).approve_local(project_id(ctx), task_id, plan))
 
 
-@app.command()
+@app.command(
+    help=t(
+        "拒絕一個待核准計畫，並記錄原因（需終端機確認）。"
+        '例如：ccc-mcp reject TASK-0001 --plan PLAN-A --reason "範圍太大"',
+        "Reject a plan awaiting approval and record the reason (needs terminal "
+        'confirmation). Example: ccc-mcp reject TASK-0001 --plan PLAN-A --reason "Scope too large"',
+    )
+)
 def reject(
     ctx: typer.Context,
     task_id: str,
@@ -683,7 +934,15 @@ def reject(
     output(bridge(ctx).reject_local(project_id(ctx), task_id, plan, reason))
 
 
-@task_app.command("decision")
+@task_app.command(
+    "decision",
+    help=t(
+        "本機記錄一筆決策（需終端機確認），寫入共用 Context 的稽核紀錄。"
+        '例如：ccc-mcp task decision TASK-0001 "採用方案 A" "風險最低"',
+        "Record a decision locally (needs terminal confirmation) into the shared "
+        'Context\'s audit trail. Example: ccc-mcp task decision TASK-0001 "Go with option A" "Lowest risk"',
+    ),
+)
 def task_decision(
     ctx: typer.Context,
     task_id: str,
