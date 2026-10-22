@@ -88,13 +88,31 @@ ccc-mcp --project demo-app task handoff
 ccc-mcp --project demo-app task preflight
 ```
 
-唯讀，**不會安裝任何套件、不會真的跑測試、不會動 Git**，只檢查三件事，避免派工之後才發現環境壞掉、白跑一輪：
+唯讀，**不會安裝任何套件、不會真的跑測試、不會動 Git、不會派工或提交任何東西**。輸出是一組分級 `checks[]`（每項是 `ready`／`warning`／`blocker`，非 `ready` 一定附 `remediation` 說明怎麼修）加上 `summary` 統計，`ready` 欄位代表「目前有沒有任何 `blocker`」：
 
-- `test_command`：目前設定（或預設 `pytest -q`）的第一個指令是否真的能在 PATH 或檔案系統上找到；找不到會在 `reason` 寫清楚。
-- `dependencies`：對應工作區（`workspace_mode: project` 時是原專案目錄，`worktree` 模式且還沒建立 worktree 時退而檢查原專案目錄）是否偵測到 `requirements.txt`／`pyproject.toml`／`package.json` 等 manifest，以及（Python 專案）專屬 venv 是否已經建立好；沒裝不會被當成錯誤，只是提醒。
-- `git`：是否已有初始 commit（`initial_commit`）；`workspace_mode: project` 且已有 commit 時，額外檢查目前工作目錄是否乾淨（`clean`），不乾淨會在 `reason` 說明哪裡卡住。
+```jsonc
+{
+  "ready": false,
+  "summary": {"ready": 7, "warning": 1, "blocker": 1},
+  "checks": [
+    {"id": "authorization", "status": "blocker", "message": "...", "remediation": "ccc-mcp project authorize demo-app"}
+  ]
+}
+```
 
-`ready` 欄位是以上三者（test_command 可解析、有初始 commit、且 project 模式下沒有未提交變更）綜合出來的唯讀判斷，只是給你先看一眼，不會阻止你真的去派工。
+頂層還有 `next_role`（這個 task 下一步 `advance_project` 實際會派的角色——`SA`／`SD/RD`／`REVIEW` 其中一個，任務已結束則是 `null`）與 `profile`（目前五個角色對照出來是 `chatgpt-only`／`best-model`／`custom`，跟 `config show` 的 `profile` 欄位算法一致）。
+
+目前涵蓋的檢查項目：
+
+- `authorization`：專案是否已持續授權（唯讀專案仍可用人工核准流程，但這裡標 `blocker`，因為自動 Agent 工作流確實需要它）。
+- `role_SA`／`role_SD`／`role_RD`／`role_SD/RD`／`role_REVIEW`：全部五個角色目前設定的 provider 是否真的可用——`chatgpt` 一定視為可用（連線狀態另外看 `tunnel`），本機 CLI（`codex`／`claude`）則實際檢查有沒有安裝。**只有 `next_role` 那一個沒裝才是 `blocker`**；其他四個角色這個 task 現在還用不到，沒裝只算 `warning`，訊息裡會標明是不是「此 task 下一角色」。
+- `tunnel`：只有某個角色設定了 `chatgpt` 才會出現，且只能確認 tunnel-client **有沒有下載過**，無法確認現在是否連線中。`next_role` 需要 ChatGPT 而 tunnel-client 根本沒裝是 `blocker`（ChatGPT 完全連不上 ccc-mcp）；只有其他角色需要是 `warning`；就算已經裝了，因為沒辦法確認當下是否真的連線中，也只能停在 `warning`，不會回報 `ready`。
+- `live_execution`／`pending_dispatch`／`pm_refinement`／`pending_approval`：目前是否有執行中的 Agent、上一輪中斷未確認的派工、尚未整理的 PM 報告、等待本機核准的方案——這幾項都是「現在真的派工下去會被拒絕」或接近的狀態，持續授權下 `pm_refinement` 是 `blocker`，其餘依情況是 `blocker` 或 `warning`。
+- `skills`：已安裝的 Skill 檔案能不能正常讀取。
+- `context_budget`：只有設定了 `context_token_budget` 才會出現；直接呼叫 `build_handoff` 檢查 PM 套件是否超額，跟真正派工用的是同一套計算，不會自己另外估算。
+- `test_command`、`dependencies`、`git`：原本就有的三項環境檢查（同時也保留在回應最上層的 `test_command`／`dependencies`／`git` 欄位，向後相容）。`test_command` 現在多了 `cwd`／`cwd_exists`，明確標示測試指令實際（或一旦建立 worktree）會在哪個目錄執行，不用自己對照 `dependencies.checked_path` 猜。
+
+每一項的判定都是當下現查，不會留下或依賴另一份可能漂移的狀態；問完之後環境是什麼樣，派工時大致就是什麼樣（當然，實際派工之間若有人改了設定或裝了 CLI，結果可能不同——這本來就是「現在看一眼」，不是鎖定的保證）。
 
 ## ChatGPT 需要固定 Prompt 嗎？
 

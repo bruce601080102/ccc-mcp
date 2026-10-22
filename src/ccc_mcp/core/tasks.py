@@ -10,6 +10,7 @@ from pathlib import Path
 
 import portalocker
 
+from ..adapters.agents.base import native_executable
 from ..adapters.storage import artifact, decode, event, now
 from ..infra.config import metadata_name, setting_env
 from ..infra.errors import BridgeError, PermissionDenied, VersionConflict
@@ -1435,24 +1436,334 @@ class TaskHub:
             )
         return result
 
+    _NEXT_AUTO_ROLE = {"SA": "SD/RD", "SD": "REVIEW", "RD": "REVIEW", "SD/RD": "REVIEW", "REVIEW": "SD/RD"}
+
+    def _next_auto_role(self, project_id, task_id):
+        """Best-effort guess at which of SA/SD-RD/REVIEW `advance_project` would
+        actually dispatch next for this task — the same SA->SD/RD->REVIEW->SD/RD
+        transition `_complete_pending_dispatch` already encodes, read from the
+        latest execution's role (or a currently QUEUED/RUNNING one) rather than a
+        new tracked field. `None` once the task is in a terminal state."""
+        task = self.task(project_id, task_id)
+        if task["state"] in {"COMPLETED", "CANCELLED", "REJECTED"}:
+            return None
+        pointer = self._pending_dispatch_row(project_id, task_id)
+        if pointer:
+            return self._NEXT_AUTO_ROLE.get(pointer["role"], "SA")
+        latest = self.store.one(
+            "SELECT role,status FROM agent_executions WHERE project_id=? AND task_id=? "
+            "ORDER BY created DESC LIMIT 1",
+            (project_id, task_id),
+        )
+        if not latest:
+            return "SA"
+        if latest["status"] in {"QUEUED", "RUNNING"}:
+            return latest["role"]
+        return self._NEXT_AUTO_ROLE.get(latest["role"], "SA")
+
     def task_preflight(self, project_id, task_id=None):
-        """Read-only, pre-dispatch environment check: can the configured test command
-        even be found, is a dependency manifest already installed, and is the
-        Git/worktree state actually usable — the three things that otherwise only
-        surface as a wasted round *after* a real dispatch. Never installs anything,
-        never runs the test command, never touches Git; every signal is derived fresh
-        from project settings and the filesystem, not a separately tracked state.
+        """Read-only, pre-dispatch environment/workflow check, reported as a leveled
+        `checks[]` list (each "ready", "warning", or "blocker", with a `remediation`
+        for anything short of "ready") plus a `summary` count and an overall `ready`
+        bool (true iff there is no "blocker"). Covers: project authorization; every
+        role's (SA/SD/RD/SD-RD/REVIEW) configured provider actually being available
+        (native CLI installed, or ChatGPT needing a connected Tunnel) — severity is
+        "blocker" only for `next_role` (the one `advance_project` would actually
+        dispatch next, see _next_auto_role), "warning" for the others, since an
+        unavailable provider on a role this task isn't about to use yet is not an
+        immediate blocker; the derived `profile` label (chatgpt-only/best-model/
+        custom); task workflow state that would make a fresh dispatch fail right now
+        (an already-live execution, an unresolved pending_dispatch, unrefined PM
+        reports, a pending local approval); installed Skills being readable and the
+        PM Context package fitting any configured token budget; and the original
+        three environment checks (test command resolvable — including where it
+        would actually run, dependency manifest/venv, Git/worktree cleanliness) —
+        kept under their original top-level keys too, unchanged, for backward
+        compatibility. Every signal is derived fresh from already-durable project/
+        task state and the filesystem; nothing here is a new tracked state, and
+        nothing is installed, executed, or committed as a side effect of asking.
         """
+        from ..adapters.skills import available_skills
         from ..adapters.test_runner import (
             DEFAULT_TEST_COMMAND,
             detect_dependency_setup,
             venv_python_path,
         )
+        from ..adapters.tunnel_client import tunnel_client_path
+        from .configuration import ROLES, detect_profile
 
         task_id = task_id or self.project_workstream_task(project_id)
         self.task(project_id, task_id)
         settings = self.get_project_settings(project_id)
+        access = self.get_project_access(project_id)
         root = Path(self.project(project_id)["root"])
+        language = settings["language"]
+        zh = language in {"zh-TW", "ch"}
+        next_role = self._next_auto_role(project_id, task_id)
+        checks = []
+
+        # 1. Project authorization — the automatic Agent workflow requires it; the
+        # manual plan-approval workflow does not, but almost everything else this
+        # preflight checks (PM-refinement gating, host auto-test-run) only applies
+        # once a project is continuously authorized.
+        if access["mode"] == "read-write":
+            checks.append(
+                {
+                    "id": "authorization",
+                    "status": "ready",
+                    "message": "專案已持續授權，自動 Agent 工作流可用。"
+                    if zh
+                    else "Project is continuously authorized; the automatic Agent workflow is usable.",
+                    "remediation": None,
+                }
+            )
+        else:
+            checks.append(
+                {
+                    "id": "authorization",
+                    "status": "blocker",
+                    "message": "專案目前唯讀，自動 Agent 工作流需要先授權。"
+                    if zh
+                    else "Project is read-only; the automatic Agent workflow requires authorization.",
+                    "remediation": f"ccc-mcp project authorize {project_id}",
+                }
+            )
+
+        # 2. Every role's configured provider must actually be usable: a native CLI
+        # that's installed, or ChatGPT (checked via Tunnel below) — never guessed
+        # from what the project's defaults happen to say. Only `next_role` (what
+        # advance_project would actually dispatch next for *this* task) blocks on
+        # an unavailable provider; the other four roles only warn, since this task
+        # isn't about to use them yet. A terminal task has no next role, so there is
+        # nothing left to check here at all.
+        chatgpt_next = False
+        chatgpt_other_roles = []
+        for role in ROLES if next_role is not None else ():
+            provider = self.resolve_agent_settings(project_id, role)["provider"]
+            is_next = role == next_role
+            if provider == "chatgpt":
+                if is_next:
+                    chatgpt_next = True
+                else:
+                    chatgpt_other_roles.append(role)
+                checks.append(
+                    {
+                        "id": f"role_{role}",
+                        "status": "ready",
+                        "message": (f"{role} 設定為 ChatGPT（互動式）{'（此 task 下一角色）' if is_next else ''}。")
+                        if zh
+                        else f"{role} is configured for interactive ChatGPT"
+                        f"{' (next role for this task)' if is_next else ''}.",
+                        "remediation": None,
+                    }
+                )
+                continue
+            try:
+                native_executable(provider)
+                checks.append(
+                    {
+                        "id": f"role_{role}",
+                        "status": "ready",
+                        "message": (f"{role} 設定為 {provider}，且本機已安裝{'（此 task 下一角色）' if is_next else ''}。")
+                        if zh
+                        else f"{role} is configured for {provider}, and it is installed"
+                        f"{' (next role for this task)' if is_next else ''}.",
+                        "remediation": None,
+                    }
+                )
+            except BridgeError:
+                if zh:
+                    suffix = "（此 task 下一角色，會直接擋住派工）" if is_next else "（此 task 尚未輪到這個角色）"
+                    message = f"{role} 設定為 {provider}，但本機沒有安裝{suffix}。"
+                else:
+                    suffix = (
+                        " (the next role for this task — this blocks dispatch)"
+                        if is_next
+                        else " (not this task's next role yet)"
+                    )
+                    message = (
+                        f"{role} is configured for {provider}, but it is not installed on "
+                        f"this machine{suffix}."
+                    )
+                checks.append(
+                    {
+                        "id": f"role_{role}",
+                        "status": "blocker" if is_next else "warning",
+                        "message": message,
+                        "remediation": f"Install {provider}, or run: ccc-mcp --project {project_id} "
+                        f"config role {role} chatgpt",
+                    }
+                )
+
+        # 3. Tunnel: only relevant when some role is ChatGPT. Missing tunnel-client
+        # is a blocker when the *next* role needs it (ChatGPT cannot reach ccc-mcp
+        # at all without it); a warning when only some other, not-yet-reached role
+        # does. Even once installed, this can only confirm the binary was
+        # downloaded, never that it is actually connected right now — so that case
+        # stays a warning too, never a false "fully ready".
+        if chatgpt_next or chatgpt_other_roles:
+            installed = tunnel_client_path(self.home).is_file()
+            if not installed and chatgpt_next:
+                checks.append(
+                    {
+                        "id": "tunnel",
+                        "status": "blocker",
+                        "message": "此 task 下一角色需要 ChatGPT，但尚未安裝 tunnel-client，ChatGPT 完全無法連上 ccc-mcp。"
+                        if zh
+                        else "This task's next role needs ChatGPT, but tunnel-client is not installed; "
+                        "ChatGPT cannot reach ccc-mcp at all yet.",
+                        "remediation": "ccc-mcp connect <tunnel_id>",
+                    }
+                )
+            elif not installed:
+                checks.append(
+                    {
+                        "id": "tunnel",
+                        "status": "warning",
+                        "message": f"{'、'.join(chatgpt_other_roles)} 需要 ChatGPT，但尚未安裝 tunnel-client。"
+                        if zh
+                        else f"{', '.join(chatgpt_other_roles)} needs ChatGPT, but tunnel-client is not "
+                        "installed yet.",
+                        "remediation": "ccc-mcp connect <tunnel_id>",
+                    }
+                )
+            else:
+                checks.append(
+                    {
+                        "id": "tunnel",
+                        "status": "warning",
+                        "message": "tunnel-client 已安裝，但無法確認目前是否連線中——已安裝不代表完全就緒。"
+                        if zh
+                        else "tunnel-client is installed, but whether it is currently connected cannot "
+                        "be confirmed — installed does not mean fully ready.",
+                        "remediation": None,
+                    }
+                )
+
+        # 4. Task workflow state that would make a fresh dispatch fail right now.
+        live = self.store.one(
+            "SELECT id,role FROM agent_executions WHERE project_id=? AND task_id=? "
+            "AND status IN ('QUEUED','RUNNING')",
+            (project_id, task_id),
+        )
+        if live:
+            checks.append(
+                {
+                    "id": "live_execution",
+                    "status": "blocker",
+                    "message": f"執行 {live['id']}（{live['role']}）目前仍在 QUEUED／RUNNING。"
+                    if zh
+                    else f"Execution {live['id']} ({live['role']}) is still QUEUED/RUNNING for this task.",
+                    "remediation": "ccc-mcp task status",
+                }
+            )
+        pointer = self._pending_dispatch_row(project_id, task_id)
+        if pointer:
+            checks.append(
+                {
+                    "id": "pending_dispatch",
+                    "status": "blocker",
+                    "message": f"上一輪已提交 Context，但 {pointer['role']} 之後的派工尚未確認完成。"
+                    if zh
+                    else f"Context was already committed for the prior round, but the dispatch "
+                    f"after {pointer['role']} was never confirmed.",
+                    "remediation": "ccc-mcp task resume",
+                }
+            )
+        sync = self.context_sync_status(project_id)
+        if sync["needs_pm_refinement"]:
+            checks.append(
+                {
+                    "id": "pm_refinement",
+                    "status": "blocker" if settings["workflow_mode"] == "agent-required" else "warning",
+                    "message": sync["workflow"]
+                    + (
+                        "（持續授權時會擋下除 SA 以外的下一次派工）"
+                        if zh and settings["workflow_mode"] == "agent-required"
+                        else " (blocks any next dispatch other than SA while continuously authorized)"
+                        if settings["workflow_mode"] == "agent-required"
+                        else ""
+                    ),
+                    "remediation": "advance_project / propose_context_patch + commit_context_patch",
+                }
+            )
+        pending_approval = next(
+            (a for a in self.get_approval_status(project_id, task_id) if a["status"] == "PENDING"),
+            None,
+        )
+        if pending_approval:
+            checks.append(
+                {
+                    "id": "pending_approval",
+                    "status": "warning",
+                    "message": f"方案 {pending_approval['plan_id']} v{pending_approval['plan_version']} 正等待本機核准。"
+                    if zh
+                    else f"Plan {pending_approval['plan_id']} v{pending_approval['plan_version']} is "
+                    "awaiting local approval.",
+                    "remediation": f"ccc-mcp --project {project_id} approve {task_id} "
+                    f"--plan {pending_approval['plan_id']}",
+                }
+            )
+
+        # 5. Installed Skills readable, and the PM Context package within budget —
+        # reuses build_handoff itself, never a parallel size estimate that could drift.
+        try:
+            skill_count = len(available_skills(self.home))
+            checks.append(
+                {
+                    "id": "skills",
+                    "status": "ready",
+                    "message": f"{skill_count} 個 Skill 可正常讀取。" if zh else f"{skill_count} Skill(s) readable.",
+                    "remediation": None,
+                }
+            )
+        except (OSError, UnicodeError) as exc:
+            checks.append(
+                {
+                    "id": "skills",
+                    "status": "warning",
+                    "message": f"無法讀取已安裝的 Skill：{exc}" if zh else f"Could not read installed Skills: {exc}",
+                    "remediation": "ccc-mcp skill list",
+                }
+            )
+        budget = settings.get("context_token_budget")
+        if budget:
+            package = self.build_handoff(project_id, "PM", task_id, budget)
+            if package["budget_exceeded"]:
+                checks.append(
+                    {
+                        "id": "context_budget",
+                        "status": "blocker",
+                        "message": f"PM Context 套件約 {package['estimated_tokens']} tokens，超過設定的 {budget}。"
+                        if zh
+                        else f"The PM context package is ~{package['estimated_tokens']} tokens, over "
+                        f"the configured budget of {budget}.",
+                        "remediation": "raise context_token_budget, remove Skills, or reduce "
+                        "decision/report history",
+                    }
+                )
+            else:
+                checks.append(
+                    {
+                        "id": "context_budget",
+                        "status": "ready",
+                        "message": "PM Context 套件在預算內。" if zh else "PM context package is within budget.",
+                        "remediation": None,
+                    }
+                )
+
+        # 6. Original three environment checks — kept under their own top-level keys
+        # too (unchanged shape), so existing callers/tests never break.
+        if settings["workspace_mode"] == "project":
+            workspace = root
+        else:
+            workspace = self.task_worktree(project_id, task_id)
+        workspace_exists = workspace.is_dir()
+        # Before the first implementation dispatch, a worktree-mode task has no
+        # worktree yet (run_configured_test_command can't run at all until one
+        # exists) — the project root is the closest available proxy for what that
+        # worktree, created from the project's own HEAD, would actually contain.
+        detection_root = workspace if workspace_exists else root
 
         command = settings.get("test_command") or DEFAULT_TEST_COMMAND
         resolved = shutil.which(command[0]) or (
@@ -1463,18 +1774,34 @@ class TaskHub:
             "configured": bool(settings.get("test_command")),
             "resolvable": bool(resolved),
             "resolved_path": resolved,
+            "cwd": str(detection_root),
+            "cwd_exists": workspace_exists,
             "reason": None if resolved else f'"{command[0]}" was not found on PATH or as a file',
         }
+        checks.append(
+            {
+                "id": "test_command",
+                "status": "ready" if resolved else "blocker",
+                "message": (
+                    (
+                        f"測試指令解析到 {resolved}，會在 {detection_root} 執行。"
+                        if workspace_exists
+                        else f"測試指令解析到 {resolved}；尚無 worktree，一旦建立會在 {detection_root} 執行。"
+                    )
+                    if zh
+                    else (
+                        f"Test command resolves to {resolved}; it runs in {detection_root}."
+                        if workspace_exists
+                        else f"Test command resolves to {resolved}; no worktree yet, it will run in "
+                        f"{detection_root} once one exists."
+                    )
+                )
+                if resolved
+                else test_command["reason"],
+                "remediation": None if resolved else "ccc-mcp config test-command \"...\"",
+            }
+        )
 
-        if settings["workspace_mode"] == "project":
-            workspace = root
-        else:
-            workspace = self.task_worktree(project_id, task_id)
-        workspace_exists = workspace.is_dir()
-        # Before the first dispatch, a worktree-mode task has no worktree yet; the
-        # worktree is created from the project's own HEAD, so its root is the closest
-        # available proxy for what manifest a freshly-created worktree would contain.
-        detection_root = workspace if workspace_exists else root
         detected = detect_dependency_setup(detection_root)
         venv_ready = None
         if detected and detected[0] in {"requirements.txt", "pyproject.toml"}:
@@ -1486,6 +1813,26 @@ class TaskHub:
             "manifest": detected[0] if detected else None,
             "venv_ready": venv_ready,
         }
+        checks.append(
+            {
+                "id": "dependencies",
+                "status": "ready" if (not detected or venv_ready) else "warning",
+                "message": (
+                    "沒有偵測到相依套件 manifest。" if zh else "No dependency manifest detected."
+                )
+                if not detected
+                else (
+                    f"偵測到 {detected[0]}，且已就緒。" if zh else f"Detected {detected[0]}, already set up."
+                )
+                if venv_ready
+                else (
+                    f"偵測到 {detected[0]}，尚未安裝；首次測試時會自動安裝。"
+                    if zh
+                    else f"Detected {detected[0]}, not installed yet; the first test run installs it."
+                ),
+                "remediation": None,
+            }
+        )
 
         git_revision = self.git_revision(root)
         clean, clean_reason = None, None
@@ -1496,14 +1843,36 @@ class TaskHub:
             except BridgeError as exc:
                 clean = False
                 clean_reason = str(exc)
-        git = {"initial_commit": git_revision != "UNBORN", "clean": clean, "reason": clean_reason}
+        git_check = {"initial_commit": git_revision != "UNBORN", "clean": clean, "reason": clean_reason}
+        if not git_check["initial_commit"]:
+            git_status, git_message, git_remediation = (
+                "blocker",
+                "尚無初始 Git commit。" if zh else "No initial Git commit yet.",
+                "git init && git commit (inside the project root)",
+            )
+        elif clean is False:
+            git_status, git_message, git_remediation = "blocker", clean_reason, "commit or stash local changes"
+        else:
+            git_status, git_message, git_remediation = (
+                "ready",
+                "Git 狀態可用。" if zh else "Git state is usable.",
+                None,
+            )
+        checks.append({"id": "git", "status": git_status, "message": git_message, "remediation": git_remediation})
 
+        summary = {"ready": 0, "warning": 0, "blocker": 0}
+        for check in checks:
+            summary[check["status"]] += 1
         return {
             "task_id": task_id,
-            "ready": bool(test_command["resolvable"] and git["initial_commit"] and clean is not False),
+            "ready": summary["blocker"] == 0,
+            "next_role": next_role,
+            "profile": detect_profile(settings["roles"]),
+            "summary": summary,
+            "checks": checks,
             "test_command": test_command,
             "dependencies": dependencies,
-            "git": git,
+            "git": git_check,
         }
 
     def run_configured_test_command(self, project_id, task_id):

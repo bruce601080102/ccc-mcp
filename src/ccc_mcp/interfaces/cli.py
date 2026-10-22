@@ -840,12 +840,19 @@ def task_handoff(ctx: typer.Context, task_id: Annotated[str | None, typer.Argume
 @task_app.command(
     "preflight",
     help=t(
-        "唯讀：派工前環境檢查——設定的 test_command 是否能找到、相依套件是否已裝、"
-        "Git／worktree 狀態是否可用。不會安裝任何東西、不會真的跑測試、不會動 Git。",
-        "Read-only pre-dispatch environment check: whether the configured "
-        "test_command can be found, whether a dependency manifest is already "
-        "installed, and whether the Git/worktree state is usable. Installs nothing, "
-        "never runs the test command, never touches Git.",
+        "唯讀：派工前整體檢查，回傳分級的 checks[]（ready/warning/blocker，附修復方式）"
+        "與 summary 統計——涵蓋授權、角色 provider 是否可用、ChatGPT 的 Tunnel、"
+        "執行中/中斷派工/PM 整理/本機核准等工作流狀態、Skills 與 Context 預算，"
+        "以及原本的 test_command／依賴／Git 三項環境檢查。不會安裝、不會真的跑測試、"
+        "不會動 Git、不會派工或提交任何東西。",
+        "Read-only, overall pre-dispatch check: a leveled checks[] list "
+        "(ready/warning/blocker, each with a remediation) plus a summary tally — "
+        "covering authorization, whether each role's provider is actually usable, "
+        "the ChatGPT Tunnel, workflow state (a live/interrupted dispatch, unrefined "
+        "PM reports, a pending local approval), Skills and the Context budget, and "
+        "the original test_command/dependency/Git environment checks. Installs "
+        "nothing, never runs the test command, never touches Git, never dispatches "
+        "or commits anything.",
     ),
 )
 def task_preflight(ctx: typer.Context, task_id: Annotated[str | None, typer.Argument()] = None):
