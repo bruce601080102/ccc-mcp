@@ -127,6 +127,13 @@ class ContextHub:
         row = self.store.one("SELECT * FROM projects WHERE id=?", (identifier(project_id),))
         if not row:
             raise BridgeError("Project is not registered; use ccc-mcp project add")
+        if self.store.one(
+            "SELECT 1 FROM project_deletions WHERE project_id=?", (project_id,)
+        ):
+            raise BridgeError(
+                "Project was permanently deregistered with `project delete`; "
+                "its ID cannot be accessed or reused"
+            )
         root = Path(row["root"])
         if not root.is_dir():
             # The directory was deleted outside ccc-mcp (e.g. a manual `rm -rf`). SQLite
@@ -226,7 +233,10 @@ class ContextHub:
         return portalocker.Lock(folder / f"{identifier(project_id)}.lock", timeout=30)
 
     def list_projects(self):
-        return self.store.all("SELECT * FROM projects ORDER BY id")
+        return self.store.all(
+            "SELECT * FROM projects WHERE id NOT IN "
+            "(SELECT project_id FROM project_deletions) ORDER BY id"
+        )
 
     def register_project(self, path, project_id=None, purpose=None, language="zh-TW"):
         if language not in {"zh-TW", "ch", "en"}:
@@ -253,11 +263,26 @@ class ContextHub:
             or re.sub(r"[^A-Za-z0-9_-]", "-", root.name).strip("-")
             or f"project-{uuid.uuid4().hex[:8]}"
         )
+        if self.store.one(
+            "SELECT 1 FROM project_deletions WHERE project_id=?", (project_id,)
+        ):
+            raise BridgeError(
+                f"'{project_id}' was permanently deregistered with `project delete`; "
+                "that ID cannot be reused. Pass a different --id."
+            )
         reject_secrets(purpose)
         safe_path(root, metadata_name(root))
         with self.lock(project_id):
             existing = self.store.one("SELECT * FROM projects WHERE root=?", (str(root),))
             if existing:
+                if self.store.one(
+                    "SELECT 1 FROM project_deletions WHERE project_id=?", (existing["id"],)
+                ):
+                    raise BridgeError(
+                        f"This directory was previously registered as "
+                        f"'{existing['id']}', which was permanently deregistered with "
+                        "`project delete`; register it under a different project ID"
+                    )
                 return existing
             if (root / metadata_name(root)).exists():
                 raise BridgeError(

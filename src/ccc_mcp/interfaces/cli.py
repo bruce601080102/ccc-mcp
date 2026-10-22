@@ -197,6 +197,20 @@ def project_revoke(ctx: typer.Context, id: str):
 
 
 @project_app.command(
+    "delete",
+    help=t(
+        "永久註銷一個 project ID：從 project list 消失，之後任何指令都會拒絕它，且不能"
+        "重新註冊；不刪除磁碟上的檔案，也不刪除歷史 Context／task／證據。無法復原。",
+        "Permanently deregister a project ID: it disappears from project list, every "
+        "later command refuses it, and the ID cannot be registered again. Never deletes "
+        "files on disk or any historical Context/task/evidence. Irreversible.",
+    ),
+)
+def project_delete(ctx: typer.Context, id: str):
+    output(bridge(ctx).deregister_project_local(id))
+
+
+@project_app.command(
     "create",
     help=t(
         "建立新專案與 Git 基準；不搬移或覆寫既有目錄。"

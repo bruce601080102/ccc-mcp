@@ -157,7 +157,7 @@ or reduce decision/report history, then dispatch again. Already omitted: [...]
 
 ## 7. 專案根目錄被刪掉後，不會永久卡死
 
-`project_access_events`、`context_versions`、`decisions` 都是刻意設計成不可刪除（append-only，刪除會直接觸發 SQLite trigger 擋下來），所以沒有任何指令可以「取消註冊」一個專案——即使它的根目錄被使用者在 ccc-mcp 外手動 `rm -rf` 刪掉了。
+`project_access_events`、`context_versions`、`decisions` 都是刻意設計成不可刪除（append-only，刪除會直接觸發 SQLite trigger 擋下來）。這代表根目錄被使用者在 ccc-mcp 外手動 `rm -rf` 刪掉時，ccc-mcp 不會、也不能把這個專案的歷史憑空清掉。
 
 在這種情況下，下一次任何操作碰到這個專案（`self.project(project_id)`）時，ccc-mcp 會自動重建一個空目錄並重新 `git init` 一次初始 commit，而不是讓這個 ID 永久卡在「註冊了但用不了」的狀態。原始檔案與 Git 歷史無法復原，但 Context、任務、決策全部還留在 ccc-mcp 自己的 SQLite 裡，不受影響：
 
@@ -170,6 +170,30 @@ ccc-mcp --project hello-demo context show  # 會看到 SYSTEM 自動記錄的這
 
 這跟「根目錄被竄改」（例如換成指向別處的符號連結）是兩種不同狀況：竄改會被直接拒絕（`Registered project root moved or is unavailable`），**不會**被當成「遺失」而自動修復——自動修復只處理「單純不存在」，不會信任一個存在但指向別處的路徑。
 
+## 8. 不想再用某個專案了：`project delete` 永久註銷
+
+上一節講的是「根目錄不見了但這個 ID 還要繼續用」；如果是反過來——**這個 ID 以後都不會再用了**，例如一個做完的 demo 或測試專案——`ccc-mcp project delete <id>` 提供一個明確、不可復原的註銷動作：
+
+```bash
+ccc-mcp project revoke demo-app   # 若目前是 read-write 持續授權，必須先撤銷
+ccc-mcp project delete demo-app   # 互動確認，需輸入 DELETE demo-app
+```
+
+它做的事跟「根目錄遺失自動修復」是同一個不可刪除 append-only 原則的另一面，而不是矛盾：
+
+- 新增一筆 `project_deletions` 紀錄（跟 `project_access_events` 同樣風格：append-only、有 trigger 擋 UPDATE/DELETE），一個 project_id 只要出現過一筆就永久視為已註銷。
+- `ccc-mcp project list` 之後不會再顯示它。
+- 幾乎所有操作的入口 `ContextHub.project()` 會直接拒絕已註銷的 project_id，訊息明確寫「已被永久註銷」——不會變成「註冊了但重建一個空殼」那種狀態。
+- 這個 ID **永遠不能重新註冊**（`project create`／`project add` 都會擋，並提示換一個 ID），避免未來同名新專案意外繼承舊專案的審計紀錄。
+- **不會刪除磁碟上的任何檔案**（這部分請自行用 Finder／檔案總管處理），**也不會刪除任何一筆 Context／task／決策／證據資料**——全部照舊留在 ccc-mcp 自己的 SQLite 裡，只是被永久封存、無法再透過任何指令存取。
+
+安全防線：
+
+- 若專案目前是 `read-write` 持續授權狀態，會先擋下來要求 `project revoke`。
+- 若有 `QUEUED`／`RUNNING` 的執行中任務，也會擋下來，避免留下孤兒執行。
+- 跟 `authorize`／`revoke` 一樣，需要互動式本機終端機確認，且要求輸入 `DELETE <id>` 這個明確字串才算確認（比一般確認多一層,呼應它不可復原的風險)。
+- 只透過 CLI 提供，**沒有對應的 MCP 工具**——跟 `authorize`／`revoke` 一致，因為這個確認儀式本來就需要互動式終端機，ChatGPT 無法代為執行。
+
 ## 測試涵蓋
 
 - [tests/test_resumable_advance.py](../tests/test_resumable_advance.py)：派工失敗後的恢復、拒絕不相關的 Patch、`resume_pending_dispatch`、`task cancel` 清理指標、主機測試失敗覆蓋 REVIEW 自述、未收集到測試一樣擋住自動結案、Context 提交與 `pending_dispatch` 指標確實寫在同一個交易裡。
@@ -178,6 +202,7 @@ ccc-mcp --project hello-demo context show  # 會看到 SYSTEM 自動記錄的這
 - [tests/test_dependency_install.py](../tests/test_dependency_install.py)：各種 manifest 的偵測優先順序、安裝成功／失敗／執行檔不存在、安裝失敗會擋住 REVIEW 自動完成、專屬 venv 的建立與重複使用、`_resolve_against_venv` 的 Windows 解析修正、`execute_test_command` 端到端驗證 venv 真的生效。偵測邏輯是純函式測試；安裝成功/失敗路徑用可控的假指令測試（不會真的呼叫網路上的 pip／npm）；venv 建立與 PATH 解析則是真實建立虛擬環境測試（無需網路，只用 `ensurepip` 內附的 wheel），避免測試依賴網路又不失去端到端真實性。
 - [tests/test_test_evidence.py](../tests/test_test_evidence.py)：`project authorize` 預設自動跑 `pytest -q`、`no_tests_collected` 的正確回報。
 - [tests/test_project_root_recovery.py](../tests/test_project_root_recovery.py)：根目錄被手動刪除後自動重建並重新 `git init`、修復是可重複呼叫且不重複記錄、既有設定（例如 chatgpt-only profile）在修復後保持不變、CLI `config show` 的真實重現、符號連結竄改仍會被拒絕而不是被修復。
+- [tests/test_project_deletion.py](../tests/test_project_deletion.py)：`project delete` 需要互動確認、註銷後從 `project list` 消失且所有操作一律拒絕、ID 永久不能重新註冊（`project create`／`project add` 兩條路徑都擋）、`read-write` 授權與執行中任務分別擋下註銷、`project_deletions` 本身的 append-only 保證、CLI 端到端重現。
 - [tests/test_verification_evidence.py](../tests/test_verification_evidence.py)：`brief.verification` 的五種可分辨狀態（尚無報告／Agent 自稱完成／自稱需修訂、主機已驗證通過／失敗／沒收集到測試／尚未執行、REVIEW 因主機證據被退回跟 REVIEW 自己要求修訂是兩種不同旗標）、CLI `task show`／`task status` 的呈現。
 - [tests/test_task_handoff.py](../tests/test_task_handoff.py)：SA／SD-RD／REVIEW 三種角色的互動式提示詞內容、resume/PM 整理/背景執行等狀態重用既有欄位、CLI `task handoff` 的真實重現。
 - [tests/test_task_preflight.py](../tests/test_task_preflight.py)：分級 `checks[]`／`summary` 輸出與原始三項環境檢查並存、授權 blocker、五個角色 provider 是否可用且只有 `next_role` 缺失才算 blocker（其餘只到 warning，並隨任務進度換成下一個角色）、`next_role` 隨 SA→SD/RD→REVIEW 推進、任務完成後 `next_role` 為 null 且不再出現角色檢查、ChatGPT 角色缺 Tunnel 依是否為 next_role 分別是 blocker／warning、Tunnel 已安裝但無法確認連線仍只到 warning、`profile` 欄位對照 chatgpt-only／custom、worktree 模式下 `test_command.cwd` 一定是這個 task 自己的 worktree（即使還沒建立也不會被偷換成 project root）、只有 worktree 不存在時才會跟用來預覽依賴套件的 `inspection_path`（project root）不同、project 模式下兩者都是 project root、worktree 建立後兩者相同、執行中/中斷派工/PM 整理/本機核准四種工作流狀態、Skills 可讀性、Context 預算超額（重用 `build_handoff` 本身的計算）、`summary` 與 `checks` 數量一致，全程確認從不實際安裝、跑測試或動 Git。

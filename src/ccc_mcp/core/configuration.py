@@ -587,6 +587,13 @@ class ConfigurationHub:
                 "them, or pass --profile chatgpt-only instead."
             )
         identifier(project_id)
+        if self.store.one(
+            "SELECT 1 FROM project_deletions WHERE project_id=?", (project_id,)
+        ):
+            raise BridgeError(
+                f"'{project_id}' was permanently deregistered with `project delete`; "
+                "that ID cannot be reused. Choose a different project ID."
+            )
         if self.store.one("SELECT id FROM projects WHERE id=?", (project_id,)):
             raise BridgeError(
                 "Project ID is already registered; use it directly instead of creating it "

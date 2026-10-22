@@ -108,6 +108,19 @@ CREATE TABLE IF NOT EXISTS pending_dispatch (
  adapter TEXT NOT NULL, fake_scenario TEXT NOT NULL,
  committed_json TEXT NOT NULL, created TEXT NOT NULL,
  PRIMARY KEY(project_id, task_id));
+-- A project ID is retired the moment it has one row here; it then disappears from
+-- `project list` and every other command refuses it (see ContextHub.project). Append-only
+-- and irreversible by design, like every other audit table in this schema: deregistering
+-- never deletes the project's Context/task/decision/evidence history, only hides and
+-- blocks further use of the ID.
+CREATE TABLE IF NOT EXISTS project_deletions (
+ id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
+ identity TEXT NOT NULL, created TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_project_deletions_project ON project_deletions(project_id);
+CREATE TRIGGER IF NOT EXISTS project_deletions_no_update BEFORE UPDATE ON project_deletions
+ BEGIN SELECT RAISE(ABORT, 'Project deletion history is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS project_deletions_no_delete BEFORE DELETE ON project_deletions
+ BEGIN SELECT RAISE(ABORT, 'Project deletion history is immutable'); END;
 -- Read-path indexes only: every query below already filters by project_id (often also
 -- task_id) and these columns have no other supporting index, so lookups on these tables
 -- were full scans. Purely additive (IF NOT EXISTS), so they cannot change any query's

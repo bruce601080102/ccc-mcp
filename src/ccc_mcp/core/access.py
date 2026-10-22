@@ -4,7 +4,7 @@ import uuid
 from pathlib import Path
 
 from ..adapters.storage import now
-from ..infra.errors import PermissionDenied, VersionConflict
+from ..infra.errors import BridgeError, PermissionDenied, VersionConflict
 from ..infra.security import digest
 
 
@@ -83,6 +83,53 @@ class ProjectAccessHub:
             settings["writable_roots"] = []
             self._save_settings(project_id, settings)
         return self.get_project_access(project_id)
+
+    def deregister_project_local(self, project_id):
+        """Permanently retire a project ID: it disappears from `project list` and every
+        other command refuses it afterward (see ContextHub.project). Irreversible by
+        design — there is no undo — and local-terminal-only, like authorize/revoke.
+
+        This never touches the project's files on disk (the operator removes those
+        separately, e.g. via Finder) and never deletes a single row of its historical
+        Context/task/decision/evidence data; it only appends one `project_deletions`
+        record, consistent with every other audit table in this schema.
+        """
+        from .approval import confirm_local
+
+        project = self.project(project_id)
+        if self.get_project_access(project_id)["mode"] == "read-write":
+            raise PermissionDenied(
+                f"Revoke project authorization first: ccc-mcp project revoke {project_id}"
+            )
+        if self.store.one(
+            "SELECT 1 FROM agent_executions WHERE project_id=? AND status IN ('QUEUED','RUNNING')",
+            (project_id,),
+        ):
+            raise BridgeError("Wait for or cancel the active execution before deregistering")
+        identity = confirm_local(
+            f"永久註銷專案：{project_id}\n{project['root']}\n\n"
+            "此操作無法復原：之後 `ccc-mcp project list` 不再顯示它，任何指令對這個 "
+            "project ID 都會拒絕執行。歷史 Context、task、決策與驗收證據仍完整保留在 "
+            "ccc-mcp 的資料庫中以供追溯，但不會再被存取；這個 ID 之後也不能重新註冊。\n"
+            "此操作不會刪除或搬移磁碟上的檔案，請自行用 Finder／檔案管理器處理。",
+            f"DELETE {project_id}",
+        )
+        with self.lock(project_id):
+            if self.get_project_access(project_id)["mode"] == "read-write":
+                raise PermissionDenied(
+                    f"Revoke project authorization first: ccc-mcp project revoke {project_id}"
+                )
+            if self.store.one(
+                "SELECT 1 FROM agent_executions WHERE project_id=? "
+                "AND status IN ('QUEUED','RUNNING')",
+                (project_id,),
+            ):
+                raise BridgeError("Wait for or cancel the active execution before deregistering")
+            self.store.execute(
+                "INSERT INTO project_deletions(id,project_id,identity,created) VALUES(?,?,?,?)",
+                ("DEL-" + uuid.uuid4().hex[:16], project_id, identity, now()),
+            )
+        return {"project_id": project_id, "deregistered": True, "identity": identity}
 
     def _require_project_write(self, project_id):
         access = self.get_project_access(project_id)
