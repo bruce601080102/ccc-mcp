@@ -1,4 +1,4 @@
-# 專案授權、角色與共用 Context
+# 5. 專案授權、角色與共用 Context
 
 ccc-mcp 只有一條一般修改流程：專案授權後，由 Agent 分析、實作與審查，ChatGPT 擔任 PM 整理共用 Context。使用者不需選擇工作流或工作區模式，也不需管理內部 Task ID、逐次核准計畫或最後接受 Task。
 
@@ -29,6 +29,18 @@ ccc-mcp --project my-project config show
 ```
 
 每次 `config role` 都會整組取代該角色的 provider、model、effort、fallback；要保留的選項須一起填寫。省略模型與思考等級時使用 CLI 自己的預設。ChatGPT 網頁模型由對話介面選擇，ccc-mcp 不會冒稱可控制或獨立驗證。`SD`、`RD`、`SD/RD` 是三個獨立角色設定。額度不足接手只適用已辨識的用量限制；登入、參數或程式錯誤不會被當作額度不足。
+
+### 全程使用 ChatGPT
+
+不安裝 Codex 或 Claude Code CLI 也能讓三個自動角色都由 ChatGPT 執行：
+
+```bash
+ccc-mcp --project my-project config role SA chatgpt
+ccc-mcp --project my-project config role SD/RD chatgpt
+ccc-mcp --project my-project config role REVIEW chatgpt
+```
+
+這不是 fake 或降級流程：ChatGPT 會透過 ccc-mcp 的 MCP 工具互動式完成角色，主機仍照一般流程保留 Context、檔案與測試證據。它不消耗 Codex／Claude Code CLI 額度；ChatGPT 的可用模型與工具額度仍依連線帳戶和方案而定。
 
 Windows 上 Claude Code 若由 npm 安裝，ccc-mcp 會尋找官方套件中的 `claude.exe`，不透過可能受 PowerShell 執行原則限制的 `.ps1` 或 shell 包裝腳本。仍需先完成各 CLI 登入。對已授權專案，real-agent 派工不再需要額外設定環境開關；更新後須重啟 Tunnel，讓服務讀到新程式與工具清單。
 

@@ -3,7 +3,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 # Bump only for incompatible changes to the published schemas (docs/schema/*.json);
-# an additive, optional field does not require a bump. See docs/protocol.md.
+# an additive, optional field does not require a bump. See docs/en/9-protocol.md.
 PROTOCOL_VERSION = "1"
 
 

@@ -9,7 +9,7 @@ Excluded from the default test run (see pyproject.toml's `addopts`); run explici
 
 Needs both CLIs installed and logged in (`ccc-mcp setup all`); each test skips itself
 if a required CLI cannot be resolved, rather than failing on a machine that doesn't
-have them. See README.md's hello-demo walkthrough and docs/real-agents.md.
+have them. See README.md's hello-demo walkthrough and docs/en/1-install-and-sign-in.md.
 """
 
 from pathlib import Path

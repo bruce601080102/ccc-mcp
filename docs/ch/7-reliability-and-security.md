@@ -1,6 +1,6 @@
-# 可靠的跨 Agent 接力
+# 7. 可靠性與安全邊界
 
-[返回快速上手](../README.md)。本頁說明 `ChatGPT（PM）→ Codex（SA）→ Claude（SD/RD）→ Codex（REVIEW）→ ChatGPT 整理 Context` 這條預設流程裡，與「可驗證、可恢復」直接相關的六個機制。這些機制只在**已 `project authorize` 的持續工作流**（`start_project_request`／`advance_project` 自動接力）生效；逐步人工核准模式（見 [real-agents.md](real-agents.md) 第 4 節）沒有 `pending_dispatch`。
+[返回快速上手](../../README_ZH.md)。本頁說明 `ChatGPT（PM）→ Codex（SA）→ Claude（SD/RD）→ Codex（REVIEW）→ ChatGPT 整理 Context` 這條預設流程裡，與「可驗證、可恢復」直接相關的六個機制。這些機制只在**已 `project authorize` 的持續工作流**（`start_project_request`／`advance_project` 自動接力）生效；逐步人工核准模式（見[安裝與登入](1-install-and-sign-in.md)第 4 節）沒有 `pending_dispatch`。
 
 ## 1. 接力中斷後怎麼恢復，而不是重頭來過
 
@@ -82,7 +82,7 @@ ccc-mcp --project hello-demo task status
 
 ## 4. Context 預算：超過就拒絕派工，不悄悄截斷
 
-見 README 的 [Context 交接太大？設定 token 預算](../README.md#context-交接太大設定-token-預算)。預算裁剪的順序固定是：
+見[設定角色、Context 與測試](5-configuration.md)。預算裁剪的順序固定是：
 
 1. **先裁 Skill 全文**：`available_skills` 是「操作者裝的選用指引」，裁剪時只清空 `content`（並標記 `content_omitted: true`），`id`／`name`／`description`／`path` 一律保留，所以 Agent 仍然知道有這個 Skill、用途是什麼，只是沒看到全文。大 Skill 先裁。
 2. 還不夠才裁歷史紀錄（`decisions`／`technical_decisions`／`agent_results_awaiting_refinement`，只留最近 5 筆並改成指向 `get_context_history` 的指標）。

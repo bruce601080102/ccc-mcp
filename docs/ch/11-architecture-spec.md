@@ -1,4 +1,4 @@
-# ccc-mcp MCP — 完整開發規格 V2
+# 11. ccc-mcp MCP — 完整開發規格 V2
 
 ## 你的角色
 

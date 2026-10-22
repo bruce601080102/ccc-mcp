@@ -1,4 +1,4 @@
-# PM、SA、SD/RD 協作操作
+# 4. PM、SA、SD/RD 協作操作
 
 此流程的工作記憶是 SQLite 與 `.ccc-mcp`，各 Agent 不讀取彼此聊天紀錄。所有 CLI 全域參數放在子命令之前，例如 `ccc-mcp --project my-project context show`。
 

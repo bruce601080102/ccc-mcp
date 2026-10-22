@@ -92,7 +92,7 @@ def install_dependencies(cwd, home=None, project_id=None, timeout=600):
     command — the Agent writes/edits requirements.txt, pyproject.toml or package.json as
     part of implementing a feature; nothing previously installed those for the host test
     run, which surfaced as a bare ImportError instead of a real test result. Covered by
-    the same `project authorize` consent as test_command itself (see docs/reliability.md);
+    the same `project authorize` consent as test_command itself (see docs/en/7-reliability-and-security.md);
     this is still host code execution driven by Agent-authored manifest files, which is a
     real trust boundary, not a free security win.
 

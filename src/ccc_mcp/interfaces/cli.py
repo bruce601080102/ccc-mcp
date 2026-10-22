@@ -1040,8 +1040,8 @@ PROTOCOL_MODELS = {
 @schema_app.command(
     "export",
     help=t(
-        "把發布給外部消費者的協議 JSON Schema 寫到指定目錄（見 docs/protocol.md）。",
-        "Write the protocol JSON Schema published for external consumers to a directory (see docs/protocol.md).",
+        "把發布給外部消費者的協議 JSON Schema 寫到指定目錄（見 docs/ch/9-protocol.md）。",
+        "Write the protocol JSON Schema published for external consumers to a directory (see docs/en/9-protocol.md).",
     ),
 )
 def schema_export(out_dir: Path):

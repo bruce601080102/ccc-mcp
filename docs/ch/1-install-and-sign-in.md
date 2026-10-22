@@ -1,6 +1,6 @@
-# 連接真實 SA 與 SD/RD
+# 1. 安裝與登入真實 Agent
 
-下列為預設的 Codex SA／Claude SD/RD 組合。角色現在可互換，或全部交給 ChatGPT；模型、思考等級、用量與路徑請看 [設定指南](configuration.md)。只用 ChatGPT 時不需要安裝本機模型 CLI。
+下列為預設的 Codex SA／Claude SD/RD 組合。角色現在可互換，或全部交給 ChatGPT；模型、思考等級、用量與路徑請看 [設定指南](5-configuration.md)。只用 ChatGPT 時不需要安裝本機模型 CLI。
 
 兩個角色透過 ccc-mcp 的報告與核准方案交接。ChatGPT PM 依進度決定每次派工，不依賴 Agent 彼此的聊天紀錄。
 
@@ -99,7 +99,7 @@ Codex 的唯讀 SA/Review 支援尚未建立 Git 的已註冊專案：Adapter �
 
 ## 4. 若尚未執行 `project authorize`（逐步人工核准模式）
 
-**先確認你要走哪條路**：README 的 [hello-demo 快速開始](../README.md#快速開始windows-git-bashmacoslinux) 是預設、建議的路徑——執行一次 `project authorize` 之後，PM 會自動派工、整理 Context、完成任務，不需要你每輪手動建立任務、手動核准計畫。**下面這一節是另一條路**：專案還沒執行 `project authorize`（停留在唯讀模式）時，每個計畫都需要你在本機逐次核准，流程如下。兩條路都是真的在跑 Codex／Claude，差別只在要不要逐次核准。
+**先確認你要走哪條路**：[建立第一個專案](3-first-project.md)是預設、建議的路徑——執行一次 `project authorize` 之後，PM 會自動派工、整理 Context、完成任務，不需要你每輪手動建立任務、手動核准計畫。**下面這一節是另一條路**：專案還沒執行 `project authorize`（停留在唯讀模式）時，每個計畫都需要你在本機逐次核准，流程如下。兩條路都是真的在跑 Codex／Claude，差別只在要不要逐次核准。
 
 請建立新的需求任務。先前僅允許 fake 的測試任務不要拿來直接轉成真實開發任務。
 
@@ -145,4 +145,4 @@ SA 完成後，PM 用 propose_plan 提出具體方案，request_approval 建立 
 
 這支測試預設**不會**跟著一般 `pytest` 一起跑（見 `pyproject.toml` 的 `addopts`），因為它需要本機已經裝好、登入兩個 CLI，且會真的花費額度／時間；CI 與一般開發迴圈用的是 `FakeAgentAdapter` 版本（`tests/test_test_evidence.py`、`tests/test_continuous_workflow.py`），行為邏輯相同，只是不呼叫真正的 CLI。
 
-接力中斷後如何恢復、主機測試證據為何能覆蓋 REVIEW 自述、額度不足與一般 CLI 錯誤怎麼分開記錄，見 [reliability.md](reliability.md)；這些機制目前只在 Fake 測試驗證過，尚未在真實 CLI 環境下另外實測。
+接力中斷後如何恢復、主機測試證據為何能覆蓋 REVIEW 自述、額度不足與一般 CLI 錯誤怎麼分開記錄，見[可靠性與安全邊界](7-reliability-and-security.md)；這些機制目前只在 Fake 測試驗證過，尚未在真實 CLI 環境下另外實測。

@@ -1,8 +1,8 @@
-# ccc-mcp 詳細參考
+# 10. ccc-mcp 技術參考
 
-[返回快速上手](../README.md)。以下指令都在 ccc-mcp 專案根目錄執行。
+[返回快速上手](../../README_ZH.md)。以下指令都在 ccc-mcp 專案根目錄執行。
 
-角色／模型／思考等級、ChatGPT 接手、指定讀取目錄與執行稽核的最新操作，請看 [設定指南](configuration.md)。本頁保留完整 CLI 與協作背景。
+角色／模型／思考等級、ChatGPT 接手、指定讀取目錄與執行稽核的最新操作，請看[設定指南](5-configuration.md)。本頁保留完整 CLI 與協作背景。
 
 以 Python 建立的 Context Hub 與 MCP 協調層，讓 ChatGPT PM、Codex SA、Claude Code SD/RD 能在沒有彼此聊天歷史的情況下，透過版本化記憶、原始證據與角色交接持續協作。
 
@@ -82,7 +82,7 @@ ccc-mcp context recover
 
 ## PM → SA → PM → SD/RD → PM
 
-完整可操作範例見 [協作流程](workflow.md)；快速示範不使用任何真實模型：
+完整可操作範例見[協作流程](4-workflow.md)；快速示範不使用任何真實模型：
 
 ```powershell
 python examples/demo.py prepare
@@ -139,7 +139,7 @@ ccc-mcp context import-patch examples/context-patch.json
 
 `semantic_review_ack` 是 PM 審閱語意差異的紀錄，不是人工實作核准。雜湊只能證明引用的檔案版本，無法證明 AI 的技術解讀正確。架構陳述必須有來源；程式碼/文件內容或原始報告漂移時會提示重新驗證。尚未完成的需求、驗收與限制由結構化 invariant 及不可被 Patch 修改的任務資料保護。現有 invariant 不能直接刪除或改寫；完成狀態另記錄於 Task/Decision，避免摘要無聲移除規則。
 
-兩個 Patch 都基於版本 1 時，第一個提交得到版本 2，第二個會收到 Version Conflict。方案及人工核准亦綁定 Context 版本；Context 更新後必須重新提出目前版本的方案並核准。`token_budget` 超出時會先嘗試裁剪（Skill 全文優先、再壓縮歷史紀錄），絕不截斷必要資訊（`invariants`、來源引用、當前任務報告／核准方案）；裁完仍超出時，`dispatch_agent` 會直接拒絕派工而不是送出超額內容，唯讀查詢工具（`build_handoff`／`get_context`）則仍回傳裁剪後內容供檢查。細節見 [reliability.md](reliability.md)。
+兩個 Patch 都基於版本 1 時，第一個提交得到版本 2，第二個會收到 Version Conflict。方案及人工核准亦綁定 Context 版本；Context 更新後必須重新提出目前版本的方案並核准。`token_budget` 超出時會先嘗試裁剪（Skill 全文優先、再壓縮歷史紀錄），絕不截斷必要資訊（`invariants`、來源引用、當前任務報告／核准方案）；裁完仍超出時，`dispatch_agent` 會直接拒絕派工而不是送出超額內容，唯讀查詢工具（`build_handoff`／`get_context`）則仍回傳裁剪後內容供檢查。細節見[可靠性與安全邊界](7-reliability-and-security.md)。
 
 ## 新 ChatGPT Session 恢復
 
@@ -182,11 +182,11 @@ stdio 提供規格要求的 14 個工具，加上建立任務、取消、來源�
 }
 ```
 
-ChatGPT 官方網頁的 HTTPS / Secure MCP Tunnel、OAuth 與工作區權限操作請見 [ChatGPT 連線指南](chatgpt.md)，依 [OpenAI 官方連線文件](https://developers.openai.com/plugins/deploy/connect-chatgpt) 核對。首次設定請依上述指南完成。
+ChatGPT 官方網頁的 HTTPS / Secure MCP Tunnel、OAuth 與工作區權限操作請見[ChatGPT 連線指南](2-connect-chatgpt.md)，依 [OpenAI 官方連線文件](https://developers.openai.com/plugins/deploy/connect-chatgpt) 核對。首次設定請依上述指南完成。
 
 ## 真實 Agent、人工核准與安全邊界
 
-從已連線的 ChatGPT 接上真實 Codex SA 與 Claude Code SD/RD，請依 [真實 Agent 設定指南](real-agents.md) 操作。`ccc-mcp connect` 會自動尋找已安裝的 codex／claude CLI，不需要另外設定 PATH；重新執行 `ccc-mcp connect tunnel_你的實際ID` 即可重啟 Tunnel。
+從已連線的 ChatGPT 接上真實 Codex SA 與 Claude Code SD/RD，請依[安裝與登入](1-install-and-sign-in.md)操作。`ccc-mcp connect` 會自動尋找已安裝的 codex／claude CLI，不需要另外設定 PATH；重新執行 `ccc-mcp connect tunnel_你的實際ID` 即可重啟 Tunnel。
 
 Codex 與 Claude Code 必須由使用者依官方方式另外安裝並登入。`doctor` 僅查安裝及版本，不宣稱已登入。Adapter 執行前再次檢查 CLI help；缺少必要參數會明確失敗。
 
@@ -207,8 +207,8 @@ Codex 依角色使用 `read-only` 或 `workspace-write` sandbox 與 JSON Schema�
 
 ## 交付範圍
 
-已實作：Context Hub、版本歷史與衝突、Session 恢復、角色交接、PM Patch、來源漂移檢查、獨立 Worker、狀態機、Fake/CLI Adapter、人工核准、決策稽核、Worktree、註解檢查、CLI、MCP 兩種傳輸、JWT 資源伺服器與測試。驗證紀錄見 [VALIDATION.md](../VALIDATION.md)。
+已實作：Context Hub、版本歷史與衝突、Session 恢復、角色交接、PM Patch、來源漂移檢查、獨立 Worker、狀態機、Fake/CLI Adapter、人工核准、決策稽核、Worktree、註解檢查、CLI、MCP 兩種傳輸、JWT 資源伺服器與測試。驗證紀錄見 [VALIDATION.md](../../VALIDATION.md)。
 
-各次真實 Codex/Claude 與 Tunnel 驗證見 [VALIDATION.md](../VALIDATION.md)；其他環境仍需確認帳戶權限、OAuth 部署、隔離執行環境與非 Python 註解的人工審閱。沒有 Web UI、Redis、Kubernetes 或分散式排程。
+各次真實 Codex/Claude 與 Tunnel 驗證見 [VALIDATION.md](../../VALIDATION.md)；其他環境仍需確認帳戶權限、OAuth 部署、隔離執行環境與非 Python 註解的人工審閱。沒有 Web UI、Redis、Kubernetes 或分散式排程。
 
 原始碼依功能放在 `context.py`、`tasks.py`、`storage.py`、`agents/`、`worker.py`、`git.py`、`security.py`、`server.py` 與 `cli.py`，讓 CLI、MCP 與 Worker 共用相同規則。

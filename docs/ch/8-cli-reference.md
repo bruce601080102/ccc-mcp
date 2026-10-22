@@ -1,6 +1,6 @@
-# CLI 參數與 ChatGPT 工具用語
+# 8. CLI 參數與 ChatGPT 工具用語
 
-先照 [Hello World 教學](../README.md) 跑完一輪，再用這份文件調整角色與派工方式。以下 `demo-app` 是專案 ID 範例，請換成自己的 ID。
+先照[建立第一個專案](3-first-project.md)跑完一輪，再用這份文件調整角色與派工方式。以下 `demo-app` 是專案 ID 範例，請換成自己的 ID。
 
 ## 角色與參數
 

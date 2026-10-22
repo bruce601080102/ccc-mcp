@@ -24,7 +24,7 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 addopts = "-m \"not real_agents\""
 markers = [
-  "real_agents: exercises actually-installed, logged-in Codex/Claude CLIs end to end; excluded by default (see docs/real-agents.md), run explicitly with `-m real_agents`",
+  "real_agents: exercises actually-installed, logged-in Codex/Claude CLIs end to end; excluded by default (see docs/en/1-install-and-sign-in.md), run explicitly with `-m real_agents`",
 ]
 
 [tool.ruff]
