@@ -325,6 +325,64 @@ def test_config_profile_cli_round_trip(bridge, monkeypatch):
     assert bridge.public_project_settings("demo")["profile"] == "best-model"
 
 
+def test_create_project_with_profile_applies_it_in_one_step(bridge, tmp_path):
+    created = bridge.create_project("fresh", tmp_path / "fresh", profile="chatgpt-only")
+    assert created["profile"] == "chatgpt-only"
+    assert bridge.public_project_settings("fresh")["profile"] == "chatgpt-only"
+    for role in ("SA", "SD", "RD", "SD/RD", "REVIEW"):
+        assert bridge.get_project_settings("fresh")["roles"][role]["provider"] == "chatgpt"
+
+
+def test_create_project_without_profile_keeps_default_roles(bridge, tmp_path):
+    created = bridge.create_project("fresh", tmp_path / "fresh")
+    assert "profile" not in created
+    assert bridge.get_project_settings("fresh")["roles"]["SA"]["provider"] == "codex"
+
+
+def test_create_project_rejects_unknown_profile_before_creating_anything(bridge, tmp_path):
+    target = tmp_path / "fresh"
+    with pytest.raises(BridgeError):
+        bridge.create_project("fresh", target, profile="fastest")
+    assert not target.exists()
+    assert bridge.store.one("SELECT id FROM projects WHERE id='fresh'") is None
+
+
+def test_create_project_rejects_best_model_profile_when_no_native_cli_installed(
+    bridge, tmp_path, monkeypatch
+):
+    native_clis(monkeypatch)
+    target = tmp_path / "fresh"
+    with pytest.raises(BridgeError, match="Neither the Codex nor the Claude Code CLI"):
+        bridge.create_project("fresh", target, profile="best-model")
+    assert not target.exists()
+    assert bridge.store.one("SELECT id FROM projects WHERE id='fresh'") is None
+
+
+def test_create_project_cli_accepts_profile_option(bridge, tmp_path, monkeypatch):
+    native_clis(monkeypatch, "codex", "claude")
+    result = CliRunner().invoke(
+        app,
+        [
+            "--home", str(bridge.home), "project", "create", "fresh",
+            "--path", str(tmp_path / "fresh"), "--profile", "chatgpt-only",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["profile"] == "chatgpt-only"
+    assert bridge.public_project_settings("fresh")["profile"] == "chatgpt-only"
+
+
+def test_doctor_reports_tunnel_client_and_workflow_guidance(bridge):
+    result = CliRunner().invoke(app, ["--home", str(bridge.home), "doctor"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert "available" in payload["tunnel_client"]
+    assert "chatgpt_only" in payload["workflows"]
+    assert "Codex" in payload["workflows"]["chatgpt_only"] or "codex" in payload["workflows"]["chatgpt_only"]
+    assert "best_model" in payload["workflows"]
+
+
 @pytest.mark.parametrize("role", ["SA", "SD", "RD", "SD/RD", "REVIEW"])
 def test_role_prompt_preview_matches_what_dispatch_would_actually_send(bridge, role):
     """Regression (Feature 2): the preview must be built from the same functions the

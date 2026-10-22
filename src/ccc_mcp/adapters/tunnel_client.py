@@ -61,10 +61,16 @@ def _expected_sha256(checksums_text, archive_name):
     raise BridgeError(f"SHA256SUMS.txt does not list {archive_name}")
 
 
+def tunnel_client_path(home: Path) -> Path:
+    """Where ensure_tunnel_client installs/looks for the verified binary, without
+    triggering a download — used by `doctor` to report whether it's already there."""
+    return Path(home) / "tools" / "tunnel-client" / _binary_name()
+
+
 def ensure_tunnel_client(home: Path, force: bool = False) -> Path:
     """Return a verified tunnel-client binary under `home`, downloading it if needed."""
     binary_name = _binary_name()
-    target = Path(home) / "tools" / "tunnel-client" / binary_name
+    target = tunnel_client_path(home)
     if target.is_file() and not force:
         return target
 

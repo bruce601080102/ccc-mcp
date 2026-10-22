@@ -577,9 +577,15 @@ class ConfigurationHub:
         )
         return {"projects_dir": str(root)}
 
-    def create_project(self, project_id, path=None, language="zh-TW"):
+    def create_project(self, project_id, path=None, language="zh-TW", profile=None):
         if language not in LANGUAGES:
             raise BridgeError("Language must be zh-TW, ch or en")
+        if profile is not None and profile_roles(profile) is None:
+            raise BridgeError(
+                "Neither the Codex nor the Claude Code CLI is installed on this "
+                "machine; best-model has no native provider to assign. Install one of "
+                "them, or pass --profile chatgpt-only instead."
+            )
         identifier(project_id)
         if self.store.one("SELECT id FROM projects WHERE id=?", (project_id,)):
             raise BridgeError(
@@ -624,4 +630,8 @@ class ConfigurationHub:
             "-m",
             "Initialize project baseline",
         )
-        return self.register_project(root, project_id, language=language)
+        registered = self.register_project(root, project_id, language=language)
+        if profile is not None:
+            self.configure_profile(project_id, profile)
+            registered = {**registered, "profile": profile}
+        return registered

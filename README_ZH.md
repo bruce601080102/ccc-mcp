@@ -20,7 +20,7 @@ ccc-mcp 是給軟體專案使用的本機 MCP 工作流程。ChatGPT 管理需�
 
 **最佳模型工作流**：ChatGPT 擔任 PM、Codex 負責分析與審查、Claude Code 負責實作。若你三種工具都有，這是預設模式。
 
-**ChatGPT-only workflow**：將 SA、SD/RD、REVIEW 都指定給 ChatGPT，不需要 Codex 或 Claude Code CLI，也不會消耗它們的 CLI 額度。對於目前 ChatGPT 文字使用量充足或近乎不限的方案，這是能長期工作的全整合路徑；實際可選模型與工具額度仍依帳戶與方案而定。
+**ChatGPT-only workflow**：用 `config profile chatgpt-only` 把全部五個角色（`SA`、`SD`、`RD`、`SD/RD`、`REVIEW`）都設為 ChatGPT——包含獨立的 `SD`、`RD`，`config show` 或手動派工都不會殘留 Codex／Claude。自動工作流本身實際上仍只會接力派發 `SA → SD/RD → REVIEW`。不需要 Codex 或 Claude Code CLI，也不會消耗它們的 CLI 額度；但可用模型、額度與功能一律依你連接的 ChatGPT 帳戶與方案而定，不要假設額度是無限的。
 
 ## 快速開始
 

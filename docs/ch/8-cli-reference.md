@@ -36,6 +36,7 @@ ccc-mcp --project 專案ID config role ROLE PROVIDER [--model 模型ID] [--effor
 | `--effort` | 思考等級；可先用 `high` 或 `medium`，仍須模型支援，並非 token 上限 |
 | `--quota-fallback` | 額度不足時接手的執行者：`codex`、`claude`、`chatgpt`；省略則不設定自動接手 |
 | `project create --path` | 新專案根目錄；Agent 實作在已授權的原專案進行 |
+| `project create --profile` | 建立同時套用 `chatgpt-only` 或 `best-model`，省去之後再執行一次 `config profile` |
 
 **每次 `config role` 都會整組替換該角色設定**：要保留的 model、effort、fallback 須一起填，省略會清空。設定只影響後續派工，不會啟動模型或修改歷史紀錄。
 
@@ -67,6 +68,19 @@ ccc-mcp --project demo-app config role REVIEW chatgpt
 ```
 
 `ccc-mcp --project demo-app config show` 會回報目前的 `profile`（`chatgpt-only`／`best-model`／`custom`）；要切回最佳模型工作流，執行 `ccc-mcp --project demo-app config profile best-model`——這個 `best-model` 會依本機實際裝了哪些 CLI 動態決定（兩個都裝＝原本的 Codex/Claude 分工；只裝一個＝全部角色用那一個；一個都沒裝會直接拒絕），不是固定寫死的組合。
+
+## 現在輪到誰、下一步該貼什麼？
+
+```bash
+ccc-mcp --project demo-app task handoff
+```
+
+唯讀，純粹從既有的 `task status`／Context／`pending_chatgpt_handoffs` 推算，不會另外保存一份可能跟它們脫鉤的狀態。正在等的是這個 ChatGPT 對話自己動手（`waiting_on: "CHATGPT_HANDOFF_PENDING"`）時，會多附上：
+
+- `chatgpt_prompt`：可以直接複製貼進任一個已選取 ccc-mcp 連線的 ChatGPT 對話的提示詞，內容依角色是唯讀（SA／REVIEW）還是讀寫（SD/RD）而不同。
+- `expected_report_fields`：提醒該角色完成後 `submit_agent_report` 要帶的欄位（`summary`、`findings`、`risks`、`next_action`、`tests`、`needs_revision` 等）。
+
+其他情況（背景 Agent 執行中、PM 需要用 `advance_project` 整理報告、派工中斷需要 `task resume`、等待本機核准方案等）會直接回報目前真正在等什麼，文字跟 `task status`／`context sync` 既有欄位一致，不會另外編一套說法。
 
 ## ChatGPT 需要固定 Prompt 嗎？
 

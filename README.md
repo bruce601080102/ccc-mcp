@@ -20,7 +20,7 @@ It is designed for people who use more than one AI coding tool and do not want a
 
 **Best-model workflow** uses ChatGPT as PM, Codex for analysis/review, and Claude Code for implementation. It is the default when you have all three tools.
 
-**ChatGPT-only workflow** assigns SA, SD/RD, and REVIEW to ChatGPT. It needs no Codex or Claude Code CLI, so it does not consume their CLI allowances. It is a practical all-in-one route when your ChatGPT plan has broad availability; the exact models and tool allowances still follow your account and plan.
+**ChatGPT-only workflow** sets all five role slots (`SA`, `SD`, `RD`, `SD/RD`, and `REVIEW`) to ChatGPT via `config profile chatgpt-only` — including the standalone `SD`/`RD` slots, so neither `config show` nor a manual dispatch is left showing a leftover Codex/Claude provider. The automatic workflow itself still only ever dispatches `SA → SD/RD → REVIEW`. It needs no Codex or Claude Code CLI, so it does not consume their CLI allowances. Available models, quotas, and tool access always follow your connected ChatGPT account and plan — never assume unlimited usage.
 
 ## Quick start
 

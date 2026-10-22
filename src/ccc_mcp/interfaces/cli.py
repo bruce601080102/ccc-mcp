@@ -16,7 +16,7 @@ import typer
 from ..adapters.agent_setup import setup_provider
 from ..adapters.agents.base import native_executable
 from ..adapters.skills import install_skill, list_skills, remove_skill
-from ..adapters.tunnel_client import ensure_tunnel_client
+from ..adapters.tunnel_client import ensure_tunnel_client, tunnel_client_path
 from ..core.models import AgentReport, ContextPatch, ContextSnapshot, strict_json_schema
 from ..infra.config import cli_language
 from ..infra.errors import BridgeError
@@ -200,12 +200,31 @@ def project_revoke(ctx: typer.Context, id: str):
 @project_app.command(
     "create",
     help=t(
-        "建立新專案與 Git 基準；不搬移或覆寫既有目錄。",
-        "Create a new project with a Git baseline; never moves or overwrites an existing directory.",
+        "建立新專案與 Git 基準；不搬移或覆寫既有目錄。"
+        "可用 --profile 一步套用角色組合，省去後續再執行 config profile。"
+        "例如：ccc-mcp project create hello-demo --profile chatgpt-only",
+        "Create a new project with a Git baseline; never moves or overwrites an "
+        "existing directory. Pass --profile to apply a role combination in the same "
+        "step, instead of a separate config profile call afterwards. "
+        "Example: ccc-mcp project create hello-demo --profile chatgpt-only",
     ),
 )
-def project_create(ctx: typer.Context, id: str, path: Path | None = None, language: str = "zh-TW"):
-    output(bridge(ctx).create_project(id, path, language))
+def project_create(
+    ctx: typer.Context,
+    id: str,
+    path: Path | None = None,
+    language: str = "zh-TW",
+    profile: Annotated[
+        str | None,
+        typer.Option(
+            help=t(
+                "chatgpt-only 或 best-model；省略則維持預設角色設定",
+                "chatgpt-only or best-model; omit to keep the default role settings",
+            )
+        ),
+    ] = None,
+):
+    output(bridge(ctx).create_project(id, path, language, profile))
 
 
 @config_app.command(
@@ -773,11 +792,19 @@ def task_show(ctx: typer.Context, task_id: Annotated[str | None, typer.Argument(
             typer.echo(t("Token：", "Tokens: ") + json.dumps(usage.get("tokens", {}), ensure_ascii=False))
         else:
             typer.echo(t("Token：未提供，無法確認", "Tokens: not provided, cannot confirm"))
+    verification = service.get_task_status(project, task_id)["brief"]["verification"]
     typer.echo(
         t(
-            "\n以上為執行摘要；是否通過測試請另查看 task test 產生的測試報告。",
-            "\nThe above is an execution summary; check the report from task test "
-            "separately to see whether tests actually passed.",
+            f"\n驗收狀態：{verification['message']}",
+            f"\nAcceptance status: {verification['message']}",
+        )
+    )
+    typer.echo(
+        t(
+            "（Agent 自稱完成不等於驗收成功；上面這行分開標示 Agent 自稱與主機實際驗證結果。）",
+            "(An Agent's own claim of completion is not the same as a passing "
+            "acceptance; the line above separates what the Agent claimed from what "
+            "the host actually verified.)",
         )
     )
 
@@ -792,6 +819,22 @@ def task_show(ctx: typer.Context, task_id: Annotated[str | None, typer.Argument(
 def task_usage(ctx: typer.Context, task_id: Annotated[str | None, typer.Argument()] = None):
     service, project = bridge(ctx), project_id(ctx)
     output(service.get_task_usage(project, task_id or service.project_workstream_task(project)))
+
+
+@task_app.command(
+    "handoff",
+    help=t(
+        "唯讀：現在輪到誰、下一步做什麼；若正等待這個 ChatGPT 對話接手，額外附上可直接貼"
+        "進去的提示詞與預期回報格式。全部資訊都來自既有的 task status／context，不另建新狀態。",
+        "Read-only: whose turn it is right now and what to do next; when a ChatGPT "
+        "conversation itself is the thing being waited on, also includes a paste-ready "
+        "prompt and the expected report fields. Everything comes from existing task "
+        "status/context, never a separate tracked state.",
+    ),
+)
+def task_handoff(ctx: typer.Context, task_id: Annotated[str | None, typer.Argument()] = None):
+    service, project = bridge(ctx), project_id(ctx)
+    output(service.task_handoff(project, task_id))
 
 
 @task_app.command(
@@ -1048,6 +1091,42 @@ def doctor(ctx: typer.Context):
             }
         except (OSError, subprocess.TimeoutExpired) as exc:
             checks[executable] = {"available": False, "error": type(exc).__name__}
+    tunnel_binary = tunnel_client_path(bridge(ctx).home)
+    checks["tunnel_client"] = {
+        "available": tunnel_binary.is_file(),
+        "message": (
+            None
+            if tunnel_binary.is_file()
+            else t(
+                "尚未安裝；執行 ccc-mcp connect <tunnel_id> 會自動下載並驗證官方 tunnel-client"
+                "（兩種工作流都需要它連上 ChatGPT）",
+                "Not installed yet; `ccc-mcp connect <tunnel_id>` downloads and verifies "
+                "the official tunnel-client automatically (both workflows need it to "
+                "connect ChatGPT)",
+            )
+        ),
+    }
+    checks["workflows"] = {
+        "chatgpt_only": t(
+            "不需要 Codex 或 Claude Code CLI；仍需要 git、python 與已連線的 ChatGPT MCP "
+            "Tunnel（見上面的 tunnel_client）。套用：ccc-mcp --project <id> config profile "
+            "chatgpt-only，或建立專案時加 --profile chatgpt-only。ChatGPT 執行一律互動式"
+            "（task usage 會標示 interactive／chatgpt_web），不會偽裝成已呼叫 CLI。",
+            "Needs neither the Codex nor the Claude Code CLI; still needs git, python, "
+            "and a connected ChatGPT MCP Tunnel (see tunnel_client above). Apply with "
+            "ccc-mcp --project <id> config profile chatgpt-only, or pass --profile "
+            "chatgpt-only on project create. Every ChatGPT execution stays honestly "
+            "interactive (task usage marks it interactive/chatgpt_web) — never faked as "
+            "a CLI call.",
+        ),
+        "best_model": t(
+            "額外需要已安裝且登入的 Codex 和／或 Claude Code CLI；只裝其中一個時，"
+            "config profile best-model 會把全部角色動態指到那一個。",
+            "Additionally needs the Codex and/or Claude Code CLI installed and signed "
+            "in; with only one of them installed, config profile best-model dynamically "
+            "assigns every role to it.",
+        ),
+    }
     try:
         checks["context_schema"] = bridge(ctx).validate_context(project_id(ctx))
     except BridgeError as exc:

@@ -47,3 +47,40 @@ ccc-mcp --project hello-demo context show
 最後自行執行專案的功能和測試。主機記錄的測試證據才是完成條件，模型在對話中宣稱成功不會覆蓋它。
 
 下一步：[4. 執行與恢復工作流程](4-workflow.md)。
+
+## ChatGPT-only 15 分鐘 smoke test
+
+不想裝 Codex 或 Claude Code CLI、只想先用 ChatGPT 把整條流程走一遍。開始前可先執行 `ccc-mcp doctor`：它會列出目前是否已裝 Git／Codex／Claude，以及 ChatGPT-only 與最佳模型兩種工作流各自需要什麼（`workflows.chatgpt_only`／`workflows.best_model`），確認「不需要 Codex／Claude Code CLI」這件事不是只靠猜的。
+
+```bash
+ccc-mcp project create hello-demo-chatgpt --profile chatgpt-only
+ccc-mcp project authorize hello-demo-chatgpt
+```
+
+`--profile chatgpt-only` 會在建立專案的同一步把 `SA`、`SD`、`RD`、`SD/RD`、`REVIEW` 全部設為 ChatGPT（已存在的專案改用 `ccc-mcp --project hello-demo-chatgpt config profile chatgpt-only`，效果相同）。用下列指令確認設定確實生效，再往下走：
+
+```bash
+ccc-mcp --project hello-demo-chatgpt config show
+```
+
+輸出的 `profile` 應該是 `"chatgpt-only"`，`roles` 底下五個角色的 `provider` 都是 `chatgpt`。
+
+依[連接 ChatGPT](2-connect-chatgpt.md)建立並連上 Tunnel（`ccc-mcp connect <tunnel_id>`），確認 ChatGPT 的 MCP 連線工具清單裡能看到 ccc-mcp。選取這個連線後提出：
+
+> 請在 `hello-demo-chatgpt` 建立 `hello.py`，執行時輸出 `Hello, World!`，並加入驗證輸出的測試。
+
+ChatGPT 會自己擔任 SA、SD/RD、REVIEW 三個自動角色（透過 `read_workspace`／`write_task_file`／`submit_agent_report` 等 MCP 工具），不需要背景跑任何 CLI 子行程。回到本機驗證，不要只看對話回覆：
+
+```bash
+ccc-mcp --project hello-demo-chatgpt task handoff
+ccc-mcp --project hello-demo-chatgpt task status
+ccc-mcp --project hello-demo-chatgpt task usage
+ccc-mcp --project hello-demo-chatgpt context show
+```
+
+- `task handoff`：現在輪到誰、下一步要做什麼最直接的入口。等待的是這個 ChatGPT 對話本身時（`waiting_on: "CHATGPT_HANDOFF_PENDING"`），會直接附上 `chatgpt_prompt`——可直接複製貼進 ChatGPT 對話的提示詞，以及 `expected_report_fields`（提醒該回報的欄位）；其他情況則回報目前實際在等什麼（背景 Agent 執行中、PM 需整理報告、派工中斷需要 resume 等），全部取自既有的 task status／context，不是另外一份會漂移的狀態。
+- `task status`／`brief.waiting_on`：`CHATGPT_HANDOFF_PENDING` 代表現在這個 ChatGPT 對話自己要動手，不是背景程序在跑；`brief.tests` 會顯示主機是否已實際執行測試命令、結果是通過或失敗。
+- `task usage`：ChatGPT 執行會標示 `"interactive": true`、`invocation.source: "chatgpt_web"`，`cli_invoked: false` 在這裡代表「本來就不呼叫 CLI」，不是失敗；這不是偽裝呼叫，ccc-mcp 從不會假造 CLI 已被呼叫。
+- `context show`：確認每一輪的 Context 版本、下一步動作與是否已整理完成。
+
+最後確認主機真的執行過測試命令並通過（見`task status` 的 `brief.tests`，或 `ccc-mcp --project hello-demo-chatgpt task test` 手動補跑一次）；ChatGPT 在對話裡自稱「測試通過」不能取代這個紀錄。

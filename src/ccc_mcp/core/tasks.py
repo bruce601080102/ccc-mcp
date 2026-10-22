@@ -13,6 +13,7 @@ from ..infra.config import metadata_name, setting_env
 from ..infra.errors import BridgeError, PermissionDenied, VersionConflict
 from ..infra.security import canonical, digest, reject_secrets
 from .context import identifier
+from .models import AgentReport
 
 
 def attribution(language, agent, role=None):
@@ -124,6 +125,147 @@ def waiting_on(
     if state in {"FAILED", "BLOCKED"}:
         return state
     return "PM_DECISION"
+
+
+_EXPECTED_REPORT_FIELDS = list(AgentReport.model_fields)
+
+
+def _review_reverted_due_to_host_evidence(latest_role, previous_execution, test_result):
+    """True only when the two most recent executions are REVIEW (succeeded, itself
+    reporting no revision needed) followed by a fresh SD/RD dispatch — i.e. this round
+    was sent back not because REVIEW found a problem, but because host-observed test
+    evidence overrode REVIEW's own "no revision needed" self-report (see
+    commit_context_patch/_review_outcome, which compute exactly this override)."""
+    if latest_role != "SD/RD" or not previous_execution or previous_execution["role"] != "REVIEW":
+        return False
+    if previous_execution["status"] != "SUCCEEDED":
+        return False
+    saved = json.loads(previous_execution["result"]) if previous_execution["result"] else {}
+    if (saved.get("report") or {}).get("needs_revision"):
+        return False
+    return bool(
+        test_result
+        and test_result.get("executed_by_host")
+        and (test_result.get("passed") is False or test_result.get("no_tests_collected"))
+    )
+
+
+def verification_summary(report, test_result, reverted, language):
+    """Separate what the Agent itself claimed from what the host actually verified —
+    five distinguishable states (Agent claims complete / claims needs revision / host
+    verified passing / host verified failing / no test evidence at all or none
+    collected), never collapsed into a single "success" label. Pure function of
+    already-durable report + test-evidence fields; never a second tracked state."""
+    zh = language in {"zh-TW", "ch"}
+    if not report:
+        agent_claim = "no_report"
+    elif report.get("needs_revision"):
+        agent_claim = "needs_revision"
+    else:
+        agent_claim = "complete"
+    executed = bool(test_result and test_result.get("executed_by_host"))
+    if not executed:
+        host_verification = "not_executed"
+    elif test_result.get("no_tests_collected"):
+        host_verification = "no_tests_collected"
+    elif test_result.get("passed"):
+        host_verification = "passed"
+    else:
+        host_verification = "failed"
+    claim_text = {
+        "no_report": "尚無 Agent 報告" if zh else "No Agent report yet",
+        "needs_revision": "Agent 自稱需要修訂" if zh else "Agent itself reports it needs revision",
+        "complete": "Agent 自稱已完成" if zh else "Agent claims it is complete",
+    }[agent_claim]
+    host_text = {
+        "not_executed": (
+            "主機尚未執行測試（"
+            + ((test_result or {}).get("reason") or "尚無測試證據")
+            + "）——不算已驗證"
+            if zh
+            else "Host has not run tests yet ("
+            + ((test_result or {}).get("reason") or "no test evidence yet")
+            + ") — not verified"
+        ),
+        "no_tests_collected": (
+            "主機執行了測試指令，但沒收集到任何測試案例——不算已驗證"
+            if zh
+            else "Host ran the test command but collected zero tests — not verified"
+        ),
+        "passed": (
+            "主機已實際執行測試並通過" if zh else "Host actually ran the tests and they passed"
+        ),
+        "failed": (
+            "主機已實際執行測試，結果失敗——不算驗收成功"
+            if zh
+            else "Host actually ran the tests and they failed — not a passing acceptance"
+        ),
+    }[host_verification]
+    message = f"{claim_text}；{host_text}" if zh else f"{claim_text}; {host_text}"
+    if reverted:
+        message += (
+            "\n⤷ 本輪退回 SD/RD 是因為主機測試結果覆蓋了 REVIEW 的「無需修訂」自述，"
+            "不是 REVIEW 自己發現問題。"
+            if zh
+            else "\n⤷ This round was sent back to SD/RD because host test evidence overrode "
+            "REVIEW's own \"no revision needed\" self-report, not because REVIEW itself "
+            "found a problem."
+        )
+    return {
+        "agent_claim": agent_claim,
+        "host_verification": host_verification,
+        "reverted_due_to_host_failure": reverted,
+        "message": message,
+    }
+
+
+def chatgpt_handoff_prompt(project_id, pending, language):
+    """Paste-ready text for a human operator to hand this exact ChatGPT conversation
+    (or a fresh one with the ccc-mcp connection selected) the pending interactive role.
+
+    A pure function of the already-dispatched execution's own durable fields
+    (role/instruction/execution id) — like context_policy/operator_policy elsewhere in
+    this codebase, it is recomputed fresh every call, never a second stored copy that
+    could drift from what dispatch_agent/prepare_chatgpt_execution actually recorded.
+    """
+    role, execution_id, task_id = pending["role"], pending["id"], pending["task_id"]
+    readonly = role in {"SA", "REVIEW"}
+    if language in {"zh-TW", "ch"}:
+        write_step = (
+            ""
+            if readonly
+            else f"\n2. 需要修改檔案時呼叫 write_task_file(project_id=\"{project_id}\", "
+            f"execution_id=\"{execution_id}\", path, content, expected_sha256)。"
+        )
+        return (
+            f"請在這個 ChatGPT 對話接手 ccc-mcp 專案「{project_id}」任務 {task_id} 的 {role} 角色"
+            f"（execution_id={execution_id}）。這是{'唯讀分析／審查' if readonly else '讀寫實作'}角色：\n"
+            f"1. 先呼叫 read_workspace／list_workspace 讀取這次派工的 context_package 與相關檔案。"
+            f"{write_step}\n"
+            f"{'3' if write_step else '2'}. 完成後呼叫 submit_agent_report(project_id=\"{project_id}\", "
+            f"execution_id=\"{execution_id}\", report={{summary, findings, risks, next_action, tests, "
+            "needs_revision})。不要宣稱已執行測試——主機會另外實際執行並記錄測試證據。\n"
+            "不要自行派出下一個角色；PM 整理並提交 ContextPatch 後，後端會自動接續。"
+        )
+    write_step = (
+        ""
+        if readonly
+        else f"\n2. Call write_task_file(project_id=\"{project_id}\", execution_id=\"{execution_id}\", "
+        "path, content, expected_sha256) to make changes."
+    )
+    return (
+        f"In this ChatGPT conversation, take over the {role} role for ccc-mcp project "
+        f"\"{project_id}\" task {task_id} (execution_id={execution_id}). This is a "
+        f"{'read-only analysis/review' if readonly else 'read-write implementation'} role:\n"
+        "1. First call read_workspace/list_workspace to read this execution's "
+        f"context_package and the relevant files.{write_step}\n"
+        f"{3 if write_step else 2}. Finish with submit_agent_report(project_id=\"{project_id}\", "
+        f"execution_id=\"{execution_id}\", report={{summary, findings, risks, next_action, tests, "
+        "needs_revision}). Never claim tests were run yourself — the host runs and records them "
+        "separately.\n"
+        "Do not dispatch the next role yourself; the backend continues automatically once the PM "
+        "refines and commits a ContextPatch."
+    )
 
 
 class TaskHub:
@@ -1143,6 +1285,14 @@ class TaskHub:
                 and latest["status"] == "RUNNING"
                 and json.loads(latest["options"] or "{}").get("interactive")
             )
+            previous_execution = self.store.one(
+                "SELECT role,status,result FROM agent_executions WHERE project_id=? "
+                "AND task_id=? ORDER BY created DESC LIMIT 1 OFFSET 1",
+                (project_id, task_id),
+            )
+            reverted = _review_reverted_due_to_host_evidence(
+                latest["role"] if latest else None, previous_execution, test_result
+            )
             task["brief"] = {
                 "task_id": task_id,
                 "state": task["state"],
@@ -1176,6 +1326,9 @@ class TaskHub:
                     "dependencies": _dependency_summary(test_result),
                     "no_tests_collected": bool((test_result or {}).get("no_tests_collected")),
                 },
+                "verification": verification_summary(
+                    report, test_result, reverted, self.get_project_settings(project_id)["language"]
+                ),
                 "fallback": saved.get("fallback"),
                 "pending_dispatch": (
                     {
@@ -1192,6 +1345,93 @@ class TaskHub:
                 ),
             }
             return task
+
+    def task_handoff(self, project_id, task_id=None):
+        """Read-only answer to "what is this task waiting on right now, and what do
+        I do about it" — built entirely from get_task_status's brief,
+        pending_chatgpt_handoffs and context_sync_status/get_approval_status, never a
+        second, independently-tracked copy of task state that could drift from them.
+
+        When an interactive ChatGPT execution is the thing actually blocking progress
+        (`waiting_on == "CHATGPT_HANDOFF_PENDING"`), this also renders a paste-ready
+        prompt a human operator can hand to any ChatGPT conversation with the
+        ccc-mcp connection selected, plus the AgentReport fields it must report back.
+        """
+        task_id = task_id or self.project_workstream_task(project_id)
+        status = self.get_task_status(project_id, task_id)
+        brief = status["brief"]
+        waiting_on = brief["waiting_on"]
+        language = self.get_project_settings(project_id)["language"]
+        zh = language in {"zh-TW", "ch"}
+        result = {
+            "task_id": task_id,
+            "state": brief["state"],
+            "waiting_on": waiting_on,
+            "role": brief["role"],
+            "agent": brief["agent"],
+            "context_version": brief["context_version"],
+            "tests": brief["tests"],
+            "chatgpt_prompt": None,
+            "next_action": None,
+        }
+        if waiting_on == "CHATGPT_HANDOFF_PENDING":
+            pending = next(
+                (
+                    p
+                    for p in self.pending_chatgpt_handoffs(project_id)
+                    if p["task_id"] == task_id
+                ),
+                None,
+            )
+            if pending is None:
+                raise BridgeError("No pending ChatGPT handoff found for this task")
+            result["execution_id"] = pending["id"]
+            result["instruction"] = pending["instruction"]
+            result["expected_report_fields"] = _EXPECTED_REPORT_FIELDS
+            result["chatgpt_prompt"] = chatgpt_handoff_prompt(project_id, pending, language)
+            result["next_action"] = (
+                "把 chatgpt_prompt 貼給任一個已選取 ccc-mcp 連線的 ChatGPT 對話。"
+                if zh
+                else "Paste chatgpt_prompt into any ChatGPT conversation with the "
+                "ccc-mcp connection selected."
+            )
+        elif waiting_on == "DISPATCH_RETRY_NEEDED":
+            result["next_action"] = brief["pending_dispatch"]["next_action"]
+        elif waiting_on == "PM_REFINEMENT":
+            result["next_action"] = self.context_sync_status(project_id)["workflow"]
+        elif waiting_on in {"AGENT_RUNNING", "BLOCKED"} and brief.get("progress"):
+            result["next_action"] = brief["progress"]["note"]
+        elif waiting_on == "USER_APPROVAL":
+            pending_approval = next(
+                (
+                    a
+                    for a in self.get_approval_status(project_id, task_id)
+                    if a["status"] == "PENDING"
+                ),
+                None,
+            )
+            if pending_approval:
+                result["next_action"] = (
+                    f"本機終端執行 ccc-mcp --project {project_id} approve {task_id} --plan "
+                    f"{pending_approval['plan_id']}"
+                    if zh
+                    else f"Run locally: ccc-mcp --project {project_id} approve {task_id} "
+                    f"--plan {pending_approval['plan_id']}"
+                )
+        elif waiting_on == "PM_DECISION":
+            suggestion = brief.get("next_action") or brief.get("summary")
+            result["next_action"] = (
+                "PM 需要用 advance_project 提交整理後的 ContextPatch 才能繼續"
+                + (f"；Agent 建議：{suggestion}" if suggestion else "")
+                if zh
+                else "PM needs to submit a refined ContextPatch via advance_project to continue"
+                + (f"; the Agent suggested: {suggestion}" if suggestion else "")
+            )
+        if result["next_action"] is None:
+            result["next_action"] = (
+                brief.get("next_action") or brief.get("summary") or brief.get("error")
+            )
+        return result
 
     def run_configured_test_command(self, project_id, task_id):
         """Auto-run the project's test command before REVIEW is dispatched.

@@ -62,6 +62,23 @@ ccc-mcp --project hello-demo task status
 
 `brief.tests` 永遠反映主機最後一次實際執行的結果，不會被任何 Agent 的自述覆蓋；「未執行測試」（`executed_by_host: false`，見 `reason`）跟「執行且失敗」是兩種不同狀態，不會混在一起判斷完成與否。
 
+`brief.verification`（`task status`／`task handoff` 都會回報，`task show` 會直接印出對應文字）把這件事講得更直白，分成兩個獨立欄位，從不合併成一個「成功」：`agent_claim`（Agent 自己說完成還是需要修訂，或根本還沒有報告）與 `host_verification`（`passed`／`failed`／`no_tests_collected`／`not_executed`，主機實際驗證的結果）。當這一輪是因為上述機制被退回 SD/RD（主機測試結果覆蓋了 REVIEW 的『無需修訂』），`reverted_due_to_host_failure` 會是 `true`，跟 REVIEW 自己主動要求修訂的一般情況區分開：
+
+```jsonc
+{
+  "brief": {
+    "verification": {
+      "agent_claim": "complete",
+      "host_verification": "failed",
+      "reverted_due_to_host_failure": false,
+      "message": "Agent 自稱已完成；主機已實際執行測試，結果失敗——不算驗收成功"
+    }
+  }
+}
+```
+
+不論 `agent_claim` 寫什麼，`message` 永遠不會把它說成「驗收成功」——那個詞只留給 `host_verification: "passed"`。
+
 ## 3. Fallback 與失敗原因分開記錄
 
 每一次 Agent 執行失敗，`brief.failure_kind` 會標示原因類別：
@@ -161,5 +178,7 @@ ccc-mcp --project hello-demo context show  # 會看到 SYSTEM 自動記錄的這
 - [tests/test_dependency_install.py](../tests/test_dependency_install.py)：各種 manifest 的偵測優先順序、安裝成功／失敗／執行檔不存在、安裝失敗會擋住 REVIEW 自動完成、專屬 venv 的建立與重複使用、`_resolve_against_venv` 的 Windows 解析修正、`execute_test_command` 端到端驗證 venv 真的生效。偵測邏輯是純函式測試；安裝成功/失敗路徑用可控的假指令測試（不會真的呼叫網路上的 pip／npm）；venv 建立與 PATH 解析則是真實建立虛擬環境測試（無需網路，只用 `ensurepip` 內附的 wheel），避免測試依賴網路又不失去端到端真實性。
 - [tests/test_test_evidence.py](../tests/test_test_evidence.py)：`project authorize` 預設自動跑 `pytest -q`、`no_tests_collected` 的正確回報。
 - [tests/test_project_root_recovery.py](../tests/test_project_root_recovery.py)：根目錄被手動刪除後自動重建並重新 `git init`、修復是可重複呼叫且不重複記錄、既有設定（例如 chatgpt-only profile）在修復後保持不變、CLI `config show` 的真實重現、符號連結竄改仍會被拒絕而不是被修復。
+- [tests/test_verification_evidence.py](../tests/test_verification_evidence.py)：`brief.verification` 的五種可分辨狀態（尚無報告／Agent 自稱完成／自稱需修訂、主機已驗證通過／失敗／沒收集到測試／尚未執行、REVIEW 因主機證據被退回跟 REVIEW 自己要求修訂是兩種不同旗標）、CLI `task show`／`task status` 的呈現。
+- [tests/test_task_handoff.py](../tests/test_task_handoff.py)：SA／SD-RD／REVIEW 三種角色的互動式提示詞內容、resume/PM 整理/背景執行等狀態重用既有欄位、CLI `task handoff` 的真實重現。
 
 以上全部跑在 `FakeAgentAdapter`，不需要真的安裝 Codex／Claude。真實 CLI 的整合驗收腳本（`tests/test_real_agents.py`，`-m real_agents`）目前涵蓋正常接力與測試證據，**尚未涵蓋本頁描述的中斷／恢復與 fallback 分類場景**——這部分仍只在 Fake 測試中驗證過，真實 CLI 環境下的行為未另外實測。
