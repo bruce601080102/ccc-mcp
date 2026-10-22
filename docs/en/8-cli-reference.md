@@ -47,7 +47,11 @@ Checks covered today:
 - `live_execution`/`pending_dispatch`/`pm_refinement`/`pending_approval`: whether an Agent execution is already running, a prior round's dispatch was interrupted and never confirmed, PM-unrefined reports exist, or a plan is awaiting local approval — each a reason a fresh dispatch would be rejected (or close to it) right now; `pm_refinement` is a `blocker` under continuous authorization, the rest are `blocker` or `warning` depending on the situation.
 - `skills`: whether installed Skill files are readable.
 - `context_budget`: only present when `context_token_budget` is configured; calls `build_handoff` itself to check whether the PM package is over budget — the same calculation a real dispatch uses, never a separate estimate.
-- `test_command`, `dependencies`, `git`: the original three environment checks (also kept at the top level under `test_command`/`dependencies`/`git`, unchanged, for backward compatibility). `test_command` now also carries `cwd`/`cwd_exists`, spelling out exactly where the test command would run (or will, once a worktree exists) instead of making you cross-reference `dependencies.checked_path`.
+- `test_command`, `dependencies`, `git`: the original three environment checks (also kept at the top level under `test_command`/`dependencies`/`git`, unchanged, for backward compatibility). `test_command` now carries two deliberately separate path fields:
+  - `cwd`/`cwd_exists`: where the test command **actually (or will) run**. In `workspace_mode: worktree` this is always this task's own worktree path (`task_worktree(project_id, task_id)`) — **even before that worktree exists** — never silently substituted with the project root; `cwd_exists` says whether that real workspace exists right now. In `workspace_mode: project`, `cwd` is the project root.
+  - `inspection_path`: only differs from `cwd` while the worktree doesn't exist yet — at that point the real workspace has nothing in it, so dependency-manifest detection **previews** the project root instead (the worktree will be created from its HEAD). Once the worktree exists, `inspection_path` equals `cwd`. `dependencies.checked_path` uses this same path.
+
+  In short: **`cwd` answers "where will the test actually run"; `inspection_path` answers "what am I previewing dependencies from right now"** — they only diverge before a worktree exists.
 
 Every check is evaluated fresh; nothing here is a separately tracked state, and a real dispatch moments later can still differ if something changes in between — this is a snapshot, not a lock.
 

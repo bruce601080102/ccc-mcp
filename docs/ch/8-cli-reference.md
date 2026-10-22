@@ -110,7 +110,11 @@ ccc-mcp --project demo-app task preflight
 - `live_execution`／`pending_dispatch`／`pm_refinement`／`pending_approval`：目前是否有執行中的 Agent、上一輪中斷未確認的派工、尚未整理的 PM 報告、等待本機核准的方案——這幾項都是「現在真的派工下去會被拒絕」或接近的狀態，持續授權下 `pm_refinement` 是 `blocker`，其餘依情況是 `blocker` 或 `warning`。
 - `skills`：已安裝的 Skill 檔案能不能正常讀取。
 - `context_budget`：只有設定了 `context_token_budget` 才會出現；直接呼叫 `build_handoff` 檢查 PM 套件是否超額，跟真正派工用的是同一套計算，不會自己另外估算。
-- `test_command`、`dependencies`、`git`：原本就有的三項環境檢查（同時也保留在回應最上層的 `test_command`／`dependencies`／`git` 欄位，向後相容）。`test_command` 現在多了 `cwd`／`cwd_exists`，明確標示測試指令實際（或一旦建立 worktree）會在哪個目錄執行，不用自己對照 `dependencies.checked_path` 猜。
+- `test_command`、`dependencies`、`git`：原本就有的三項環境檢查（同時也保留在回應最上層的 `test_command`／`dependencies`／`git` 欄位，向後相容）。`test_command` 現在多了兩個明確分開的路徑欄位：
+  - `cwd`／`cwd_exists`：測試指令**實際（或未來）會在哪個 workspace 執行**。`workspace_mode: worktree` 時一定是這個 task 自己的 worktree 路徑（`task_worktree(project_id, task_id)`），**即使那個 worktree 還沒建立也一樣**——絕不會被偷換成 project root；`cwd_exists` 代表那個真正的 workspace 現在存不存在。`workspace_mode: project` 時 `cwd` 就是 project root。
+  - `inspection_path`：只在 worktree 還沒建立時才會跟 `cwd` 不同——因為那時候真正的 workspace 裡什麼都沒有，只能先用 project root（worktree 將來會從它的 HEAD 建立）**預覽**依賴 manifest 長什麼樣；worktree 一旦建立，`inspection_path` 就會等於 `cwd`。`dependencies.checked_path` 用的也是這個路徑。
+
+  簡單說：**「測試未來會在哪裡跑」看 `cwd`；「現在用什麼路徑預覽依賴套件」看 `inspection_path`**，兩者只有 worktree 還沒建立時才會不一樣。
 
 每一項的判定都是當下現查，不會留下或依賴另一份可能漂移的狀態；問完之後環境是什麼樣，派工時大致就是什麼樣（當然，實際派工之間若有人改了設定或裝了 CLI，結果可能不同——這本來就是「現在看一眼」，不是鎖定的保證）。
 

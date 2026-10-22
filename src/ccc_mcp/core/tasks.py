@@ -1476,9 +1476,13 @@ class TaskHub:
         (an already-live execution, an unresolved pending_dispatch, unrefined PM
         reports, a pending local approval); installed Skills being readable and the
         PM Context package fitting any configured token budget; and the original
-        three environment checks (test command resolvable — including where it
-        would actually run, dependency manifest/venv, Git/worktree cleanliness) —
-        kept under their original top-level keys too, unchanged, for backward
+        three environment checks (test command resolvable — `cwd` is always where
+        it actually runs, the task's own worktree in worktree mode even before
+        that worktree exists, never silently substituted with the project root;
+        `inspection_path` is the separate, best-effort path dependency-manifest
+        detection previews when that worktree doesn't exist yet; the two coincide
+        in project mode; plus dependency manifest/venv, Git/worktree cleanliness)
+        — kept under their original top-level keys too, unchanged, for backward
         compatibility. Every signal is derived fresh from already-durable project/
         task state and the filesystem; nothing here is a new tracked state, and
         nothing is installed, executed, or committed as a side effect of asking.
@@ -1759,11 +1763,17 @@ class TaskHub:
         else:
             workspace = self.task_worktree(project_id, task_id)
         workspace_exists = workspace.is_dir()
-        # Before the first implementation dispatch, a worktree-mode task has no
-        # worktree yet (run_configured_test_command can't run at all until one
-        # exists) — the project root is the closest available proxy for what that
-        # worktree, created from the project's own HEAD, would actually contain.
-        detection_root = workspace if workspace_exists else root
+        # `workspace` is where the test command actually runs (or will, once
+        # dispatched) — in worktree mode that is always this task's own worktree
+        # path, even before it exists; it must never silently fall back to the
+        # project root, or `cwd` would describe somewhere the test command is not
+        # really going to run. Dependency-manifest *detection* is a separate,
+        # best-effort preview: before that worktree exists there is nothing to
+        # read there yet, so it previews the project root instead (the worktree's
+        # own eventual HEAD) — `inspection_path` names that explicitly, distinct
+        # from `cwd`. The two always coincide in project mode, where the task's
+        # workspace already *is* the project root.
+        inspection_path = workspace if workspace_exists else root
 
         command = settings.get("test_command") or DEFAULT_TEST_COMMAND
         resolved = shutil.which(command[0]) or (
@@ -1774,8 +1784,9 @@ class TaskHub:
             "configured": bool(settings.get("test_command")),
             "resolvable": bool(resolved),
             "resolved_path": resolved,
-            "cwd": str(detection_root),
+            "cwd": str(workspace),
             "cwd_exists": workspace_exists,
+            "inspection_path": str(inspection_path),
             "reason": None if resolved else f'"{command[0]}" was not found on PATH or as a file',
         }
         checks.append(
@@ -1784,16 +1795,18 @@ class TaskHub:
                 "status": "ready" if resolved else "blocker",
                 "message": (
                     (
-                        f"測試指令解析到 {resolved}，會在 {detection_root} 執行。"
+                        f"測試指令解析到 {resolved}，會在 {workspace} 執行。"
                         if workspace_exists
-                        else f"測試指令解析到 {resolved}；尚無 worktree，一旦建立會在 {detection_root} 執行。"
+                        else f"測試指令解析到 {resolved}；會在 {workspace} 執行，但該 worktree 尚未建立——"
+                        f"目前依賴套件偵測改看 {inspection_path} 預覽。"
                     )
                     if zh
                     else (
-                        f"Test command resolves to {resolved}; it runs in {detection_root}."
+                        f"Test command resolves to {resolved}; it runs in {workspace}."
                         if workspace_exists
-                        else f"Test command resolves to {resolved}; no worktree yet, it will run in "
-                        f"{detection_root} once one exists."
+                        else f"Test command resolves to {resolved}; it will run in {workspace}, but "
+                        f"that worktree does not exist yet — dependency detection previews "
+                        f"{inspection_path} instead."
                     )
                 )
                 if resolved
@@ -1802,14 +1815,14 @@ class TaskHub:
             }
         )
 
-        detected = detect_dependency_setup(detection_root)
+        detected = detect_dependency_setup(inspection_path)
         venv_ready = None
         if detected and detected[0] in {"requirements.txt", "pyproject.toml"}:
             venv_dir = safe_path(self.home / "venvs", project_id)
             venv_ready = venv_python_path(venv_dir).is_file()
         dependencies = {
             "workspace_exists": workspace_exists,
-            "checked_path": str(detection_root),
+            "checked_path": str(inspection_path),
             "manifest": detected[0] if detected else None,
             "venv_ready": venv_ready,
         }

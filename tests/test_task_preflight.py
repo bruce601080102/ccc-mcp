@@ -463,14 +463,48 @@ def test_next_role_is_none_once_the_task_is_completed(bridge, human, monkeypatch
     assert not any(c["id"].startswith("role_") for c in result["checks"])
 
 
-def test_worktree_mode_test_command_notes_no_worktree_yet(bridge, human, monkeypatch):
+def test_worktree_mode_test_command_cwd_is_the_future_worktree_not_project_root(
+    bridge, human, monkeypatch
+):
+    """Regression: `cwd` is where the test command actually runs — this task's own
+    worktree in worktree mode — even before that worktree exists. It must never be
+    silently reported as the project root; `inspection_path` is the separate,
+    best-effort path dependency-manifest *detection* previews instead."""
     native_clis(monkeypatch, "codex", "claude")
     task_id = bridge.create_task("demo", "Implement a change")["id"]
 
     result = bridge.task_preflight("demo", task_id)
 
+    expected_worktree = bridge.task_worktree("demo", task_id)
+    assert result["test_command"]["cwd"] == str(expected_worktree)
     assert result["test_command"]["cwd_exists"] is False
+    assert result["test_command"]["inspection_path"] == str(root(bridge))
+    assert result["test_command"]["cwd"] != result["test_command"]["inspection_path"]
+    message = check(result, "test_command")["message"]
+    assert "worktree" in message.lower() or "worktree" in message
+    assert str(expected_worktree) in message
+
+
+def test_project_mode_cwd_and_inspection_path_are_both_the_project_root(bridge, human, monkeypatch):
+    native_clis(monkeypatch, "codex", "claude")
+    bridge.authorize_project_local("demo")
+    task_id = bridge.create_task("demo", "Implement a change")["id"]
+
+    result = bridge.task_preflight("demo", task_id)
+
     assert result["test_command"]["cwd"] == str(root(bridge))
-    assert "worktree" in check(result, "test_command")["message"].lower() or "尚無" in check(
-        result, "test_command"
-    )["message"]
+    assert result["test_command"]["inspection_path"] == str(root(bridge))
+    assert result["test_command"]["cwd_exists"] is True
+
+
+def test_worktree_mode_cwd_matches_inspection_path_once_the_worktree_exists(
+    bridge, human, monkeypatch
+):
+    native_clis(monkeypatch, "codex", "claude")
+    task_id = bridge.create_task("demo", "Implement a change")["id"]
+    bridge.task_worktree("demo", task_id).mkdir(parents=True, exist_ok=True)
+
+    result = bridge.task_preflight("demo", task_id)
+
+    assert result["test_command"]["cwd_exists"] is True
+    assert result["test_command"]["cwd"] == result["test_command"]["inspection_path"]
