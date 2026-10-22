@@ -1307,15 +1307,114 @@ def _profile_is_stale(profile_path: Path) -> bool:
     return result.returncode != 0
 
 
+def _package_signature():
+    """A cheap fingerprint of the installed ccc_mcp package: its distribution version
+    plus the newest mtime among its own .py files. The version alone misses a `--dev`
+    editable reinstall/`git pull` that changes file content without bumping the
+    (currently static) version string; the mtime alone misses a PyPI upgrade that
+    happens to extract with unchanged timestamps. Together they catch both update paths
+    `ccc-mcp update` supports.
+    """
+    import importlib.metadata
+
+    package_root = Path(__file__).resolve().parent.parent
+    newest = 0.0
+    for path in package_root.rglob("*.py"):
+        try:
+            newest = max(newest, path.stat().st_mtime)
+        except OSError:
+            continue
+    try:
+        version = importlib.metadata.version("ccc-mcp")
+    except importlib.metadata.PackageNotFoundError:
+        version = None
+    return version, newest
+
+
+def _terminate_tunnel_process(process, timeout=10):
+    process.terminate()
+    try:
+        process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=10)
+
+
+def _run_tunnel_with_reload(client, profile, profile_dir, env, poll_seconds=5):
+    """Run `tunnel-client run` under supervision, restarting it whenever the installed
+    ccc_mcp package changes on disk, so an updated `--mcp-command` subprocess is picked
+    up on the next connection without the operator re-running `connect` (and re-entering
+    the runtime key, which this reuses from `env` instead of prompting again).
+
+    Ctrl+C always stops this outright; a restart only ever happens because an update was
+    actually detected, never as generic crash-retry behavior that could mask a real
+    connection error.
+    """
+    signature = _package_signature()
+    while True:
+        process = subprocess.Popen(
+            [str(client), "run", "--profile", profile, "--profile-dir", str(profile_dir)],
+            env=env,
+            shell=False,
+        )
+        updated = False
+        try:
+            while True:
+                try:
+                    process.wait(timeout=poll_seconds)
+                except subprocess.TimeoutExpired:
+                    current = _package_signature()
+                    if current != signature:
+                        signature = current
+                        updated = True
+                        typer.echo(
+                            "\nDetected an updated ccc-mcp install; restarting the tunnel "
+                            "connection to pick it up (the runtime key already entered is "
+                            "reused; no need to re-enter it)...\n"
+                        )
+                        _terminate_tunnel_process(process)
+                        break
+                    continue
+                break
+        except KeyboardInterrupt:
+            _terminate_tunnel_process(process)
+            raise
+        if updated:
+            continue
+        if process.returncode != 0:
+            raise BridgeError("tunnel-client run exited with an error")
+        return
+
+
 @app.command(
     help=t(
-        "連接 ChatGPT：安裝/驗證 tunnel-client 並啟動長駐連線（取代 scripts/connect-chatgpt.sh）。",
+        "連接 ChatGPT：安裝/驗證 tunnel-client 並啟動長駐連線（取代 scripts/connect-chatgpt.sh）。"
+        "--reload 時，偵測到 ccc-mcp 套件本身被更新（版本或檔案變更）就自動重啟連線，"
+        "沿用已輸入的金鑰，不必重新輸入密碼。",
         "Connect to ChatGPT: install/verify tunnel-client and start a persistent connection "
-        "(replaces scripts/connect-chatgpt.sh).",
-        "连接 ChatGPT：安装/验证 tunnel-client 并启动长驻连接（取代 scripts/connect-chatgpt.sh）。",
+        "(replaces scripts/connect-chatgpt.sh). With --reload, automatically restarts the "
+        "connection whenever the installed ccc-mcp package itself changes (version or "
+        "files), reusing the already-entered runtime key instead of prompting again.",
+        "连接 ChatGPT：安装/验证 tunnel-client 并启动长驻连接（取代 scripts/connect-chatgpt.sh）。"
+        "--reload 时，侦测到 ccc-mcp 套件本身被更新（版本或文件变更）就自动重启连接，"
+        "沿用已输入的密钥，不必重新输入密码。",
     )
 )
-def connect(ctx: typer.Context, tunnel_id: str):
+def connect(
+    ctx: typer.Context,
+    tunnel_id: str,
+    reload: Annotated[
+        bool,
+        typer.Option(
+            "--reload",
+            help=t(
+                "偵測到 ccc-mcp 套件更新就自動重啟連線，不必重新輸入密碼。",
+                "Automatically restart the connection when the installed ccc-mcp "
+                "package changes, without re-entering the key.",
+            ),
+        ),
+    ] = False,
+):
     if not re.fullmatch(r"tunnel_[a-z0-9]{32}", tunnel_id):
         raise BridgeError("Usage: ccc-mcp connect tunnel_YOUR_ID")
     home = bridge(ctx).home
@@ -1422,6 +1521,14 @@ def connect(ctx: typer.Context, tunnel_id: str):
     )
     if diagnosed.returncode != 0:
         raise BridgeError("tunnel-client doctor failed; the connection was not started")
+    if reload:
+        typer.echo(
+            "\nKeep this terminal open while ChatGPT uses ccc-mcp. Press Ctrl+C to stop.\n"
+            "--reload is on: an update to the installed ccc-mcp package restarts the "
+            "connection automatically.\n"
+        )
+        _run_tunnel_with_reload(client, profile, profile_dir, full_env)
+        return
     typer.echo("\nKeep this terminal open while ChatGPT uses ccc-mcp. Press Ctrl+C to stop.\n")
     connected = subprocess.run(
         [str(client), "run", "--profile", profile, "--profile-dir", str(profile_dir)],

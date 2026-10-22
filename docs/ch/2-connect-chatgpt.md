@@ -16,6 +16,8 @@ ccc-mcp connect tunnel_你的實際ID
 
 依提示在終端輸入 runtime key，輸入會隱藏；不要貼到對話。腳本僅將 key 放入本次子程序環境，設定檔只保存 `env:CONTROL_PLANE_API_KEY` 引用。腳本會建立獨立 profile、執行 doctor 並在前景啟動 Tunnel，由它啟動 ccc-mcp stdio，不需另外手動執行 `ccc-mcp serve`。保持終端開啟。
 
+加上 `--reload`（`ccc-mcp connect tunnel_你的實際ID --reload`）可以讓這個終端在之後執行 `ccc-mcp update` 時不必手動重連：它會持續偵測本機安裝的 ccc-mcp 套件（版本號與檔案時間戳）是否有變化，一偵測到更新就自動重啟 Tunnel 連線，沿用剛才已經輸入過的 runtime key，不會再跳出一次輸入提示。沒有加 `--reload` 時，更新 ccc-mcp 後必須自行 Ctrl+C 再重新執行 `connect`（並重新輸入一次金鑰）才會生效。
+
 4. 在 [ChatGPT Plugins](https://chatgpt.com/plugins) 新增 custom MCP server，名稱 ccc-mcp、Connection 選 Tunnel，選擇同一個 ID。此本機 stdio 端沒有另外實作 OAuth，因此若畫面要求選取 MCP authentication，選擇無驗證；Tunnel 的組織與工作區權限仍必須正確限制存取。依畫面完成建立；建立表單不一定顯示工具清單，不以此判定連線成功或失敗。
 5. 建立後找到該 plugin 並安裝，在新對話以 `@ccc-mcp` 選用。輸入「請使用 ccc-mcp 的 bootstrap_project 恢復 project_id 為 ccc-mcp 的專案，說明進度與下一步」，並另外實測讀檔工具；建立成功不代表目前對話已載入新工具。
 

@@ -16,6 +16,8 @@ ccc-mcp runs locally. A Secure MCP Tunnel lets the ChatGPT web app call that loc
 
 `connect` verifies the local CLI and Tunnel before work begins. Fix a failed check before attempting a project request.
 
+Add `--reload` to keep that terminal running across a later `ccc-mcp update`: it watches the installed ccc-mcp package (version and file timestamps) and automatically restarts the tunnel connection the moment it changes, reusing the runtime key already entered so you are never prompted for it again. Without `--reload`, an update to ccc-mcp requires Ctrl+C and a fresh `connect` (and a fresh key prompt) to take effect.
+
 ## Diagnose a connection
 
 - A 401 from Tunnel poll normally means the runtime key or Tunnel ID is wrong; recreate or copy the current value and reconnect.
