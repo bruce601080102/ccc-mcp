@@ -1,5 +1,4 @@
 import getpass
-import importlib.metadata
 import json
 import os
 import re
@@ -1074,6 +1073,8 @@ def task_decision(
     )
 )
 def doctor(ctx: typer.Context):
+    import importlib.metadata
+
     checks = {
         "python": sys.version.split()[0],
         "sqlite": sqlite3.sqlite_version,

@@ -39,6 +39,22 @@ def _binary_name():
     return "tunnel-client.exe" if platform.system().lower() == "windows" else "tunnel-client"
 
 
+def _safe_extractall(zf, destination):
+    """Reject zip-slip members (absolute paths or `..` segments) before writing anything.
+
+    The archive is already SHA256-verified against the official release's checksums, but
+    extractall() by itself does not validate member paths, so a crafted entry could still
+    write outside `destination` (e.g. `../../.ssh/authorized_keys`). A well-formed archive
+    extracts exactly as before; this only narrows what a malformed one can do.
+    """
+    destination = Path(destination).resolve()
+    for member in zf.namelist():
+        target = (destination / member).resolve()
+        if target != destination and destination not in target.parents:
+            raise BridgeError(f"Archive entry escapes extraction directory: {member}")
+    zf.extractall(destination)
+
+
 def _fetch_json(url):
     request = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json"})
     with urllib.request.urlopen(request, timeout=30) as response:
@@ -97,7 +113,7 @@ def ensure_tunnel_client(home: Path, force: bool = False) -> Path:
         archive_path = Path(tmp) / archive_name
         archive_path.write_bytes(archive_bytes)
         with zipfile.ZipFile(archive_path) as zf:
-            zf.extractall(tmp)
+            _safe_extractall(zf, tmp)
         extracted = next(Path(tmp).rglob(binary_name), None)
         if extracted is None:
             raise BridgeError(f"Downloaded archive does not contain {binary_name}")

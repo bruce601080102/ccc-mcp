@@ -834,6 +834,7 @@ class ContextHub:
     def sync_documents(self, project_id):
         """Caller holds the project lock. Rebuild all projections after a crash."""
         root = Path(self.project(project_id)["root"])
+        language = self.get_project_settings(project_id)["language"]
         for relative, content in self.projection(project_id).items():
             atomic_write(safe_path(root, metadata_name(root) + "/" + relative), content)
         for record in self.store.all("SELECT * FROM artifacts WHERE project_id=?", (project_id,)):
@@ -844,9 +845,9 @@ class ContextHub:
                 if not target.exists():
                     pending = (
                         "尚未產生；不得視為已完成。"
-                        if self.get_project_settings(project_id)["language"] == "zh-TW"
+                        if language == "zh-TW"
                         else "尚未生成；不得视为已完成。"
-                        if self.get_project_settings(project_id)["language"] == "ch"
+                        if language == "ch"
                         else "Not generated; do not treat as complete."
                     )
                     atomic_write(target, f"# {doc}\n\n{pending}\n")
@@ -1250,6 +1251,7 @@ class ContextHub:
             "SELECT path,sha256,created FROM artifacts WHERE project_id=? ORDER BY created",
             (project_id,),
         )
+        language = self.get_project_settings(project_id)["language"]
         return {
             "context_version": self.latest(project_id)["version"],
             "tasks": self.list_tasks(project_id),
@@ -1265,9 +1267,9 @@ class ContextHub:
             "context_locations": self.context_locations(project_id),
             "next_step": (
                 "PM 以 ContextPatch 整理待處理報告；提交後系統會自動壓縮工作 Context。"
-                if self.get_project_settings(project_id)["language"] == "zh-TW"
+                if language == "zh-TW"
                 else "PM 使用 ContextPatch 整理待处理报告；提交后系统会自动压缩工作 Context。"
-                if self.get_project_settings(project_id)["language"] == "ch"
+                if language == "ch"
                 else "Use a ContextPatch to refine pending reports; commit automatically compacts working Context."
             ),
         }

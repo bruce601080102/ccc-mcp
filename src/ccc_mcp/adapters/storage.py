@@ -108,6 +108,26 @@ CREATE TABLE IF NOT EXISTS pending_dispatch (
  adapter TEXT NOT NULL, fake_scenario TEXT NOT NULL,
  committed_json TEXT NOT NULL, created TEXT NOT NULL,
  PRIMARY KEY(project_id, task_id));
+-- Read-path indexes only: every query below already filters by project_id (often also
+-- task_id) and these columns have no other supporting index, so lookups on these tables
+-- were full scans. Purely additive (IF NOT EXISTS), so they cannot change any query's
+-- result, only its cost, and apply lazily to existing bridge.sqlite3 files on next start.
+CREATE INDEX IF NOT EXISTS idx_agent_executions_project_task_created
+ ON agent_executions(project_id, task_id, created);
+CREATE INDEX IF NOT EXISTS idx_agent_executions_project_created
+ ON agent_executions(project_id, created);
+CREATE INDEX IF NOT EXISTS idx_decisions_project_created
+ ON decisions(project_id, created);
+CREATE INDEX IF NOT EXISTS idx_task_events_project_task_seq
+ ON task_events(project_id, task_id, seq);
+CREATE INDEX IF NOT EXISTS idx_approvals_project_task_created
+ ON approvals(project_id, task_id, created);
+CREATE INDEX IF NOT EXISTS idx_workspace_edits_project_path_created
+ ON workspace_edits(project_id, path, created);
+CREATE INDEX IF NOT EXISTS idx_workspace_batches_project
+ ON workspace_batches(project_id);
+CREATE INDEX IF NOT EXISTS idx_project_access_events_project_seq
+ ON project_access_events(project_id, seq);
 """
 
 
