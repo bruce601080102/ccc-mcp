@@ -838,6 +838,22 @@ def task_handoff(ctx: typer.Context, task_id: Annotated[str | None, typer.Argume
 
 
 @task_app.command(
+    "preflight",
+    help=t(
+        "唯讀：派工前環境檢查——設定的 test_command 是否能找到、相依套件是否已裝、"
+        "Git／worktree 狀態是否可用。不會安裝任何東西、不會真的跑測試、不會動 Git。",
+        "Read-only pre-dispatch environment check: whether the configured "
+        "test_command can be found, whether a dependency manifest is already "
+        "installed, and whether the Git/worktree state is usable. Installs nothing, "
+        "never runs the test command, never touches Git.",
+    ),
+)
+def task_preflight(ctx: typer.Context, task_id: Annotated[str | None, typer.Argument()] = None):
+    service, project = bridge(ctx), project_id(ctx)
+    output(service.task_preflight(project, task_id))
+
+
+@task_app.command(
     "dispatch",
     help=t(
         "低階操作：手動派工單一角色，不經過 advance_project 的自動流程。"

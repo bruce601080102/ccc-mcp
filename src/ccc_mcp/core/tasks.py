@@ -1,17 +1,19 @@
 import json
 import os
+import shutil
 import subprocess
 import sys
 import uuid
 from contextlib import nullcontext
 from datetime import UTC, datetime
+from pathlib import Path
 
 import portalocker
 
 from ..adapters.storage import artifact, decode, event, now
 from ..infra.config import metadata_name, setting_env
 from ..infra.errors import BridgeError, PermissionDenied, VersionConflict
-from ..infra.security import canonical, digest, reject_secrets
+from ..infra.security import canonical, digest, reject_secrets, safe_path
 from .context import identifier
 from .models import AgentReport
 
@@ -1432,6 +1434,77 @@ class TaskHub:
                 brief.get("next_action") or brief.get("summary") or brief.get("error")
             )
         return result
+
+    def task_preflight(self, project_id, task_id=None):
+        """Read-only, pre-dispatch environment check: can the configured test command
+        even be found, is a dependency manifest already installed, and is the
+        Git/worktree state actually usable — the three things that otherwise only
+        surface as a wasted round *after* a real dispatch. Never installs anything,
+        never runs the test command, never touches Git; every signal is derived fresh
+        from project settings and the filesystem, not a separately tracked state.
+        """
+        from ..adapters.test_runner import (
+            DEFAULT_TEST_COMMAND,
+            detect_dependency_setup,
+            venv_python_path,
+        )
+
+        task_id = task_id or self.project_workstream_task(project_id)
+        self.task(project_id, task_id)
+        settings = self.get_project_settings(project_id)
+        root = Path(self.project(project_id)["root"])
+
+        command = settings.get("test_command") or DEFAULT_TEST_COMMAND
+        resolved = shutil.which(command[0]) or (
+            command[0] if Path(command[0]).is_file() else None
+        )
+        test_command = {
+            "command": command,
+            "configured": bool(settings.get("test_command")),
+            "resolvable": bool(resolved),
+            "resolved_path": resolved,
+            "reason": None if resolved else f'"{command[0]}" was not found on PATH or as a file',
+        }
+
+        if settings["workspace_mode"] == "project":
+            workspace = root
+        else:
+            workspace = self.task_worktree(project_id, task_id)
+        workspace_exists = workspace.is_dir()
+        # Before the first dispatch, a worktree-mode task has no worktree yet; the
+        # worktree is created from the project's own HEAD, so its root is the closest
+        # available proxy for what manifest a freshly-created worktree would contain.
+        detection_root = workspace if workspace_exists else root
+        detected = detect_dependency_setup(detection_root)
+        venv_ready = None
+        if detected and detected[0] in {"requirements.txt", "pyproject.toml"}:
+            venv_dir = safe_path(self.home / "venvs", project_id)
+            venv_ready = venv_python_path(venv_dir).is_file()
+        dependencies = {
+            "workspace_exists": workspace_exists,
+            "checked_path": str(detection_root),
+            "manifest": detected[0] if detected else None,
+            "venv_ready": venv_ready,
+        }
+
+        git_revision = self.git_revision(root)
+        clean, clean_reason = None, None
+        if settings["workspace_mode"] == "project" and git_revision != "UNBORN":
+            try:
+                self._require_clean_project(project_id)
+                clean = True
+            except BridgeError as exc:
+                clean = False
+                clean_reason = str(exc)
+        git = {"initial_commit": git_revision != "UNBORN", "clean": clean, "reason": clean_reason}
+
+        return {
+            "task_id": task_id,
+            "ready": bool(test_command["resolvable"] and git["initial_commit"] and clean is not False),
+            "test_command": test_command,
+            "dependencies": dependencies,
+            "git": git,
+        }
 
     def run_configured_test_command(self, project_id, task_id):
         """Auto-run the project's test command before REVIEW is dispatched.

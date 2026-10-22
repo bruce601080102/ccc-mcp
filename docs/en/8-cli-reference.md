@@ -11,6 +11,7 @@ ccc-mcp project create <id> [--path <path>] [--profile chatgpt-only|best-model]
 ccc-mcp project add <path> --id <id>
 ccc-mcp project authorize <id>
 ccc-mcp --project <id> task handoff
+ccc-mcp --project <id> task preflight
 ccc-mcp --project <id> task status
 ccc-mcp --project <id> task usage
 ccc-mcp --project <id> task resume
@@ -23,5 +24,7 @@ Use `config show`, `config providers`, and `config prompt <ROLE>` before changin
 `config profile chatgpt-only` sets all five roles (`SA`, `SD`, `RD`, `SD/RD`, `REVIEW`) to `chatgpt` in one call, clearing any leftover Codex/Claude `model`/`effort`/`quota-fallback` — including the standalone `SD`/`RD` slots that automatic advancement never dispatches, so `config show` never still looks like a Codex/Claude mix. `config profile best-model` switches back, resolved dynamically from whichever native CLIs are actually installed here: both installed keeps the Codex/Claude split, only one installed assigns every role to it, neither installed is rejected. `config show`/`config providers` report the resulting `profile` (`chatgpt-only`, `best-model`, or `custom`) as a read-only, derived field.
 
 `task handoff` reads whose turn it is right now and what to do about it — purely derived from `task status`/context/pending ChatGPT handoffs, never a second tracked state. When an interactive ChatGPT execution is what's blocking progress, it also includes `chatgpt_prompt` (paste-ready text for that role) and `expected_report_fields`.
+
+`task preflight` is a read-only pre-dispatch environment check — it installs nothing, never runs the test command, never touches Git. It reports whether the configured `test_command` (or the default `pytest -q`) can actually be found, whether a dependency manifest (`requirements.txt`/`pyproject.toml`/`package.json`) is detected and, for Python projects, whether the dedicated venv already exists, and whether the project has an initial Git commit and (in `workspace_mode: project`) a clean working tree. `ready` summarizes those checks so a broken environment surfaces before a dispatch wastes a round, not after.
 
 For Skill management, see [step 6](6-skills.md). For public MCP contracts rather than CLI usage, see [step 9](9-protocol.md).

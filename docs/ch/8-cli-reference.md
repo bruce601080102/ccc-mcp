@@ -82,6 +82,20 @@ ccc-mcp --project demo-app task handoff
 
 其他情況（背景 Agent 執行中、PM 需要用 `advance_project` 整理報告、派工中斷需要 `task resume`、等待本機核准方案等）會直接回報目前真正在等什麼，文字跟 `task status`／`context sync` 既有欄位一致，不會另外編一套說法。
 
+## 派工前先檢查環境
+
+```bash
+ccc-mcp --project demo-app task preflight
+```
+
+唯讀，**不會安裝任何套件、不會真的跑測試、不會動 Git**，只檢查三件事，避免派工之後才發現環境壞掉、白跑一輪：
+
+- `test_command`：目前設定（或預設 `pytest -q`）的第一個指令是否真的能在 PATH 或檔案系統上找到；找不到會在 `reason` 寫清楚。
+- `dependencies`：對應工作區（`workspace_mode: project` 時是原專案目錄，`worktree` 模式且還沒建立 worktree 時退而檢查原專案目錄）是否偵測到 `requirements.txt`／`pyproject.toml`／`package.json` 等 manifest，以及（Python 專案）專屬 venv 是否已經建立好；沒裝不會被當成錯誤，只是提醒。
+- `git`：是否已有初始 commit（`initial_commit`）；`workspace_mode: project` 且已有 commit 時，額外檢查目前工作目錄是否乾淨（`clean`），不乾淨會在 `reason` 說明哪裡卡住。
+
+`ready` 欄位是以上三者（test_command 可解析、有初始 commit、且 project 模式下沒有未提交變更）綜合出來的唯讀判斷，只是給你先看一眼，不會阻止你真的去派工。
+
 ## ChatGPT 需要固定 Prompt 嗎？
 
 **不需要固定咒語或逐字照抄**，你可以用自然語言描述需求。範例裡的詞語有以下作用：
