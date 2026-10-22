@@ -1290,25 +1290,47 @@ class TaskHub:
 
     def get_task_usage(self, project_id, task_id):
         results = self.get_task_result(project_id, task_id)
-        return [
-            {
-                "execution_id": row["id"],
-                "agent": row["agent"],
-                "role": row["role"],
-                "status": row["status"],
-                "invocation": (row.get("result") or {}).get(
-                    "invocation",
+        usage = []
+        for row in results:
+            # A ChatGPT interactive execution never invokes a local CLI, by design — that
+            # is not the same signal as cli_invoked:false from a native-CLI execution that
+            # actually failed to start. Derive "interactive" from the execution row itself
+            # (agent/adapter), not from whatever happens to be saved in result.invocation,
+            # so this stays correct even for a cancelled/failed interactive execution that
+            # never reached submit_agent_report and so never saved an invocation at all.
+            interactive = row["agent"] == "chatgpt" and row["adapter"] == "interactive"
+            invocation = (row.get("result") or {}).get("invocation")
+            if invocation is None:
+                invocation = (
                     {
+                        "source": "chatgpt_web",
+                        "cli_invoked": False,
+                        "usage": {
+                            "available": False,
+                            "reason": "ChatGPT web/MCP execution never invokes a local CLI; "
+                            "this is expected, not a failure",
+                        },
+                    }
+                    if interactive
+                    else {
                         "cli_invoked": None,
                         "usage": {
                             "available": False,
                             "reason": "Historical execution did not record invocation metadata",
                         },
-                    },
-                ),
-            }
-            for row in results
-        ]
+                    }
+                )
+            usage.append(
+                {
+                    "execution_id": row["id"],
+                    "agent": row["agent"],
+                    "role": row["role"],
+                    "status": row["status"],
+                    "interactive": interactive,
+                    "invocation": invocation,
+                }
+            )
+        return usage
 
     def cancel_task(self, project_id, task_id):
         with self.lock(project_id):

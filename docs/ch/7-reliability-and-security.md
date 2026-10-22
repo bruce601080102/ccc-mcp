@@ -138,6 +138,21 @@ or reduce decision/report history, then dispatch again. Already omitted: [...]
 
 `passed: true` 只代表「pytest 本身沒有爆錯」，不代表「有東西被驗證過」——依照最初的要求「測試失敗或未驗證時，不可對外宣稱完整驗收成功」，這個狀態**一樣會擋住 REVIEW 自動結案**：`commit_context_patch` 把它跟第 2 節的主機測試失敗用同一個條件處理（`_host_tests_unverified`，與 `_host_test_failed` 並列），REVIEW 說沒問題也一樣會被退回 SD/RD，指令會明確寫「這輪什麼都沒被驗證，請補測試再提交」。`brief.tests.no_tests_collected` 讓這個狀態保持可見，不會被誤認為「已經有測試且通過」。這個退出碼判斷只在實際執行的命令看起來是 `pytest` 時生效，不會誤判其他自訂 `test_command` 的退出碼。
 
+## 7. 專案根目錄被刪掉後，不會永久卡死
+
+`project_access_events`、`context_versions`、`decisions` 都是刻意設計成不可刪除（append-only，刪除會直接觸發 SQLite trigger 擋下來），所以沒有任何指令可以「取消註冊」一個專案——即使它的根目錄被使用者在 ccc-mcp 外手動 `rm -rf` 刪掉了。
+
+在這種情況下，下一次任何操作碰到這個專案（`self.project(project_id)`）時，ccc-mcp 會自動重建一個空目錄並重新 `git init` 一次初始 commit，而不是讓這個 ID 永久卡在「註冊了但用不了」的狀態。原始檔案與 Git 歷史無法復原，但 Context、任務、決策全部還留在 ccc-mcp 自己的 SQLite 裡，不受影響：
+
+```bash
+ccc-mcp --project hello-demo config show   # 看起來像唯讀，但背後會先自動修復
+ccc-mcp --project hello-demo context show  # 會看到 SYSTEM 自動記錄的這次修復
+```
+
+這個修復**不是悄悄發生**：每次修復都會額外產生一筆 `author_role: "SYSTEM"` 的 Context 版本，更新 `status`／`next_action` 說明「偵測到根目錄遺失、已自動重建、原始內容無法復原」，往後任何人讀 `context show`／`bootstrap_project`／`task status` 都看得到，不會以為專案一直都是這個狀態。重複呼叫是安全的：目錄已存在時不會重複 `git init` 或重複寫入 Context。
+
+這跟「根目錄被竄改」（例如換成指向別處的符號連結）是兩種不同狀況：竄改會被直接拒絕（`Registered project root moved or is unavailable`），**不會**被當成「遺失」而自動修復——自動修復只處理「單純不存在」，不會信任一個存在但指向別處的路徑。
+
 ## 測試涵蓋
 
 - [tests/test_resumable_advance.py](../tests/test_resumable_advance.py)：派工失敗後的恢復、拒絕不相關的 Patch、`resume_pending_dispatch`、`task cancel` 清理指標、主機測試失敗覆蓋 REVIEW 自述、未收集到測試一樣擋住自動結案、Context 提交與 `pending_dispatch` 指標確實寫在同一個交易裡。
@@ -145,5 +160,6 @@ or reduce decision/report history, then dispatch again. Already omitted: [...]
 - [tests/test_fallback_classification.py](../tests/test_fallback_classification.py)：CLI 未安裝類錯誤不觸發 fallback、額度不足時的分類與 `CHATGPT_HANDOFF_PENDING`。
 - [tests/test_dependency_install.py](../tests/test_dependency_install.py)：各種 manifest 的偵測優先順序、安裝成功／失敗／執行檔不存在、安裝失敗會擋住 REVIEW 自動完成、專屬 venv 的建立與重複使用、`_resolve_against_venv` 的 Windows 解析修正、`execute_test_command` 端到端驗證 venv 真的生效。偵測邏輯是純函式測試；安裝成功/失敗路徑用可控的假指令測試（不會真的呼叫網路上的 pip／npm）；venv 建立與 PATH 解析則是真實建立虛擬環境測試（無需網路，只用 `ensurepip` 內附的 wheel），避免測試依賴網路又不失去端到端真實性。
 - [tests/test_test_evidence.py](../tests/test_test_evidence.py)：`project authorize` 預設自動跑 `pytest -q`、`no_tests_collected` 的正確回報。
+- [tests/test_project_root_recovery.py](../tests/test_project_root_recovery.py)：根目錄被手動刪除後自動重建並重新 `git init`、修復是可重複呼叫且不重複記錄、既有設定（例如 chatgpt-only profile）在修復後保持不變、CLI `config show` 的真實重現、符號連結竄改仍會被拒絕而不是被修復。
 
 以上全部跑在 `FakeAgentAdapter`，不需要真的安裝 Codex／Claude。真實 CLI 的整合驗收腳本（`tests/test_real_agents.py`，`-m real_agents`）目前涵蓋正常接力與測試證據，**尚未涵蓋本頁描述的中斷／恢復與 fallback 分類場景**——這部分仍只在 Fake 測試中驗證過，真實 CLI 環境下的行為未另外實測。

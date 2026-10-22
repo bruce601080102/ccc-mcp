@@ -7,6 +7,7 @@ from pathlib import Path
 import portalocker
 from pydantic import ValidationError
 
+from ..adapters.git import git
 from ..adapters.skills import available_skills
 from ..adapters.storage import artifact, decode, now
 from ..infra.config import metadata_name
@@ -127,10 +128,97 @@ class ContextHub:
         if not row:
             raise BridgeError("Project is not registered; use ccc-mcp project add")
         root = Path(row["root"])
-        if not root.is_dir() or root.resolve() != root:
+        if not root.is_dir():
+            # The directory was deleted outside ccc-mcp (e.g. a manual `rm -rf`). SQLite
+            # remains authoritative for Context/tasks/decisions — none of that is lost —
+            # so recreate an empty, Git-initialized root instead of leaving the
+            # registration permanently unusable (there is no supported way to delete a
+            # registration: project_access_events/context_versions/decisions are
+            # deliberately append-only). Never silent: the recovery is always recorded
+            # as a SYSTEM Context update, visible via context show/bootstrap_project.
+            self._repair_missing_project_root(project_id, root)
+        elif root.resolve() != root:
             raise BridgeError("Registered project root moved or is unavailable")
         safe_path(root, metadata_name(root))
         return row
+
+    def _repair_missing_project_root(self, project_id, root):
+        root.mkdir(parents=True, exist_ok=True)
+        recreated_git = False
+        if self.git_revision(root) == "UNBORN":
+            atomic_write(
+                root / "README.md",
+                f"# {project_id}\n\nRecreated by ccc-mcp: its registered root directory "
+                "was missing (most likely deleted outside ccc-mcp). The original files "
+                "and Git history could not be recovered; Context, tasks and decisions "
+                "remain intact in ccc-mcp's own database.\n",
+            )
+            if not (root / ".gitignore").exists():
+                atomic_write(
+                    root / ".gitignore", ".ccc-mcp/\n.env\n.venv/\n__pycache__/\n.pytest_cache/\n"
+                )
+            git(root, "init")
+            git(root, "add", "--", "README.md", ".gitignore")
+            git(
+                root,
+                "-c", "user.name=ccc-mcp",
+                "-c", "user.email=ccc-mcp@localhost",
+                "-c", "commit.gpgsign=false",
+                "commit", "-m", "Recreated missing project root",
+            )
+            recreated_git = True
+        self._record_missing_root_recovery(project_id, recreated_git)
+
+    def _record_missing_root_recovery(self, project_id, recreated_git):
+        """Append a SYSTEM-authored Context update describing the recovery, so it is
+        never a silent fix — the next `context show`/`bootstrap_project`/`task status`
+        makes it visible, even to someone who did not witness the directory disappear."""
+        latest = self.latest(project_id)
+        snapshot = latest["snapshot"]
+        language = self.get_project_settings(project_id, import_file=False)["language"]
+        git_note = {
+            "zh-TW": "並重新初始化 Git 儲存庫",
+            "ch": "并重新初始化 Git 仓库",
+            "en": " and reinitialized its Git repository",
+        }[language] if recreated_git else ""
+        snapshot["status"] = {
+            "zh-TW": f"偵測到專案根目錄遺失，ccc-mcp 已自動重建空目錄{git_note}；"
+            "原始檔案與歷史無法復原，Context／任務／決策仍完整保留。",
+            "ch": f"检测到项目根目录丢失，ccc-mcp 已自动重建空目录{git_note}；"
+            "原始文件与历史无法恢复，Context／任务／决策仍完整保留。",
+            "en": "Detected a missing project root directory; ccc-mcp automatically "
+            f"recreated an empty one{git_note}. The original files and history could "
+            "not be recovered; Context, tasks and decisions remain intact.",
+        }[language]
+        snapshot["next_action"] = {
+            "zh-TW": "確認重建後的根目錄內容，必要時手動補回仍需要的檔案。",
+            "ch": "确认重建后的根目录内容，必要时手动补回仍需要的文件。",
+            "en": "Review the recreated root directory and manually restore any files "
+            "you still need.",
+        }[language]
+        version = latest["version"] + 1
+        metadata = {
+            "base_context_version": latest["version"],
+            "new_context_version": version,
+            "changed_sections": ["status", "next_action"],
+            "source_task_ids": [],
+            "source_document_refs": [],
+            "update_reason": "Automatically recovered a missing project root directory",
+            "author_role": "SYSTEM",
+            "git_revision": self.git_revision(Path(self.project(project_id)["root"])),
+            "timestamp": now(),
+        }
+        self.store.execute(
+            "INSERT INTO context_versions VALUES(?,?,?,?,?)",
+            (
+                project_id,
+                version,
+                ContextSnapshot.model_validate(snapshot).model_dump_json(),
+                canonical(metadata),
+                now(),
+            ),
+        )
+        self.sync_documents(project_id)
 
     def lock(self, project_id):
         folder = self.home / "locks"

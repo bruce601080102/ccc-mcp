@@ -52,13 +52,21 @@ ccc-mcp --project 專案ID config role ROLE PROVIDER [--model 模型ID] [--effor
 | Codex | `minimal`、`low`、`medium`、`high`、`xhigh`、`max`、`ultra` |
 | Claude | `low`、`medium`、`high`、`xhigh`、`max`、`ultracode` |
 
-全部交給 ChatGPT 可改用：
+全部交給 ChatGPT 最簡單的方式是套用 `chatgpt-only` profile，會一次把全部五個角色（`SA`、`SD`、`RD`、`SD/RD`、`REVIEW`）設好且不殘留 Codex／Claude 的 model/effort/fallback；自動派工只會用到其中 `SA`、`SD/RD`、`REVIEW` 三個，但獨立的 `SD`、`RD` 也會一起設定，`config show` 才不會看起來還混著 Claude：
 
 ```bash
-for role in SA SD RD SD/RD REVIEW; do
-  ccc-mcp --project demo-app config role "$role" chatgpt
-done
+ccc-mcp --project demo-app config profile chatgpt-only
 ```
+
+`config role` 逐一設定也仍然有效（只有 `SA`、`SD/RD`、`REVIEW` 會被自動派工用到）：
+
+```bash
+ccc-mcp --project demo-app config role SA chatgpt
+ccc-mcp --project demo-app config role SD/RD chatgpt
+ccc-mcp --project demo-app config role REVIEW chatgpt
+```
+
+`ccc-mcp --project demo-app config show` 會回報目前的 `profile`（`chatgpt-only`／`best-model`／`custom`）；要切回最佳模型工作流，執行 `ccc-mcp --project demo-app config profile best-model`——這個 `best-model` 會依本機實際裝了哪些 CLI 動態決定（兩個都裝＝原本的 Codex/Claude 分工；只裝一個＝全部角色用那一個；一個都沒裝會直接拒絕），不是固定寫死的組合。
 
 ## ChatGPT 需要固定 Prompt 嗎？
 

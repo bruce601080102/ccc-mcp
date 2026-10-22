@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 
 from ..adapters.agents import ADAPTERS, CodexAdapter
-from ..adapters.agents.base import operator_policy
+from ..adapters.agents.base import native_executable, operator_policy
 from ..adapters.git import git
 from ..infra.config import cli_language, metadata_name
 from ..infra.errors import BridgeError
@@ -20,6 +20,72 @@ EFFORTS = {
     "claude": {"low", "medium", "high", "xhigh", "max", "ultracode"},
     "chatgpt": set(),
 }
+
+PROFILE_NAMES = ("chatgpt-only", "best-model")
+
+
+def _detect_available_native_providers():
+    """Which native CLIs (codex/claude) are actually installed on this machine right
+    now — a lightweight executable lookup (no subprocess spawn, no login check), so
+    `config profile best-model` reflects what can actually run here, never a fixed
+    assumption that both are installed. Someone with only Claude Code, only Codex, or
+    neither, all get a sensible result instead of a combination that half-fails at
+    dispatch time with a confusing "CLI not installed" error.
+    """
+    available = set()
+    for provider in ADAPTERS:
+        try:
+            native_executable(provider)
+            available.add(provider)
+        except BridgeError:
+            pass
+    return available
+
+
+def best_model_roles(available=None):
+    """The role/provider combination `config profile best-model` currently means:
+    Codex for SA/REVIEW and Claude for SD/RD when both are installed (the original
+    opinionated split); every role on whichever single native CLI is installed when
+    only one is; `None` when neither is, since there is then no native "best model"
+    to apply at all.
+    """
+    if available is None:
+        available = _detect_available_native_providers()
+    codex, claude = "codex" in available, "claude" in available
+    if codex and claude:
+        return {role: "codex" if role in {"SA", "REVIEW"} else "claude" for role in ROLES}
+    if codex:
+        return dict.fromkeys(ROLES, "codex")
+    if claude:
+        return dict.fromkeys(ROLES, "claude")
+    return None
+
+
+def profile_roles(profile, available=None):
+    """Resolve a profile name to the role->provider mapping it currently means.
+    `chatgpt-only` is fixed; `best-model` is dynamic (see best_model_roles) and may
+    resolve to `None` when no native CLI is installed at all."""
+    if profile == "chatgpt-only":
+        return dict.fromkeys(ROLES, "chatgpt")
+    if profile == "best-model":
+        return best_model_roles(available)
+    raise BridgeError(f"Unsupported profile; choose one of {PROFILE_NAMES}")
+
+
+def detect_profile(roles):
+    """Best-effort label for config show/providers; always derived from every role's
+    current provider against what each profile currently means on this machine, so it
+    can never drift from what config role/config profile actually left in place —
+    and `best-model` only matches when it's the combination this machine could
+    actually run right now, not a fixed assumption some other machine might satisfy."""
+    if all(roles[role]["provider"] == "chatgpt" for role in ROLES):
+        return "chatgpt-only"
+    best_model = best_model_roles()
+    if best_model is not None and all(
+        roles[role]["provider"] == best_model[role] for role in ROLES
+    ):
+        return "best-model"
+    return "custom"
 
 
 def directory(path, create=False):
@@ -261,6 +327,35 @@ class ConfigurationHub:
             settings["roles"][role] = updated
             return self._save_settings(project_id, settings)
 
+    def configure_profile(self, project_id, profile):
+        """Apply a bundled provider combination to every role (SA, SD, RD, SD/RD,
+        REVIEW) in one call.
+
+        Each role is re-validated through `_validated_role` with no model/effort/
+        quota_fallback, so switching profiles always clears any provider-specific
+        leftovers from before — never a partial overwrite that keeps e.g. a Claude
+        `effort` sitting unused under a now-ChatGPT role. Standalone SD/RD are
+        included even though advance_project never auto-dispatches them (it only ever
+        uses the combined SD/RD role) — config show must show a clean, fully-applied
+        profile, not a provider mix that only matters for manual dispatch_agent calls.
+
+        `best-model` is resolved dynamically (see best_model_roles) against whatever
+        native CLIs are actually installed on this machine, not a fixed assumption
+        that both Codex and Claude Code are present.
+        """
+        mapping = profile_roles(profile)
+        if mapping is None:
+            raise BridgeError(
+                "Neither the Codex nor the Claude Code CLI is installed on this "
+                "machine; best-model has no native provider to assign. Install one of "
+                "them, or run `config profile chatgpt-only` instead."
+            )
+        with self.lock(project_id):
+            settings = self.get_project_settings(project_id)
+            for role, provider in mapping.items():
+                settings["roles"][role] = self._validated_role(role, provider)
+            return self._save_settings(project_id, settings)
+
     def configure_read_root(self, project_id, name, path):
         identifier(name)
         if name in {"project", "worktree"}:
@@ -327,6 +422,7 @@ class ConfigurationHub:
         settings = self.get_project_settings(project_id)
         return {
             "protocol_version": PROTOCOL_VERSION,
+            "profile": detect_profile(settings["roles"]),
             **{
                 key: value for key, value in settings.items()
                 if key not in {"workflow_mode", "workspace_mode", "worktree_dir", "writable_files", "writable_roots"}
@@ -340,6 +436,7 @@ class ConfigurationHub:
         ADAPTERS) shows up here automatically, nothing else to wire up by hand."""
         settings = self.get_project_settings(project_id)
         return {
+            "profile": detect_profile(settings["roles"]),
             "editable": {
                 "roles": settings["roles"],
                 "language": settings["language"],
@@ -358,6 +455,12 @@ class ConfigurationHub:
                 "自動流程（advance_project）只會派合併角色 \"SD/RD\"，從不單獨派 \"SD\" 或 \"RD\"；"
                 "單獨設定 roles.SD / roles.RD 不會影響自動派工，只有手動呼叫 "
                 "dispatch_agent(role=\"SD\") 這類直接指定角色時才會用到。",
+                "profile 是從目前所有角色（SA/SD/RD/SD-RD/REVIEW）的 provider 推算出來的唯讀標籤，"
+                "從不單獨保存；用 `config profile chatgpt-only` 或 `config profile best-model` "
+                "一次套用整組角色（包含不會被自動派工用到的 SD、RD），混合設定時顯示 \"custom\"。"
+                "best-model 會依本機實際安裝的 Codex／Claude Code CLI 動態決定：兩個都裝了維持原本 "
+                "SA/REVIEW=codex、SD/RD=claude 的組合；只裝一個就全部角色都用那一個；一個都沒裝則 "
+                "config profile best-model 會直接拒絕，請改裝其中一個或使用 chatgpt-only。",
             ],
         }
 
@@ -479,7 +582,13 @@ class ConfigurationHub:
             raise BridgeError("Language must be zh-TW, ch or en")
         identifier(project_id)
         if self.store.one("SELECT id FROM projects WHERE id=?", (project_id,)):
-            raise BridgeError("Project ID is already registered")
+            raise BridgeError(
+                "Project ID is already registered; use it directly instead of creating it "
+                "again (e.g. `ccc-mcp --project "
+                f"{project_id} config show`) — if its root directory was deleted outside "
+                "ccc-mcp, the next command against it recreates an empty one automatically. "
+                "Use a different ID for a genuinely new project."
+            )
         target = (
             Path(path).expanduser().absolute() if path else self.projects_directory() / project_id
         )

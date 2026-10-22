@@ -30,9 +30,26 @@ ccc-mcp --project my-project config show
 
 每次 `config role` 都會整組取代該角色的 provider、model、effort、fallback；要保留的選項須一起填寫。省略模型與思考等級時使用 CLI 自己的預設。ChatGPT 網頁模型由對話介面選擇，ccc-mcp 不會冒稱可控制或獨立驗證。`SD`、`RD`、`SD/RD` 是三個獨立角色設定。額度不足接手只適用已辨識的用量限制；登入、參數或程式錯誤不會被當作額度不足。
 
-### 全程使用 ChatGPT
+### 全程使用 ChatGPT（chatgpt-only profile）
 
-不安裝 Codex 或 Claude Code CLI 也能讓三個自動角色都由 ChatGPT 執行：
+不安裝 Codex 或 Claude Code CLI 也能讓三個自動角色都由 ChatGPT 執行。一次套用：
+
+```bash
+ccc-mcp --project my-project config profile chatgpt-only
+ccc-mcp --project my-project config show
+```
+
+`config profile chatgpt-only` 會把全部五個角色（`SA`、`SD`、`RD`、`SD/RD`、`REVIEW`）都設為 `chatgpt`，並清除原本設定的 Codex／Claude 專屬 `model`、`effort` 與 `quota-fallback`，不會殘留——即使自動流程（`advance_project`）實際上只會用到 `SA`、`SD/RD`、`REVIEW` 這三個，獨立的 `SD`、`RD` 也會一起設定，`config show` 才不會看起來還混著 Codex／Claude。要切回最佳模型工作流，執行：
+
+```bash
+ccc-mcp --project my-project config profile best-model
+```
+
+`best-model` 不是固定的組合，而是**依本機實際安裝的 Codex／Claude Code CLI 動態決定**：兩個都裝了，維持原本 `SA`／`REVIEW` 用 Codex、`SD`／`RD`／`SD-RD` 用 Claude 的分工；只裝了其中一個（例如只有 Claude Code、沒有 Codex，或反過來），就把全部五個角色都設成那一個，而不是硬塞一個其實跑不起來的組合；兩個都沒裝則 `config profile best-model` 會直接拒絕，請先安裝其中一個，或改用 `chatgpt-only`。
+
+`config show` 與 `config providers` 都會多一個唯讀的 `profile` 欄位，由目前所有角色的 provider、對照「這台機器現在算什麼」即時推算，從不另外保存：全部都是 `chatgpt` 時顯示 `chatgpt-only`；符合這台機器當下的 best-model 組合時顯示 `best-model`；其餘（包含「剛好是 Codex/Claude 分工，但其中一個根本沒裝」這種其實跑不起來的情況）都顯示 `custom`。
+
+`config profile` 只是 `config role` 的整組捷徑，仍可用 `config role` 個別調整：
 
 ```bash
 ccc-mcp --project my-project config role SA chatgpt
@@ -40,7 +57,9 @@ ccc-mcp --project my-project config role SD/RD chatgpt
 ccc-mcp --project my-project config role REVIEW chatgpt
 ```
 
-這不是 fake 或降級流程：ChatGPT 會透過 ccc-mcp 的 MCP 工具互動式完成角色，主機仍照一般流程保留 Context、檔案與測試證據。它不消耗 Codex／Claude Code CLI 額度；ChatGPT 的可用模型與工具額度仍依連線帳戶和方案而定。
+這不是 fake 或降級流程：ChatGPT 會透過 ccc-mcp 的 MCP 工具互動式完成角色，主機仍照一般流程保留 Context、檔案與測試證據（包含 `project authorize` 設定的 `test_command` 自動執行）。它不消耗 Codex／Claude Code CLI 額度；ChatGPT 的可用模型與工具額度仍依連線帳戶和方案而定。
+
+對 ChatGPT 互動式執行，`task usage` 會明確標示 `"interactive": true` 與 `invocation.source: "chatgpt_web"`，`cli_invoked: false` 在這裡代表「本來就不會呼叫 CLI」，不是失敗訊號；只有原生 CLI（Codex／Claude Code）執行時 `cli_invoked: false` 才代表 CLI 沒有被成功呼叫。
 
 Windows 上 Claude Code 若由 npm 安裝，ccc-mcp 會尋找官方套件中的 `claude.exe`，不透過可能受 PowerShell 執行原則限制的 `.ps1` 或 shell 包裝腳本。仍需先完成各 CLI 登入。對已授權專案，real-agent 派工不再需要額外設定環境開關；更新後須重啟 Tunnel，讓服務讀到新程式與工具清單。
 

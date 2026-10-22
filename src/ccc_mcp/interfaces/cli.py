@@ -235,6 +235,31 @@ def config_providers(ctx: typer.Context):
 
 
 @config_app.command(
+    "profile",
+    help=t(
+        "套用一組角色 provider 組合（SA、SD、RD、SD/RD、REVIEW 全部一起設定）：chatgpt-only "
+        "全部設為 ChatGPT（清除任何 Codex／Claude 專屬 model/effort/quota-fallback）；"
+        "best-model 依本機實際安裝的 Codex／Claude Code CLI 動態決定（兩個都裝＝原本的 "
+        "codex/claude 分工；只裝一個＝全部角色用那一個；一個都沒裝則拒絕）。"
+        "例如：ccc-mcp config profile chatgpt-only",
+        "Apply a bundled provider combination to every role (SA, SD, RD, SD/RD, REVIEW): "
+        "chatgpt-only sets all of them to ChatGPT (clearing any Codex/Claude-specific "
+        "model/effort/quota-fallback); best-model is resolved dynamically from whichever "
+        "native CLIs are actually installed on this machine (both installed keeps the "
+        "original Codex/Claude split; only one installed assigns every role to it; "
+        "neither installed is rejected). Example: ccc-mcp config profile chatgpt-only",
+    ),
+)
+def config_profile(
+    ctx: typer.Context,
+    profile: Annotated[
+        str, typer.Argument(help=t("chatgpt-only 或 best-model", "chatgpt-only or best-model"))
+    ],
+):
+    output(bridge(ctx).configure_profile(project_id(ctx), profile))
+
+
+@config_app.command(
     "prompt",
     help=t(
         "純讀取：依目前設定印出該角色實際會收到的操作政策／提示文字，不會真的派工。",

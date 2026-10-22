@@ -195,6 +195,136 @@ def test_config_providers_cli_reports_current_roles(bridge):
     assert "read_only_status" in payload
 
 
+def native_clis(monkeypatch, *installed):
+    """Deterministically control which native CLIs `best-model` sees as installed,
+    instead of depending on whatever happens to be on the machine actually running
+    the tests (this repo's own dev box has Claude Code but not Codex, which is
+    exactly the scenario this logic exists to handle)."""
+
+    def fake(executable):
+        if executable in installed:
+            return f"/fake/bin/{executable}"
+        raise BridgeError(f"Native {executable} executable unavailable; install the official CLI")
+
+    monkeypatch.setattr("ccc_mcp.core.configuration.native_executable", fake)
+
+
+def test_default_profile_is_best_model_when_both_native_clis_are_installed(bridge, monkeypatch):
+    native_clis(monkeypatch, "codex", "claude")
+    assert bridge.public_project_settings("demo")["profile"] == "best-model"
+    assert bridge.provider_overview("demo")["profile"] == "best-model"
+
+
+def test_configure_profile_chatgpt_only_clears_other_provider_settings(bridge):
+    """Regression (real-world smoke test): switching to chatgpt-only must leave every
+    role slot — including standalone SD/RD, which advance_project never auto-dispatches
+    but which `config show` still displays — reading as ChatGPT, not a provider mix."""
+    bridge.configure_role("demo", "SA", "codex", effort="high", quota_fallback="chatgpt")
+    bridge.configure_role("demo", "SD", "claude", model="sonnet", effort="high")
+    bridge.configure_role("demo", "RD", "claude", model="sonnet", effort="high")
+    bridge.configure_role("demo", "SD/RD", "claude", model="sonnet", effort="high")
+    bridge.configure_role("demo", "REVIEW", "codex", effort="xhigh")
+
+    result = bridge.configure_profile("demo", "chatgpt-only")
+
+    for role in ("SA", "SD", "RD", "SD/RD", "REVIEW"):
+        assert result["roles"][role] == {
+            "provider": "chatgpt", "model": None, "effort": None, "quota_fallback": None,
+        }
+    assert bridge.public_project_settings("demo")["profile"] == "chatgpt-only"
+    assert bridge.provider_overview("demo")["profile"] == "chatgpt-only"
+
+
+def test_configure_profile_best_model_restores_the_split_when_both_clis_are_installed(
+    bridge, monkeypatch
+):
+    native_clis(monkeypatch, "codex", "claude")
+    bridge.configure_profile("demo", "chatgpt-only")
+
+    result = bridge.configure_profile("demo", "best-model")
+
+    assert result["roles"]["SA"] == {
+        "provider": "codex", "model": None, "effort": None, "quota_fallback": None,
+    }
+    for role in ("SD", "RD", "SD/RD"):
+        assert result["roles"][role] == {
+            "provider": "claude", "model": None, "effort": None, "quota_fallback": None,
+        }
+    assert result["roles"]["REVIEW"] == {
+        "provider": "codex", "model": None, "effort": None, "quota_fallback": None,
+    }
+    assert bridge.public_project_settings("demo")["profile"] == "best-model"
+
+
+@pytest.mark.parametrize("installed", ["codex", "claude"])
+def test_configure_profile_best_model_uses_the_one_installed_cli_for_every_role(
+    bridge, monkeypatch, installed
+):
+    """Regression (user feedback): "best-model" is only meaningful relative to what is
+    actually installed on this machine — someone with only Claude Code (no Codex), or
+    only Codex (no Claude Code), must get that single CLI assigned to every role, not
+    a fixed split that silently leaves half the roles pointed at a CLI that isn't
+    there."""
+    native_clis(monkeypatch, installed)
+    bridge.configure_profile("demo", "chatgpt-only")
+
+    result = bridge.configure_profile("demo", "best-model")
+
+    for role in ("SA", "SD", "RD", "SD/RD", "REVIEW"):
+        assert result["roles"][role] == {
+            "provider": installed, "model": None, "effort": None, "quota_fallback": None,
+        }
+    assert bridge.public_project_settings("demo")["profile"] == "best-model"
+
+
+def test_configure_profile_best_model_rejects_when_no_native_cli_is_installed(
+    bridge, monkeypatch
+):
+    native_clis(monkeypatch)
+    with pytest.raises(BridgeError, match="Neither the Codex nor the Claude Code CLI"):
+        bridge.configure_profile("demo", "best-model")
+
+
+def test_detect_profile_reports_custom_for_a_mixed_combination(bridge, monkeypatch):
+    native_clis(monkeypatch, "codex", "claude")
+    bridge.configure_role("demo", "SA", "chatgpt")
+    bridge.configure_role("demo", "SD/RD", "claude")
+    bridge.configure_role("demo", "REVIEW", "codex")
+    assert bridge.public_project_settings("demo")["profile"] == "custom"
+    assert bridge.provider_overview("demo")["profile"] == "custom"
+
+
+def test_detect_profile_reports_custom_when_best_model_combination_is_not_runnable(
+    bridge, monkeypatch
+):
+    """The default, untouched role config (codex/claude split) must not be labeled
+    "best-model" on a machine where one of those CLIs isn't actually installed — that
+    combination can't really run here, so calling it "best" would be misleading."""
+    native_clis(monkeypatch, "claude")
+    assert bridge.public_project_settings("demo")["profile"] == "custom"
+
+
+def test_configure_profile_rejects_unknown_name(bridge):
+    with pytest.raises(BridgeError):
+        bridge.configure_profile("demo", "fastest")
+
+
+def test_config_profile_cli_round_trip(bridge, monkeypatch):
+    native_clis(monkeypatch, "codex", "claude")
+    runner = CliRunner()
+    prefix = ["--home", str(bridge.home), "--project", "demo"]
+    result = runner.invoke(app, prefix + ["config", "profile", "chatgpt-only"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["roles"]["SA"]["provider"] == "chatgpt"
+    assert payload["roles"]["REVIEW"]["provider"] == "chatgpt"
+    assert bridge.public_project_settings("demo")["profile"] == "chatgpt-only"
+
+    back = runner.invoke(app, prefix + ["config", "profile", "best-model"])
+    assert back.exit_code == 0, back.output
+    assert bridge.public_project_settings("demo")["profile"] == "best-model"
+
+
 @pytest.mark.parametrize("role", ["SA", "SD", "RD", "SD/RD", "REVIEW"])
 def test_role_prompt_preview_matches_what_dispatch_would_actually_send(bridge, role):
     """Regression (Feature 2): the preview must be built from the same functions the
@@ -444,6 +574,42 @@ def test_chatgpt_cancel_closes_execution_and_prevents_late_submission(bridge):
     assert bridge.get_task_result("demo", "TASK-0001")[-1]["status"] == "CANCELLED"
     with pytest.raises(PermissionDenied):
         bridge.submit_agent_report("demo", queued["execution_id"], report())
+
+
+def test_task_usage_clearly_labels_chatgpt_interactive_execution(bridge):
+    """Regression target for the chatgpt-only profile: `cli_invoked: False` on an
+    interactive ChatGPT role must read as "ChatGPT web/MCP, by design", never as the
+    ambiguous generic failure a missing/false CLI invocation would otherwise suggest."""
+    bridge.configure_role("demo", "SA", "chatgpt")
+    bridge.create_task("demo", "Analyze")
+    queued = dispatch(bridge)
+    before_submit = bridge.get_task_usage("demo", "TASK-0001")[-1]
+    assert before_submit["interactive"] is True
+    assert before_submit["invocation"]["source"] == "chatgpt_web"
+    assert before_submit["invocation"]["cli_invoked"] is False
+    assert "never invokes a local CLI" in before_submit["invocation"]["usage"]["reason"]
+
+    bridge.submit_agent_report("demo", queued["execution_id"], report())
+    after_submit = bridge.get_task_usage("demo", "TASK-0001")[-1]
+    assert after_submit["interactive"] is True
+    assert after_submit["invocation"]["source"] == "chatgpt_web"
+    assert after_submit["invocation"]["cli_invoked"] is False
+
+
+def test_task_usage_labels_a_cancelled_chatgpt_interactive_execution_too(bridge):
+    """A cancelled interactive execution never reaches submit_agent_report, so it saves
+    no result/invocation at all — get_task_usage must still derive the ChatGPT-by-design
+    label from the execution row itself, not fall back to the legacy "metadata missing"
+    default that a cancelled native-CLI execution would correctly get instead."""
+    bridge.configure_role("demo", "SA", "chatgpt")
+    bridge.create_task("demo", "Analyze")
+    dispatch(bridge)
+    bridge.cancel_task("demo", "TASK-0001")
+    usage = bridge.get_task_usage("demo", "TASK-0001")[-1]
+    assert usage["status"] == "CANCELLED"
+    assert usage["interactive"] is True
+    assert usage["invocation"]["cli_invoked"] is False
+    assert usage["invocation"]["source"] == "chatgpt_web"
 
 
 def test_read_roots_are_explicit_bounded_and_revocable(bridge, tmp_path):

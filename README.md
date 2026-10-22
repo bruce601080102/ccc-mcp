@@ -37,12 +37,10 @@ ccc-mcp project create hello-demo
 ccc-mcp project authorize hello-demo
 ```
 
-For a ChatGPT-only workflow, omit `ccc-mcp setup all`, then set every automatic role after creating the project:
+For a ChatGPT-only workflow, omit `ccc-mcp setup all`, then apply the `chatgpt-only` profile after creating the project:
 
 ```bash
-ccc-mcp --project hello-demo config role SA chatgpt
-ccc-mcp --project hello-demo config role SD/RD chatgpt
-ccc-mcp --project hello-demo config role REVIEW chatgpt
+ccc-mcp --project hello-demo config profile chatgpt-only
 ```
 
 Connect the local server to ChatGPT with the Tunnel instructions in [Chinese](docs/ch/2-connect-chatgpt.md) or [English](docs/en/2-connect-chatgpt.md). Then ask ChatGPT, with the ccc-mcp connection selected:
@@ -57,7 +55,9 @@ ccc-mcp --project hello-demo task usage
 ccc-mcp --project hello-demo context show
 ```
 
-For a native role, `task usage` is the source of truth for whether its CLI was actually invoked. A ChatGPT role is intentionally interactive and has no native CLI invocation. In either mode, a reported success is not sufficient: the configured host test command is recorded before review can complete the task.
+For a native role, `task usage` is the source of truth for whether its CLI was actually invoked. A ChatGPT role is intentionally interactive and has no native CLI invocation: `task usage` marks it `"interactive": true` with `invocation.source: "chatgpt_web"`, so `cli_invoked: false` there reads as "by design," never as an ambiguous CLI failure. In either mode, a reported success is not sufficient: the configured host test command is recorded before review can complete the task.
+
+`ccc-mcp --project hello-demo config show` (or `config providers`) also reports a read-only `profile` field — `chatgpt-only`, `best-model`, or `custom` — derived live from every role's current provider. Switch back at any time with `ccc-mcp --project hello-demo config profile best-model`, which resolves dynamically from whichever native CLIs are actually installed (both → the Codex/Claude split; only one → every role on it; neither → rejected).
 
 ## How the workflow works
 

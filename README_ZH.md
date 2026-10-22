@@ -37,12 +37,10 @@ ccc-mcp project create hello-demo
 ccc-mcp project authorize hello-demo
 ```
 
-若要全程使用 ChatGPT，略過 `ccc-mcp setup all`，建立專案後將所有自動角色設定為 ChatGPT：
+若要全程使用 ChatGPT，略過 `ccc-mcp setup all`，建立專案後套用 `chatgpt-only` profile：
 
 ```bash
-ccc-mcp --project hello-demo config role SA chatgpt
-ccc-mcp --project hello-demo config role SD/RD chatgpt
-ccc-mcp --project hello-demo config role REVIEW chatgpt
+ccc-mcp --project hello-demo config profile chatgpt-only
 ```
 
 依照[連接 ChatGPT](docs/ch/2-connect-chatgpt.md)建立 Tunnel 並選取 ccc-mcp 連線後，在 ChatGPT 提出：
@@ -57,7 +55,9 @@ ccc-mcp --project hello-demo task usage
 ccc-mcp --project hello-demo context show
 ```
 
-對原生角色而言，`task usage` 才是 CLI 是否真的被呼叫的依據；ChatGPT 角色本來就是互動式執行，沒有原生 CLI 呼叫。不論哪種模式，聊天回覆自稱成功都不夠；設定的主機測試命令會在 REVIEW 完成前留下紀錄。
+對原生角色而言，`task usage` 才是 CLI 是否真的被呼叫的依據；ChatGPT 角色本來就是互動式執行，沒有原生 CLI 呼叫：`task usage` 會標示 `"interactive": true` 與 `invocation.source: "chatgpt_web"`，所以這裡的 `cli_invoked: false` 代表「設計上本來就不呼叫」，不是模糊的 CLI 失敗訊號。不論哪種模式，聊天回覆自稱成功都不夠；設定的主機測試命令會在 REVIEW 完成前留下紀錄。
+
+`ccc-mcp --project hello-demo config show`（或 `config providers`）也會顯示唯讀的 `profile` 欄位——`chatgpt-only`、`best-model` 或 `custom`——由目前所有角色的 provider 即時推算。隨時可用 `ccc-mcp --project hello-demo config profile best-model` 切回，這會依本機實際安裝的 CLI 動態決定（兩個都裝＝Codex/Claude 分工；只裝一個＝全部角色用那一個；一個都沒裝則拒絕）。
 
 ## 工作流程
 
