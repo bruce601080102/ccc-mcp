@@ -13,5 +13,6 @@ Read these files in order. Steps 1–4 are the complete first-run path; later do
 9. [Public protocol and schemas](9-protocol.md)
 10. [Technical reference](10-technical-reference.md)
 11. [Architecture specification](11-architecture-spec.md)
+12. [ChatGPT-only end-to-end evidence walkthrough](12-chatgpt-only-e2e-walkthrough.md)
 
 For the short introduction and copy-paste path, return to the repository [README](../../README.md). Traditional Chinese documentation is in [docs/ch](../ch/README.md).
