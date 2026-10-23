@@ -69,6 +69,8 @@ ccc-mcp --project demo-app config role REVIEW chatgpt
 
 `ccc-mcp --project demo-app config show` 會回報目前的 `profile`（`chatgpt-only`／`best-model`／`custom`）；要切回最佳模型工作流，執行 `ccc-mcp --project demo-app config profile best-model`——這個 `best-model` 會依本機實際裝了哪些 CLI 動態決定（兩個都裝＝原本的 Codex/Claude 分工；只裝一個＝全部角色用那一個；一個都沒裝會直接拒絕），不是固定寫死的組合。
 
+`config meeting-mode on|off [--min-rounds N] [--max-rounds N]` 開關[第 4 步](4-workflow.md#5a-meeting-modesdrd-動工前先問一輪預設關閉)描述的 SD/RD↔SA 澄清對話，預設關閉，`max_rounds` 硬上限 5。解決升級給 PM 的澄清沒有對應 CLI 指令（`resolve_clarification` 是給 PM／ChatGPT 呼叫的 MCP 工具）——跟 `advance_project`／`propose_context_patch`／`commit_context_patch` 一樣都沒有 CLI 版本。
+
 ## 現在輪到誰、下一步該貼什麼？
 
 ```bash

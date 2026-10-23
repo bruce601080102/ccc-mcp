@@ -1,0 +1,35 @@
+{
+  "additionalProperties": false,
+  "description": "Meeting Mode's read-only SD/RD submission: at most one blocking question,\nnever an implementation report. A separate model from AgentReport (not an\nextension of it) so every other role never has to populate these fields.",
+  "properties": {
+    "blocking_question": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Blocking Question"
+    },
+    "no_blocking_question": {
+      "default": false,
+      "title": "No Blocking Question",
+      "type": "boolean"
+    },
+    "rationale": {
+      "minLength": 1,
+      "title": "Rationale",
+      "type": "string"
+    }
+  },
+  "required": [
+    "blocking_question",
+    "no_blocking_question",
+    "rationale"
+  ],
+  "title": "ClarificationRequest",
+  "type": "object"
+}

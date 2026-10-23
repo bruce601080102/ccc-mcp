@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 # Bump only for incompatible changes to the published schemas (docs/schema/*.json);
 # an additive, optional field does not require a bump. See docs/en/9-protocol.md.
@@ -92,7 +92,10 @@ class ContextPatch(StrictModel):
     source_execution_ids: list[str] = Field(default_factory=list)
     source_document_refs: list[SourceRef] = Field(default_factory=list)
     update_reason: str = Field(min_length=1)
-    author_role: Literal["PM"] = "PM"
+    # SYSTEM is reserved for ccc-mcp's internal, guarded auto-advance path.  Public
+    # callers cannot use it to bypass PM review (ContextHub rejects it unless its
+    # private automatic flag is supplied by the worker).
+    author_role: Literal["PM", "SYSTEM"] = "PM"
     semantic_review_ack: bool = False
 
 
@@ -111,3 +114,58 @@ class AgentReport(StrictModel):
     needs_revision: bool = False
     simulated: bool = False
     context_updates: list[str] = Field(default_factory=list)
+
+
+class ClarificationRequest(StrictModel):
+    """Meeting Mode's read-only SD/RD submission: at most one blocking question,
+    never an implementation report. A separate model from AgentReport (not an
+    extension of it) so every other role never has to populate these fields."""
+
+    blocking_question: str | None = None
+    no_blocking_question: bool = False
+    rationale: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_outcome(self):
+        """Require one unambiguous, usable Meeting Mode outcome.
+
+        JSON Schema can express the field types but not this relationship. A missing
+        question is safely equivalent to "no blocking question", even when a CLI
+        emits the boolean's old default (false). Normalizing that benign mismatch
+        prevents it from reaching SQLite's NOT NULL question column.
+        """
+        rationale = self.rationale.strip()
+        if not rationale:
+            raise ValueError("rationale must not be blank")
+        self.rationale = rationale
+
+        question = self.blocking_question
+        normalized_question = question.strip() if isinstance(question, str) else None
+        if self.no_blocking_question:
+            if normalized_question:
+                raise ValueError(
+                    "blocking_question must be empty when no_blocking_question is true"
+                )
+            self.blocking_question = None
+            return self
+        if not normalized_question:
+            self.blocking_question = None
+            self.no_blocking_question = True
+            return self
+        self.blocking_question = normalized_question
+        return self
+
+
+class ClarificationResponse(StrictModel):
+    """Meeting Mode's SA answer to one ClarificationRequest."""
+
+    response_type: Literal["confirmed", "recommendation", "pm_decision_required"]
+    content: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def normalize_content(self):
+        content = self.content.strip()
+        if not content:
+            raise ValueError("content must not be blank")
+        self.content = content
+        return self

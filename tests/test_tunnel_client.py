@@ -77,6 +77,10 @@ def test_ensure_tunnel_client_downloads_and_verifies(tmp_path, monkeypatch):
 
     assert target == tmp_path / "tools" / "tunnel-client" / "tunnel-client.exe"
     assert target.read_bytes() == b"fake binary contents"
+    assert json.loads(tunnel_client.tunnel_client_metadata_path(tmp_path).read_text()) == {
+        "archive_name": "tunnel-client-v1.0.0-windows-amd64.zip",
+        "platform_tag": "windows-amd64",
+    }
 
 
 def test_ensure_tunnel_client_rejects_sha256_mismatch(tmp_path, monkeypatch):
@@ -96,6 +100,9 @@ def test_ensure_tunnel_client_skips_network_when_already_installed(tmp_path, mon
     target = tmp_path / "tools" / "tunnel-client" / "tunnel-client.exe"
     target.parent.mkdir(parents=True)
     target.write_bytes(b"already installed")
+    tunnel_client.tunnel_client_metadata_path(tmp_path).write_text(
+        json.dumps({"platform_tag": "windows-amd64"}), encoding="utf-8"
+    )
 
     def fail_urlopen(*args, **kwargs):
         raise AssertionError("urlopen should not be called when already installed")
@@ -106,6 +113,48 @@ def test_ensure_tunnel_client_skips_network_when_already_installed(tmp_path, mon
 
     assert result == target
     assert result.read_bytes() == b"already installed"
+
+
+def test_ensure_tunnel_client_replaces_unstamped_legacy_binary(tmp_path, monkeypatch):
+    target = tmp_path / "tools" / "tunnel-client" / "tunnel-client.exe"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"legacy binary")
+    archive_bytes = make_zip("tunnel-client.exe", b"replacement binary")
+    digest = hashlib.sha256(archive_bytes).hexdigest()
+    checksums = f"{digest}  tunnel-client-v1.0.0-windows-amd64.zip\n"
+    monkeypatch.setattr(
+        tunnel_client.urllib.request, "urlopen", fake_urlopen_factory(archive_bytes, checksums)
+    )
+
+    assert tunnel_client.ensure_tunnel_client(tmp_path).read_bytes() == b"replacement binary"
+
+
+def test_ensure_tunnel_client_replaces_wrong_architecture_for_same_binary_name(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(tunnel_client.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(tunnel_client.platform, "machine", lambda: "arm64")
+    target = tmp_path / "tools" / "tunnel-client" / "tunnel-client"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"x64 binary")
+    tunnel_client.tunnel_client_metadata_path(tmp_path).write_text(
+        json.dumps({"platform_tag": "darwin-amd64"}), encoding="utf-8"
+    )
+    archive_bytes = make_zip("tunnel-client", b"arm64 binary")
+    digest = hashlib.sha256(archive_bytes).hexdigest()
+    archive_name = "tunnel-client-v1.0.0-darwin-arm64.zip"
+    checksums = f"{digest}  {archive_name}\n"
+    monkeypatch.setattr(
+        tunnel_client.urllib.request,
+        "urlopen",
+        fake_urlopen_factory(archive_bytes, checksums, archive_name=archive_name),
+    )
+
+    assert tunnel_client.ensure_tunnel_client(tmp_path).read_bytes() == b"arm64 binary"
+    assert json.loads(tunnel_client.tunnel_client_metadata_path(tmp_path).read_text()) == {
+        "archive_name": archive_name,
+        "platform_tag": "darwin-arm64",
+    }
 
 
 def test_ensure_tunnel_client_downloads_darwin_arm64_and_sets_executable_bit(tmp_path, monkeypatch):
@@ -126,6 +175,30 @@ def test_ensure_tunnel_client_downloads_darwin_arm64_and_sets_executable_bit(tmp
     assert target == tmp_path / "tools" / "tunnel-client" / "tunnel-client"
     assert target.read_bytes() == b"fake macos binary"
     assert target.stat().st_mode & 0o111
+
+
+def test_ensure_tunnel_client_downloads_linux_amd64_and_sets_executable_bit(tmp_path, monkeypatch):
+    monkeypatch.setattr(tunnel_client.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(tunnel_client.platform, "machine", lambda: "x86_64")
+    archive_bytes = make_zip("tunnel-client", b"fake linux binary")
+    digest = hashlib.sha256(archive_bytes).hexdigest()
+    archive_name = "tunnel-client-v1.0.0-linux-amd64.zip"
+    checksums = f"{digest}  {archive_name}\n"
+    monkeypatch.setattr(
+        tunnel_client.urllib.request,
+        "urlopen",
+        fake_urlopen_factory(archive_bytes, checksums, archive_name=archive_name),
+    )
+
+    target = tunnel_client.ensure_tunnel_client(tmp_path)
+
+    assert target == tmp_path / "tools" / "tunnel-client" / "tunnel-client"
+    assert target.read_bytes() == b"fake linux binary"
+    assert target.stat().st_mode & 0o111
+    assert json.loads(tunnel_client.tunnel_client_metadata_path(tmp_path).read_text()) == {
+        "archive_name": archive_name,
+        "platform_tag": "linux-amd64",
+    }
 
 
 def test_ensure_tunnel_client_rejects_unsupported_architecture(tmp_path, monkeypatch):

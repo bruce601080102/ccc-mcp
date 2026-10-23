@@ -144,6 +144,21 @@ def test_review_revision_loop(bridge, human):
     assert len(originals) == 2
 
 
+def test_implementation_can_request_revision_without_illegal_transition(bridge, human):
+    bridge.create_task("demo", "需求")
+    approve(bridge)
+    implementation = dispatch(bridge, "RD", fake_scenario="revision")
+
+    run_execution(bridge, implementation["execution_id"])
+
+    execution = bridge.store.one(
+        "SELECT status,error FROM agent_executions WHERE id=?",
+        (implementation["execution_id"],),
+    )
+    assert execution == {"status": "SUCCEEDED", "error": None}
+    assert bridge.task("demo", "TASK-0001")["state"] == "NEEDS_REVISION"
+
+
 def test_sa_can_be_dispatched_repeatedly_without_fixed_pipeline(bridge):
     bridge.create_task("demo", "分析")
     for _ in range(2):

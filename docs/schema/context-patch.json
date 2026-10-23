@@ -63,8 +63,11 @@
       "type": "string"
     },
     "author_role": {
-      "const": "PM",
       "default": "PM",
+      "enum": [
+        "PM",
+        "SYSTEM"
+      ],
       "title": "Author Role",
       "type": "string"
     },

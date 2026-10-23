@@ -16,7 +16,7 @@ from ..infra.config import metadata_name, setting_env
 from ..infra.errors import BridgeError, PermissionDenied, VersionConflict
 from ..infra.security import canonical, digest, reject_secrets, safe_path
 from .context import identifier
-from .models import AgentReport
+from .models import AgentReport, ContextSnapshot
 
 
 def attribution(language, agent, role=None):
@@ -36,6 +36,7 @@ STATES = {
     "AWAITING_USER_APPROVAL",
     "APPROVED",
     "IMPLEMENTING",
+    "AWAITING_SA_CLARIFICATION",
     "REVIEWING",
     "AWAITING_PM_REVIEW",
     "COMPLETED",
@@ -53,10 +54,22 @@ TRANSITIONS = {
         "AWAITING_USER_APPROVAL",
         "APPROVED",
         "REVIEWING",
+        # Meeting Mode: PM resolved an escalated (pm_decision_required) clarification.
+        "IMPLEMENTING",
     },
     "AWAITING_USER_APPROVAL": {"APPROVED", "REJECTED", "AWAITING_PM_DECISION"},
     "APPROVED": {"IMPLEMENTING", "ANALYZING", "AWAITING_PM_DECISION"},
-    "IMPLEMENTING": {"AWAITING_PM_REVIEW", "REVIEWING"},
+    "IMPLEMENTING": {
+        "AWAITING_PM_REVIEW",
+        "REVIEWING",
+        "AWAITING_SA_CLARIFICATION",
+        # SD/RD may discover during implementation that the approved plan needs
+        # revision.  finish_execution maps needs_revision=true to this state.
+        "NEEDS_REVISION",
+    },
+    # Meeting Mode: SD/RD raised a blocking question (AWAITING_SA_CLARIFICATION) and
+    # either SA answered directly (back to IMPLEMENTING) or punted to the PM.
+    "AWAITING_SA_CLARIFICATION": {"IMPLEMENTING", "AWAITING_PM_DECISION"},
     "REVIEWING": {"AWAITING_PM_REVIEW", "NEEDS_REVISION"},
     "AWAITING_PM_REVIEW": {
         "REVIEWING",
@@ -73,6 +86,17 @@ TRANSITIONS = {
     "COMPLETED": set(),
     "REJECTED": set(),
 }
+
+# Which fake_scenario values are meaningful for a given report_schema (real dispatches
+# never read fake_scenario at all; this only gates adapter="fake" test dispatches).
+# "agent_report" is every normal SA/SD/RD/REVIEW dispatch; the other two are Meeting
+# Mode's read-only clarification-ask (SD/RD) and clarification-answer (SA).
+REPORT_SCHEMAS = {
+    "agent_report": {"success", "revision", "error"},
+    "clarification_request": {"ask_question", "no_blocking_question", "error"},
+    "clarification_response": {"confirmed", "recommendation", "pm_decision_required", "error"},
+}
+
 
 def _dependency_summary(test_result):
     """Terse view of the auto dependency-install step for brief.tests (full stdout/
@@ -97,7 +121,7 @@ _TERMINAL_WAITING_ON = {"COMPLETED", "CANCELLED", "REJECTED"}
 
 def waiting_on(
     state, execution_status, orphaned, needs_pm_refinement, pending_dispatch=False,
-    chatgpt_handoff=False,
+    chatgpt_handoff=False, pending_clarification=False,
 ):
     """Collapse task.state + execution status + context_sync into one readable value.
 
@@ -112,6 +136,10 @@ def waiting_on(
         # never confirmed dispatched (crash, worker spawn failure, stale version).
         # Nothing is running; an operator/PM action (resume_pending_dispatch) is needed.
         return "DISPATCH_RETRY_NEEDED"
+    if pending_clarification:
+        # Meeting Mode: SA punted (pm_decision_required) and no agent dispatch is
+        # running; only resolve_clarification can move this task forward.
+        return "PM_CLARIFICATION_DECISION"
     if chatgpt_handoff:
         # The *current* interactive ChatGPT PM conversation must act as the role
         # (write_task_file/submit_agent_report) — distinct from an autonomous CLI
@@ -481,7 +509,10 @@ class TaskHub:
             (project_id, task_id),
         )
 
-    def _dispatch_or_adopt(self, project_id, task_id, role, instruction, adapter, fake_scenario):
+    def _dispatch_or_adopt(
+        self, project_id, task_id, role, instruction, adapter, fake_scenario,
+        report_schema="agent_report", clarification_text=None,
+    ):
         """Dispatch `role`, unless a resume attempt already dispatched it and only
         crashed before the pointer could be cleared — then adopt that live execution
         instead of dispatching (and losing track of) a second one."""
@@ -501,7 +532,58 @@ class TaskHub:
             instruction,
             adapter=adapter,
             fake_scenario=fake_scenario,
+            report_schema=report_schema,
+            clarification_text=clarification_text,
         )
+
+    def _start_implementation_or_clarification(
+        self, project_id, task_id, adapter, fake_scenario, clarification_text=None
+    ):
+        """The one place a task's SD/RD dispatch is decided, before AND between Meeting
+        Mode rounds: a read-only clarification-ask when enabled and the task has never
+        actually started real implementation and the round budget is not exhausted,
+        otherwise the normal writable implementation dispatch — exactly what happened
+        here before Meeting Mode existed. The completed clarification gate and
+        `ever_implemented` are both derived fresh from durable rows, so this is safe
+        to call again after any crash or resume without re-deriving the decision by
+        hand."""
+        plan_content = self.approved_plan(project_id, task_id)["content"]
+        meeting = self.get_project_settings(project_id).get("meeting_mode") or {
+            "enabled": False, "min_rounds": 0, "max_rounds": 0,
+        }
+        ever_implemented = self.store.one(
+            "SELECT 1 FROM agent_executions WHERE project_id=? AND task_id=? "
+            "AND role IN ('SD','RD','SD/RD') AND "
+            "COALESCE(json_extract(options,'$.report_schema'),'agent_report')='agent_report'",
+            (project_id, task_id),
+        )
+        clarification_completed = self.store.one(
+            "SELECT 1 FROM agent_executions WHERE project_id=? AND task_id=? "
+            "AND status='SUCCEEDED' AND "
+            "json_extract(options,'$.report_schema')='clarification_request' LIMIT 1",
+            (project_id, task_id),
+        )
+        rounds_used = self.store.one(
+            "SELECT COUNT(*) AS n FROM meeting_clarifications WHERE project_id=? "
+            "AND task_id=? AND status='RESOLVED'",
+            (project_id, task_id),
+        )["n"]
+        if (
+            meeting["enabled"]
+            and not ever_implemented
+            and not clarification_completed
+            and rounds_used < meeting["max_rounds"]
+        ):
+            return self._dispatch_or_adopt(
+                project_id, task_id, "SD/RD",
+                "Decide whether you have exactly one blocking question before "
+                "implementing the approved plan below. If you do not, respond with "
+                "no_blocking_question=true and proceed with no further action here — "
+                "the real implementation dispatch follows automatically.\n\n" + plan_content,
+                adapter, fake_scenario, report_schema="clarification_request",
+                clarification_text=clarification_text,
+            )
+        return self._dispatch_or_adopt(project_id, task_id, "SD/RD", plan_content, adapter, fake_scenario)
 
     def _review_outcome(self, project_id, task_id):
         """Whether a just-committed REVIEW round is actually done, from durable facts only
@@ -534,15 +616,25 @@ class TaskHub:
         execution guard rejects a true double-dispatch, and the pointer is cleared only once
         dispatch_agent has actually succeeded — so a failure here always leaves the pointer in
         place for the next resume attempt, never a silently lost or duplicated step."""
-        task_id, role = pointer["task_id"], pointer["role"]
+        task_id = pointer["task_id"]
         adapter, fake_scenario = pointer["adapter"], pointer["fake_scenario"]
         result = {}
+        if pointer.get("meeting_round_action"):
+            # Resuming a PM clarification decision (or a retried first-attempt gate):
+            # re-derive the correct next dispatch from current durable state rather
+            # than trusting a stale snapshot of what "should" happen.
+            result["next_execution"] = self._start_implementation_or_clarification(
+                project_id, task_id, adapter, fake_scenario
+            )
+            self._clear_pending_dispatch(project_id, task_id)
+            return result
+        role = pointer["role"]
         if role == "SA":
             result["plan"] = self.propose_plan(
                 project_id, task_id, "PLAN-A", pointer["plan_content"], pointer["context_version"]
             )
-            result["next_execution"] = self._dispatch_or_adopt(
-                project_id, task_id, "SD/RD", pointer["plan_content"], adapter, fake_scenario
+            result["next_execution"] = self._start_implementation_or_clarification(
+                project_id, task_id, adapter, fake_scenario
             )
         elif role in {"SD", "RD", "SD/RD"}:
             test_evidence = self.run_configured_test_command(project_id, task_id)
@@ -572,7 +664,8 @@ class TaskHub:
         return result
 
     def advance_project(
-        self, project_id, patch, plan_content=None, adapter="real", fake_scenario="success"
+        self, project_id, patch, plan_content=None, adapter="real", fake_scenario="success",
+        *, automatic=False,
     ):
         """Commit PM refinement and dispatch the next configured role automatically.
 
@@ -586,6 +679,10 @@ class TaskHub:
         """
         if self.get_project_access(project_id)["mode"] != "read-write":
             raise PermissionDenied("Project authorization is required")
+        if automatic and patch.get("author_role") != "SYSTEM":
+            raise BridgeError("Automatic advancement must use a SYSTEM ContextPatch")
+        if not automatic and patch.get("author_role") == "SYSTEM":
+            raise PermissionDenied("SYSTEM ContextPatch author is reserved for ccc-mcp automation")
         source_ids = patch.get("source_execution_ids", [])
         if len(source_ids) != 1:
             raise BridgeError("Advancement requires exactly one completed Agent execution")
@@ -629,7 +726,7 @@ class TaskHub:
             raise BridgeError("Unsupported project advancement role")
         if role != "SA" and plan_content is not None:
             raise BridgeError("A plan is only accepted after SA")
-        proposed = self.propose_context_patch(project_id, patch)
+        proposed = self.propose_context_patch(project_id, patch, automatic=automatic)
         # The pending_dispatch pointer is written atomically inside commit_context_patch's
         # own transaction (see its docstring) — a crash between "context committed" and
         # "pointer recorded" is exactly the gap that made this unsafe before; now either
@@ -645,11 +742,87 @@ class TaskHub:
                 "adapter": adapter,
                 "fake_scenario": fake_scenario,
             },
+            automatic=automatic,
         )
         result = {"context": committed, "source_execution_id": execution["id"]}
         pointer = self._pending_dispatch_row(project_id, task_id)
         result.update(self._complete_pending_dispatch(project_id, pointer))
         return result
+
+    def auto_advance_low_risk(self, execution_id, *, allow_fake=False):
+        """Advance a completed, routine SD/RD or REVIEW result without a PM round.
+
+        This is intentionally an internal worker operation rather than a public MCP
+        tool.  It only consumes a real CLI report that is already durably saved,
+        preserves that report as immutable evidence, and records a SYSTEM-attributed
+        Context patch.  Any uncertainty remains a PM responsibility: failed or
+        simulated execution, ``needs_revision``, failed/unverified host tests, SA
+        planning, and malformed/missing evidence all return a no-op explanation.
+        ``allow_fake`` exists solely for deterministic backend tests.
+        """
+        row = self.store.one("SELECT * FROM agent_executions WHERE id=?", (execution_id,))
+        if not row:
+            return {"advanced": False, "reason": "Unknown execution"}
+        if row["status"] != "SUCCEEDED":
+            return {"advanced": False, "reason": "Execution did not succeed"}
+        if row["adapter"] != "real" and not allow_fake:
+            return {"advanced": False, "reason": "Only real Agent executions auto-advance"}
+        if row["role"] not in {"SD", "RD", "SD/RD", "REVIEW"}:
+            return {"advanced": False, "reason": "SA and non-delivery roles require PM review"}
+        if self.get_project_access(row["project_id"])["mode"] != "read-write":
+            return {"advanced": False, "reason": "Project is not authorized for writes"}
+        if self.task(row["project_id"], row["task_id"])["state"] in {
+            "BLOCKED", "FAILED", "NEEDS_REVISION",
+        }:
+            return {"advanced": False, "reason": "Execution outcome requires PM attention"}
+
+        saved = (decode(row, "result").get("result") or {})
+        report = saved.get("report") or {}
+        if report.get("simulated") and not allow_fake:
+            return {"advanced": False, "reason": "Simulated Agent result requires PM review"}
+        if report.get("needs_revision"):
+            return {"advanced": False, "reason": "Agent requested revision or a decision"}
+        if row["role"] == "REVIEW" and (
+            self._host_test_failed(row["project_id"], row["task_id"])
+            or self._host_tests_unverified(row["project_id"], row["task_id"])
+        ):
+            return {"advanced": False, "reason": "Host test evidence requires PM attention"}
+
+        latest = self.latest(row["project_id"])
+        pending = next(
+            (
+                item for item in latest["snapshot"]["agent_results"]
+                if item["execution_id"] == execution_id
+            ),
+            None,
+        )
+        if not pending:
+            return {"advanced": False, "reason": "Execution is not awaiting Context refinement"}
+        if not report.get("summary") or not report.get("next_action"):
+            return {"advanced": False, "reason": "Agent report is incomplete"}
+
+        options = decode(row, "options").get("options") or {}
+        patch = {
+            "base_context_version": latest["version"],
+            "changes": {
+                "summary": report["summary"],
+                "next_action": report["next_action"],
+            },
+            "source_execution_ids": [execution_id],
+            "source_task_ids": [row["task_id"]],
+            "source_document_refs": [pending["source_document_ref"]],
+            "update_reason": f"Automatically advanced low-risk {row['role']} report",
+            "author_role": "SYSTEM",
+            "semantic_review_ack": False,
+        }
+        result = self.advance_project(
+            row["project_id"],
+            patch,
+            adapter=row["adapter"],
+            fake_scenario=options.get("scenario", "success"),
+            automatic=True,
+        )
+        return {"advanced": True, **result}
 
     def resume_pending_dispatch(self, project_id, task_id=None):
         """Explicitly retry the last interrupted advance_project dispatch without needing
@@ -1078,11 +1251,26 @@ class TaskHub:
         model=None,
         effort=None,
         fallback_from=None,
+        report_schema="agent_report",
+        clarification_text=None,
     ):
         settings = self.resolve_agent_settings(project_id, role, agent, model, effort)
         agent = settings["provider"]
-        if adapter not in {"real", "fake"} or fake_scenario not in {"success", "revision", "error"}:
-            raise BridgeError("Unsupported adapter or fake scenario")
+        if adapter not in {"real", "fake"}:
+            raise BridgeError("Unsupported adapter")
+        if report_schema not in REPORT_SCHEMAS:
+            raise BridgeError("Unsupported report schema")
+        if adapter == "fake" and fake_scenario not in REPORT_SCHEMAS[report_schema]:
+            raise BridgeError("Unsupported fake scenario for this report schema")
+        if report_schema != "agent_report" and agent == "chatgpt":
+            # submit_agent_report's MCP tool signature is typed AgentReport; there is no
+            # tool yet for ChatGPT to submit a ClarificationRequest/Response. Fail loud
+            # here rather than let the interactive handoff silently mishandle it.
+            raise BridgeError(
+                "Meeting Mode's clarification exchange does not yet support the "
+                "interactive ChatGPT role; configure SA and SD/RD to a native CLI "
+                "provider (codex or claude) to use Meeting Mode"
+            )
         if not 0.05 <= timeout <= 7200 or not 0 <= fake_delay <= 60:
             raise BridgeError("Timeout/delay outside supported bounds")
         if (
@@ -1108,7 +1296,10 @@ class TaskHub:
                         "Agent-required workflow has unrefined reports. PM must cite the original "
                         "AgentReport, propose_context_patch, and commit_context_patch before the next role."
                     )
-            if role not in {"SA", "REVIEW"}:
+            # Meeting Mode's clarification-ask keeps role="SD/RD" but must never be
+            # treated as write-capable; only a normal report_schema="agent_report"
+            # dispatch gets a worktree, pinning, and exclusivity enforcement.
+            if role not in {"SA", "REVIEW"} and report_schema == "agent_report":
                 self.approved_plan(project_id, task_id)
                 if workspace_mode == "project":
                     self.prepare_project_workspace(project_id, task_id)
@@ -1150,8 +1341,13 @@ class TaskHub:
             package["target_agent"] = agent
             package["agent_settings"] = settings
             package["workspace_mode"] = workspace_mode
+            package["report_schema"] = report_schema
             execution_id = "EXEC-" + uuid.uuid4().hex[:16]
-            state = {"SA": "ANALYZING", "REVIEW": "REVIEWING"}.get(role, "IMPLEMENTING")
+            state = (
+                "AWAITING_SA_CLARIFICATION"
+                if report_schema == "clarification_response"
+                else {"SA": "ANALYZING", "REVIEW": "REVIEWING"}.get(role, "IMPLEMENTING")
+            )
             with self.store.transaction() as conn:
                 if conn.execute(
                     "SELECT 1 FROM agent_executions WHERE project_id=? AND task_id=? "
@@ -1181,6 +1377,8 @@ class TaskHub:
                                 "workspace_mode": workspace_mode,
                                 "interactive": agent == "chatgpt" and adapter == "real",
                                 "fallback_from": fallback_from,
+                                "report_schema": report_schema,
+                                "clarification_text": clarification_text,
                             }
                         ),
                         "QUEUED",
@@ -1296,6 +1494,21 @@ class TaskHub:
             reverted = _review_reverted_due_to_host_evidence(
                 latest["role"] if latest else None, previous_execution, test_result
             )
+            meeting_rows = self.store.all(
+                "SELECT round,question,response_type,response_content,pm_decision_content,"
+                "status,created FROM meeting_clarifications WHERE project_id=? AND task_id=? "
+                "ORDER BY round",
+                (project_id, task_id),
+            )
+            meeting_settings = self.get_project_settings(project_id).get("meeting_mode") or {
+                "enabled": False, "min_rounds": 0, "max_rounds": 0,
+            }
+            pending_clarification = next(
+                (r for r in meeting_rows if r["status"] == "AWAITING_PM"), None
+            )
+            current_question = next(
+                (r for r in meeting_rows if r["status"] == "AWAITING_SA"), None
+            )
             task["brief"] = {
                 "task_id": task_id,
                 "state": task["state"],
@@ -1306,6 +1519,7 @@ class TaskHub:
                     needs_pm_refinement,
                     pending_dispatch=bool(pointer),
                     chatgpt_handoff=chatgpt_handoff,
+                    pending_clarification=bool(pending_clarification),
                 ),
                 "agent": latest["agent"] if latest else None,
                 "role": latest["role"] if latest else None,
@@ -1346,6 +1560,23 @@ class TaskHub:
                     if pointer
                     else None
                 ),
+                "clarification": {
+                    "enabled": meeting_settings["enabled"],
+                    "min_rounds": meeting_settings["min_rounds"],
+                    "max_rounds": meeting_settings["max_rounds"],
+                    "rounds_used": sum(1 for r in meeting_rows if r["status"] == "RESOLVED"),
+                    "current_question": current_question["question"] if current_question else None,
+                    "pending_pm_decision": (
+                        {
+                            "round": pending_clarification["round"],
+                            "question": pending_clarification["question"],
+                            "sa_recommendation": pending_clarification["response_content"],
+                        }
+                        if pending_clarification
+                        else None
+                    ),
+                    "history": [dict(r) for r in meeting_rows],
+                },
             }
             return task
 
@@ -1400,6 +1631,18 @@ class TaskHub:
             )
         elif waiting_on == "DISPATCH_RETRY_NEEDED":
             result["next_action"] = brief["pending_dispatch"]["next_action"]
+        elif waiting_on == "PM_CLARIFICATION_DECISION":
+            pending = brief["clarification"]["pending_pm_decision"]
+            result["next_action"] = (
+                f"SD/RD 第 {pending['round']} 輪的問題被 SA 升級給 PM：「{pending['question']}」"
+                f"（SA 建議：{pending['sa_recommendation']}）。呼叫 resolve_clarification 決策後"
+                "會自動派下一輪或開始實作。"
+                if zh
+                else f"SD/RD's round {pending['round']} question was escalated to the PM: "
+                f"\"{pending['question']}\" (SA's recommendation: {pending['sa_recommendation']}). "
+                "Call resolve_clarification with a decision; the next round or real "
+                "implementation dispatches automatically."
+            )
         elif waiting_on == "PM_REFINEMENT":
             result["next_action"] = self.context_sync_status(project_id)["workflow"]
         elif waiting_on in {"AGENT_RUNNING", "BLOCKED"} and brief.get("progress"):
@@ -2077,11 +2320,83 @@ class TaskHub:
                 pass
         return {"interrupted_executions": recovered, "automatic_replay": False}
 
+    def _record_clarification_result(self, conn, project_id, task_id, row, report, report_schema):
+        """Meeting Mode's own, much smaller side-effect path: never touches Context,
+        never writes an AgentReport-shaped artifact — just the meeting_clarifications
+        row and the task state the rest of the loop reacts to. Returns the task's
+        target state."""
+        if report_schema == "clarification_request":
+            no_blocking_question = report.get("no_blocking_question")
+            question = report.get("blocking_question")
+            normalized_question = question.strip() if isinstance(question, str) else None
+            if not isinstance(no_blocking_question, bool):
+                raise BridgeError("Clarification request has an invalid no_blocking_question value")
+            if no_blocking_question is True:
+                if normalized_question:
+                    raise BridgeError(
+                        "Clarification request cannot include a blocking question when "
+                        "no_blocking_question is true"
+                )
+                return "IMPLEMENTING"
+            # Older/newer CLIs can both emit the boolean's default false while leaving
+            # the optional question null. That is a safe "no blocking question"
+            # outcome, never a reason to attempt an invalid NOT NULL insert.
+            if not normalized_question:
+                return "IMPLEMENTING"
+            round_number = 1 + conn.execute(
+                "SELECT COUNT(*) AS n FROM meeting_clarifications WHERE project_id=? "
+                "AND task_id=? AND status='RESOLVED'",
+                (project_id, task_id),
+            ).fetchone()["n"]
+            conn.execute(
+                "INSERT INTO meeting_clarifications(id,project_id,task_id,round,question,"
+                "question_execution_id,status,created) VALUES(?,?,?,?,?,?,?,?)",
+                (
+                    "MCLAR-" + uuid.uuid4().hex[:16],
+                    project_id,
+                    task_id,
+                    round_number,
+                    normalized_question,
+                    row["id"],
+                    "AWAITING_SA",
+                    now(),
+                ),
+            )
+            return "AWAITING_SA_CLARIFICATION"
+        # clarification_response
+        open_row = conn.execute(
+            "SELECT * FROM meeting_clarifications WHERE project_id=? AND task_id=? "
+            "AND status='AWAITING_SA' ORDER BY round DESC LIMIT 1",
+            (project_id, task_id),
+        ).fetchone()
+        if not open_row:
+            raise BridgeError("No open Meeting Mode clarification round to answer")
+        response_type = report.get("response_type")
+        content = report.get("content")
+        normalized_content = content.strip() if isinstance(content, str) else None
+        if response_type not in {"confirmed", "recommendation", "pm_decision_required"}:
+            raise BridgeError("Clarification response has an invalid response_type")
+        if not normalized_content:
+            raise BridgeError("Clarification response must provide non-empty content")
+        conn.execute(
+            "UPDATE meeting_clarifications SET response_type=?,response_content=?,"
+            "response_execution_id=?,status=? WHERE id=?",
+            (
+                response_type,
+                normalized_content,
+                row["id"],
+                "AWAITING_PM" if response_type == "pm_decision_required" else "RESOLVED",
+                open_row["id"],
+            ),
+        )
+        return "AWAITING_PM_DECISION" if response_type == "pm_decision_required" else "IMPLEMENTING"
+
     def finish_execution(
         self, execution_id, report=None, error=None, state=None, extras=None, locked=False
     ):
         row = self.store.one("SELECT * FROM agent_executions WHERE id=?", (execution_id,))
         project_id, task_id = row["project_id"], row["task_id"]
+        report_schema = json.loads(row["options"]).get("report_schema", "agent_report")
         with nullcontext() if locked else self.lock(project_id):
             with self.store.transaction() as conn:
                 current = conn.execute(
@@ -2090,19 +2405,29 @@ class TaskHub:
                 if current["status"] not in {"QUEUED", "RUNNING"}:
                     return
                 cancelled = bool(current["cancel_requested"])
-                target = (
-                    "CANCELLED"
-                    if cancelled
-                    else state
-                    or (
-                        "AWAITING_PM_DECISION"
-                        if row["role"] == "SA"
-                        else "NEEDS_REVISION"
-                        if report and report.get("needs_revision")
-                        else "AWAITING_PM_REVIEW"
+                is_clarification = report and not cancelled and not error and report_schema != "agent_report"
+                if is_clarification:
+                    target = self._record_clarification_result(
+                        conn, project_id, task_id, row, report, report_schema
                     )
-                )
-                if report:
+                else:
+                    target = (
+                        "CANCELLED"
+                        if cancelled
+                        else state
+                        or (
+                            "AWAITING_PM_DECISION"
+                            if row["role"] == "SA"
+                            else "NEEDS_REVISION"
+                            if report and report.get("needs_revision")
+                            else "AWAITING_PM_REVIEW"
+                        )
+                    )
+                # A clarification report is never AgentReport-shaped (no "summary"/
+                # "next_action"/"context_updates" keys), so it is stored as this
+                # execution's raw result below but never turned into the artifact
+                # files or Context entry that assume an AgentReport.
+                if report and not is_clarification:
                     language = self.get_project_settings(project_id)["language"]
                     headings = {
                         "zh-TW": ("建議的上下文更新 — 待 PM 審核", "設計", "測試證據"),
@@ -2203,6 +2528,130 @@ class TaskHub:
                     conn, project_id, task_id, target, error or "Agent result requires PM review"
                 )
             self.sync_documents(project_id)
+
+    def advance_meeting_clarification(self, execution_id):
+        """Call once, right after finish_execution returns for ANY execution — a no-op
+        unless this was a real-adapter Meeting Mode clarification dispatch that just
+        resolved into a follow-up. Deliberately never auto-chains a fake/test dispatch:
+        tests drive each round explicitly by calling dispatch_agent themselves, exactly
+        like every other multi-round flow in this codebase is tested (no hidden chain
+        to race against a test's own scripted fake_scenario sequence)."""
+        row = self.store.one("SELECT * FROM agent_executions WHERE id=?", (execution_id,))
+        if not row:
+            return None
+        options = json.loads(row["options"])
+        if options.get("report_schema", "agent_report") == "agent_report" or row["adapter"] != "real":
+            return None
+        project_id, task_id = row["project_id"], row["task_id"]
+        task = self.task(project_id, task_id)
+        if task["state"] == "AWAITING_SA_CLARIFICATION":
+            open_row = self.store.one(
+                "SELECT * FROM meeting_clarifications WHERE project_id=? AND task_id=? "
+                "AND status='AWAITING_SA' ORDER BY round DESC LIMIT 1",
+                (project_id, task_id),
+            )
+            if not open_row:
+                return None
+            return self._dispatch_or_adopt(
+                project_id, task_id, "SA",
+                "SD/RD asked a blocking question before implementing. Answer with "
+                "response_type confirmed, recommendation, or pm_decision_required.\n\n"
+                f"Question: {open_row['question']}",
+                "real", "success", report_schema="clarification_response",
+            )
+        if task["state"] == "IMPLEMENTING":
+            return self._start_implementation_or_clarification(project_id, task_id, "real", "success")
+        return None
+
+    def resolve_clarification(self, project_id, task_id, decision_content):
+        """PM resolves a clarification SA escalated (pm_decision_required). Reuses the
+        same pending_dispatch atomicity-and-resume machinery commit_context_patch uses
+        for a normal round: the decision note and the "what to dispatch next" pointer
+        land in one transaction, so a crash right after this call resumes exactly like
+        any other interrupted dispatch, via the existing resume_pending_dispatch."""
+        if not decision_content or not decision_content.strip():
+            raise BridgeError("Decision content is required")
+        with self.lock(project_id):
+            task = self.task(project_id, task_id)
+            if task["state"] != "AWAITING_PM_DECISION":
+                raise BridgeError("Task is not awaiting a Meeting Mode PM clarification decision")
+            open_row = self.store.one(
+                "SELECT * FROM meeting_clarifications WHERE project_id=? AND task_id=? "
+                "AND status='AWAITING_PM' ORDER BY round DESC LIMIT 1",
+                (project_id, task_id),
+            )
+            if not open_row:
+                raise BridgeError(
+                    "No escalated clarification is awaiting a PM decision for this task"
+                )
+            latest = self.latest(project_id)
+            snapshot = latest["snapshot"]
+            language = self.get_project_settings(project_id)["language"]
+            snapshot["next_action"] = {
+                "zh-TW": f"PM 對第 {open_row['round']} 輪澄清問題的決策：{decision_content}",
+                "ch": f"PM 对第 {open_row['round']} 轮澄清问题的决策：{decision_content}",
+                "en": f"PM decision on clarification round {open_row['round']}: {decision_content}",
+            }[language]
+            version = latest["version"] + 1
+            metadata = {
+                "base_context_version": latest["version"],
+                "new_context_version": version,
+                "changed_sections": ["next_action"],
+                "source_task_ids": [task_id],
+                "source_document_refs": [],
+                "update_reason": "Meeting Mode PM clarification decision",
+                "author_role": "SYSTEM",
+                "git_revision": self.git_revision(Path(self.project(project_id)["root"])),
+                "timestamp": now(),
+            }
+            with self.store.transaction() as conn:
+                conn.execute(
+                    "UPDATE meeting_clarifications SET pm_decision_content=?,pm_decision_at=?,"
+                    "status='RESOLVED' WHERE id=?",
+                    (decision_content, now(), open_row["id"]),
+                )
+                conn.execute(
+                    "INSERT INTO context_versions VALUES(?,?,?,?,?)",
+                    (
+                        project_id,
+                        version,
+                        ContextSnapshot.model_validate(snapshot).model_dump_json(),
+                        canonical(metadata),
+                        now(),
+                    ),
+                )
+                conn.execute(
+                    "INSERT INTO pending_dispatch(project_id,task_id,source_execution_id,role,"
+                    "context_version,plan_content,adapter,fake_scenario,committed_json,created,"
+                    "meeting_round_action) VALUES(?,?,?,?,?,?,?,?,?,?,?) "
+                    "ON CONFLICT(project_id,task_id) DO UPDATE SET "
+                    "source_execution_id=excluded.source_execution_id,role=excluded.role,"
+                    "context_version=excluded.context_version,plan_content=excluded.plan_content,"
+                    "adapter=excluded.adapter,fake_scenario=excluded.fake_scenario,"
+                    "committed_json=excluded.committed_json,created=excluded.created,"
+                    "meeting_round_action=excluded.meeting_round_action",
+                    (
+                        project_id,
+                        task_id,
+                        open_row["response_execution_id"] or open_row["question_execution_id"],
+                        "SD/RD",
+                        version,
+                        None,
+                        "real",
+                        "success",
+                        canonical({"version": version}),
+                        now(),
+                        "resume",
+                    ),
+                )
+                self._transition(
+                    conn, project_id, task_id, "IMPLEMENTING", "PM resolved escalated clarification"
+                )
+            self.sync_documents(project_id)
+        pointer = self._pending_dispatch_row(project_id, task_id)
+        result = {"decision_recorded": True, "context_version": version}
+        result.update(self._complete_pending_dispatch(project_id, pointer))
+        return result
 
     def accept_local(self, project_id, task_id):
         from .approval import confirm_local

@@ -1,10 +1,9 @@
 import json
 
-from ...core.models import AgentReport
 from ...infra.errors import AgentProcessError, BridgeError
 from ...infra.security import redact
 from ...infra.telemetry import record_output
-from .base import BaseAgentAdapter, parse_report, probe, run_process
+from .base import REPORT_MODELS, BaseAgentAdapter, parse_report, probe, run_process
 
 
 def error_detail(stdout):
@@ -27,7 +26,12 @@ class ClaudeCodeAdapter(BaseAgentAdapter):
     def run(self, package, instruction, cwd, timeout, cancelled):
         if package["role"] not in {"SA", "REVIEW", "SD", "RD", "SD/RD"}:
             raise BridgeError("Unsupported Claude role")
-        readonly = package["role"] in {"SA", "REVIEW"}
+        report_schema = package.get("report_schema", "agent_report")
+        model = REPORT_MODELS[report_schema]
+        # Requesting anything other than the normal AgentReport schema is itself the
+        # read-only signal (Meeting Mode's clarification-ask, role SD/RD, and
+        # clarification-answer, role SA which is already read-only anyway).
+        readonly = package["role"] in {"SA", "REVIEW"} or report_schema != "agent_report"
         options = package.get("agent_settings", {})
         executable = probe(
             "claude",
@@ -59,7 +63,7 @@ class ClaudeCodeAdapter(BaseAgentAdapter):
             "--output-format",
             "json",
             "--json-schema",
-            json.dumps(AgentReport.model_json_schema()),
+            json.dumps(model.model_json_schema()),
             "--permission-mode",
             "plan" if readonly else "acceptEdits",
             "--tools",
@@ -84,7 +88,8 @@ class ClaudeCodeAdapter(BaseAgentAdapter):
                 raise BridgeError(f"Claude CLI reported an execution error: {error_detail(stdout)}")
             structured = envelope.get("structured_output")
             return parse_report(
-                json.dumps(structured) if structured is not None else envelope.get("result", "")
+                json.dumps(structured) if structured is not None else envelope.get("result", ""),
+                model,
             )
         except (ValueError, AttributeError):
             raise BridgeError("Claude produced invalid JSON output") from None

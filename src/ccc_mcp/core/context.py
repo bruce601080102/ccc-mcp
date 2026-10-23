@@ -11,7 +11,7 @@ from ..adapters.git import git
 from ..adapters.skills import available_skills
 from ..adapters.storage import artifact, decode, now
 from ..infra.config import metadata_name
-from ..infra.errors import BridgeError, VersionConflict
+from ..infra.errors import BridgeError, PermissionDenied, VersionConflict
 from ..infra.security import atomic_write, canonical, digest, reject_secrets, safe_path
 from .models import PROTOCOL_VERSION, ContextPatch, ContextSnapshot, SourceRef
 
@@ -444,11 +444,15 @@ class ContextHub:
             if current["sha256"] != ref.sha256:
                 raise BridgeError(f"Evidence changed: {ref.path}; reread before proposing context")
 
-    def validate_patch(self, project_id, patch):
+    def validate_patch(self, project_id, patch, *, automatic=False):
         try:
             patch = ContextPatch.model_validate(patch)
         except ValidationError as exc:
             raise BridgeError(f"Invalid context patch: {exc}") from exc
+        if patch.author_role == "SYSTEM" and not automatic:
+            raise PermissionDenied("SYSTEM ContextPatch author is reserved for ccc-mcp automation")
+        if automatic and patch.author_role != "SYSTEM":
+            raise BridgeError("Automatic ContextPatch must be attributed to SYSTEM")
         current = self.latest(project_id)
         if current["version"] != patch.base_context_version:
             raise VersionConflict(
@@ -517,15 +521,15 @@ class ContextHub:
                 for ref in candidate.source_document_refs
                 if ref.path not in consumed_paths or ref.path in semantic_paths
             ]
-        if not patch.semantic_review_ack:
+        if not patch.semantic_review_ack and not automatic:
             raise BridgeError(
                 "Semantic changes require PM review: set semantic_review_ack after reading diff"
             )
         return patch, candidate
 
-    def propose_context_patch(self, project_id, patch):
+    def propose_context_patch(self, project_id, patch, *, automatic=False):
         with self.lock(project_id):
-            parsed, candidate = self.validate_patch(project_id, patch)
+            parsed, candidate = self.validate_patch(project_id, patch, automatic=automatic)
             patch_id = "PATCH-" + uuid.uuid4().hex[:16]
             self.store.execute(
                 "INSERT INTO context_patches VALUES(?,?,?,NULL)",
@@ -547,7 +551,7 @@ class ContextHub:
                 "semantic_review": "PM acknowledgement recorded; semantic equivalence is not provable",
             }
 
-    def commit_context_patch(self, project_id, patch_id, next_dispatch=None):
+    def commit_context_patch(self, project_id, patch_id, next_dispatch=None, *, automatic=False):
         """Commit a proposed patch.
 
         `next_dispatch`, when given — {task_id, source_execution_id, role,
@@ -570,7 +574,9 @@ class ContextHub:
                 raise BridgeError("Unknown patch")
             if row["committed_version"]:
                 return {"context_version": row["committed_version"], "idempotent": True}
-            patch, snapshot = self.validate_patch(project_id, json.loads(row["payload"]))
+            patch, snapshot = self.validate_patch(
+                project_id, json.loads(row["payload"]), automatic=automatic
+            )
             version = patch.base_context_version + 1
             changed_sections = list(patch.changes)
             if patch.source_execution_ids and "agent_results" not in changed_sections:
@@ -635,13 +641,19 @@ class ContextHub:
                                 completed.append(execution["task_id"])
                 if next_dispatch is not None:
                     conn.execute(
-                        "INSERT INTO pending_dispatch VALUES(?,?,?,?,?,?,?,?,?,?) "
+                        "INSERT INTO pending_dispatch(project_id,task_id,source_execution_id,"
+                        "role,context_version,plan_content,adapter,fake_scenario,"
+                        "committed_json,created) VALUES(?,?,?,?,?,?,?,?,?,?) "
                         "ON CONFLICT(project_id,task_id) DO UPDATE SET "
                         "source_execution_id=excluded.source_execution_id,role=excluded.role,"
                         "context_version=excluded.context_version,"
                         "plan_content=excluded.plan_content,adapter=excluded.adapter,"
                         "fake_scenario=excluded.fake_scenario,"
-                        "committed_json=excluded.committed_json,created=excluded.created",
+                        "committed_json=excluded.committed_json,created=excluded.created,"
+                        # A normal advance_project round never carries a Meeting Mode
+                        # marker; clear any stale one a prior resolve_clarification
+                        # write might have left on this task's pointer row.
+                        "meeting_round_action=NULL",
                         (
                             project_id,
                             next_dispatch["task_id"],
@@ -1252,14 +1264,14 @@ class ContextHub:
             "needs_pm_refinement": bool(pending),
             "pending_reports": pending,
             "workflow": (
-                "Agent 原始報告會永久保存；每輪 PM 必須把已驗證內容壓縮進共用 Context。"
-                "提交後，已消化的 agent_results 會自動從最新工作 Context 移除，避免重複耗用 token。"
+                "Agent 原始報告會永久保存；低風險的成功 SD/RD 與 REVIEW 報告會自動壓縮進共用 Context，"
+                "只有失敗、修訂或決策需要 PM 整理。已消化的 agent_results 會自動從最新工作 Context 移除，避免重複耗用 token。"
                 if language == "zh-TW"
-                else "Agent 原始报告会永久保存；每轮 PM 必须把已验证内容压缩进共享 Context。"
-                "提交后，已处理的 agent_results 会自动从最新工作 Context 移除，避免重复消耗 token。"
+                else "Agent 原始报告会永久保存；低风险的成功 SD/RD 与 REVIEW 报告会自动压缩进共享 Context，"
+                "只有失败、修订或决策需要 PM 整理。已处理的 agent_results 会自动从最新工作 Context 移除，避免重复消耗 token。"
                 if language == "ch"
-                else "Raw agent reports are retained permanently. After each round, the PM must compact "
-                "verified information into shared Context. Consumed agent_results are automatically removed "
+                else "Raw agent reports are retained permanently. Low-risk successful SD/RD and REVIEW reports "
+                "are compacted automatically; failures, revisions, and decisions stay with the PM. Consumed agent_results are automatically removed "
                 "from the latest working Context to avoid repeated token cost."
             ),
         }

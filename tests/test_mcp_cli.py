@@ -585,7 +585,11 @@ def test_setup_rejects_unsupported_provider():
     assert "Unsupported provider" in str(result.exception)
 
 
-def test_setup_all_runs_both_providers_and_stops_on_first_failure(monkeypatch):
+def test_setup_all_is_best_effort_per_provider(monkeypatch):
+    """One provider's broken npm cache, missing Node.js, etc. must not prevent even
+    attempting the other (regression: this used to abort the whole command on the
+    first failure, so e.g. a stale root-owned ~/.npm cache entry for codex meant
+    claude was never even attempted)."""
     from ccc_mcp.interfaces import cli as cli_module
 
     calls = []
@@ -593,15 +597,21 @@ def test_setup_all_runs_both_providers_and_stops_on_first_failure(monkeypatch):
     def fake_setup_provider(provider):
         calls.append(provider)
         if provider == "codex":
-            return {"provider": "codex", "path": "C:/codex.exe", "logged_in": True}
-        raise BridgeError("claude login is still incomplete")
+            raise BridgeError("npm install failed")
+        return {"provider": "claude", "path": "C:/claude.exe", "logged_in": True}
 
     monkeypatch.setattr(cli_module, "setup_provider", fake_setup_provider)
     result = CliRunner().invoke(app, ["setup", "all"])
 
     assert calls == ["codex", "claude"]
-    assert result.exit_code == 1
-    assert isinstance(result.exception, BridgeError)
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["ready"][0] == {
+        "provider": "codex", "logged_in": False, "error": "npm install failed",
+    }
+    assert payload["ready"][1] == {
+        "provider": "claude", "path": "C:/claude.exe", "logged_in": True,
+    }
 
 
 def test_setup_single_provider_reports_next_action(monkeypatch):

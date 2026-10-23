@@ -149,6 +149,59 @@ def test_full_pipeline_reaches_completed_with_host_verified_test_evidence(bridge
     assert bridge.context_sync_status("demo")["pending_reports"] == []
 
 
+def test_low_risk_delivery_and_review_auto_advance_without_pm(bridge, human):
+    """A normal real-worker result may skip PM refinement, but only after retaining
+    immutable evidence and running the host test command.  ``allow_fake`` gives this
+    backend test the same guarded path without invoking installed CLIs."""
+    bridge.configure_test_command("demo", [sys.executable, "-c", "print('ok')"])
+    task_id, implementation_id = advance_to_implementation(bridge)
+
+    after_implementation = bridge.auto_advance_low_risk(implementation_id, allow_fake=True)
+
+    assert after_implementation["advanced"] is True, after_implementation
+    assert after_implementation["test_evidence"]["passed"] is True
+    assert bridge.latest("demo")["metadata"]["author_role"] == "SYSTEM"
+    review_id = after_implementation["next_execution"]["execution_id"]
+    run_execution(bridge, review_id)
+
+    after_review = bridge.auto_advance_low_risk(review_id, allow_fake=True)
+
+    assert after_review["advanced"] is True
+    assert after_review["completed_workstreams"] == [task_id]
+    assert bridge.task("demo", task_id)["state"] == "COMPLETED"
+    assert bridge.context_sync_status("demo")["pending_reports"] == []
+
+
+def test_low_risk_auto_advance_stops_for_agent_revision_request(bridge, human):
+    task_id, implementation_id = advance_to_implementation(bridge)
+    bridge.store.execute(
+        "UPDATE agent_executions SET result=? WHERE id=?",
+        ('{"report":{"summary":"x","next_action":"x","needs_revision":true}}', implementation_id),
+    )
+
+    result = bridge.auto_advance_low_risk(implementation_id, allow_fake=True)
+
+    assert result == {"advanced": False, "reason": "Agent requested revision or a decision"}
+    assert bridge.task("demo", task_id)["state"] == "AWAITING_PM_REVIEW"
+
+
+def test_low_risk_auto_advance_stops_after_review_when_host_tests_fail(bridge, human):
+    bridge.configure_test_command("demo", [sys.executable, "-c", "import sys; sys.exit(1)"])
+    task_id, implementation_id = advance_to_implementation(bridge)
+
+    after_implementation = bridge.auto_advance_low_risk(implementation_id, allow_fake=True)
+
+    assert after_implementation["advanced"] is True
+    assert after_implementation["test_evidence"]["passed"] is False
+    review_id = after_implementation["next_execution"]["execution_id"]
+    run_execution(bridge, review_id)
+
+    after_review = bridge.auto_advance_low_risk(review_id, allow_fake=True)
+
+    assert after_review == {"advanced": False, "reason": "Host test evidence requires PM attention"}
+    assert bridge.task("demo", task_id)["state"] == "AWAITING_PM_REVIEW"
+
+
 def test_test_evidence_not_auto_run_without_project_authorization(bridge, human):
     """Regression (P0-2): the consent is project authorize itself — a configured
     test_command on a non-continuously-authorized project must not auto-run."""

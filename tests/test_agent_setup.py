@@ -20,7 +20,7 @@ def test_setup_provider_already_installed_and_logged_in(monkeypatch):
     assert result == {"provider": "codex", "path": "C:/codex/codex.exe", "logged_in": True}
 
 
-def test_setup_provider_installs_then_logs_in(monkeypatch):
+def test_setup_provider_installs_then_logs_in(monkeypatch, tmp_path):
     calls = []
     resolve_calls = {"n": 0}
 
@@ -30,14 +30,24 @@ def test_setup_provider_installs_then_logs_in(monkeypatch):
             raise BridgeError("not found yet")
         return "C:/codex/codex.exe"
 
+    status_checks = {"n": 0}
+    # An absolute path on whichever OS actually runs this test (pytest guarantees
+    # tmp_path is absolute) — Path.is_absolute() is OS-dependent, so a hardcoded
+    # Windows-style "C:/..." literal is only absolute when the test happens to run
+    # on Windows itself.
+    absolute_prefix = str(tmp_path / "npm").encode()
+
     def fake_run(argv, **kwargs):
         calls.append(argv)
+        if argv[:3] == ["npm", "config", "get"]:
+            return FakeResult(stdout=absolute_prefix)
         if argv[:2] == ["npm", "install"]:
             return FakeResult(returncode=0)
         # First status check after install: not logged in. Then login succeeds,
         # then the final status re-check succeeds.
         if argv[1:] == ["login", "status"]:
-            return FakeResult(returncode=1 if len(calls) <= 2 else 0)
+            status_checks["n"] += 1
+            return FakeResult(returncode=1 if status_checks["n"] <= 1 else 0)
         return FakeResult(returncode=0)
 
     monkeypatch.setattr(agent_setup, "native_executable", fake_native_executable)
@@ -69,6 +79,7 @@ def test_setup_provider_claude_on_a_node_less_machine_still_attempts_auto_instal
     so a brand-new machine with no Node.js at all failed here before auto-install
     (winget) ever got a chance to run."""
     calls = []
+    monkeypatch.setattr(agent_setup.os, "name", "nt")
     monkeypatch.setattr(agent_setup, "native_executable", lambda name: (_ for _ in ()).throw(BridgeError("missing")))
     monkeypatch.setattr(agent_setup.shutil, "which", lambda name: None)
 
@@ -83,14 +94,68 @@ def test_setup_provider_claude_on_a_node_less_machine_still_attempts_auto_instal
 
 
 def test_ensure_npm_raises_without_winget(monkeypatch):
+    monkeypatch.setattr(agent_setup.os, "name", "nt")
     monkeypatch.setattr(agent_setup.shutil, "which", lambda name: None)
     with pytest.raises(BridgeError, match="WinGet"):
+        agent_setup._ensure_npm()
+
+
+def test_ensure_npm_gives_posix_specific_guidance(monkeypatch):
+    monkeypatch.setattr(agent_setup.os, "name", "posix")
+    monkeypatch.setattr(agent_setup.shutil, "which", lambda name: None)
+    with pytest.raises(BridgeError, match="brew install node"):
         agent_setup._ensure_npm()
 
 
 def test_setup_provider_rejects_unsupported_provider():
     with pytest.raises(BridgeError, match="Unsupported provider"):
         agent_setup.setup_provider("grok")
+
+
+def test_setup_provider_rejects_a_relative_npm_prefix(monkeypatch):
+    """Regression (confirmed on a real machine): a relative `prefix` in ~/.npmrc
+    resolves relative to whatever directory `npm install -g` happens to run from,
+    scattering global installs across locations native_executable can never find.
+    Caught before attempting the install, with a clear fix, instead of appearing to
+    succeed and then failing confusingly later."""
+    monkeypatch.setattr(
+        agent_setup, "native_executable", lambda name: (_ for _ in ()).throw(BridgeError("missing"))
+    )
+    monkeypatch.setattr(agent_setup.shutil, "which", lambda name: "/usr/bin/npm")
+
+    def fake_run(argv, **kwargs):
+        if argv[:3] == ["npm", "config", "get"]:
+            return FakeResult(stdout=b"npm\n")
+        return FakeResult(returncode=0)
+
+    monkeypatch.setattr(agent_setup.subprocess, "run", fake_run)
+    with pytest.raises(BridgeError, match="relative path"):
+        agent_setup.setup_provider("codex")
+
+
+def test_setup_provider_proceeds_with_an_absolute_npm_prefix(monkeypatch, tmp_path):
+    resolve_calls = {"n": 0}
+    resolved_path = str(tmp_path / "bin" / "codex")
+
+    def fake_native_executable(name):
+        resolve_calls["n"] += 1
+        if resolve_calls["n"] == 1:
+            raise BridgeError("not found yet")
+        return resolved_path
+
+    def fake_run(argv, **kwargs):
+        if argv[:3] == ["npm", "config", "get"]:
+            # Path.is_absolute() is OS-dependent; tmp_path is guaranteed absolute on
+            # whichever OS actually runs this test.
+            return FakeResult(stdout=str(tmp_path).encode() + b"\n")
+        return FakeResult(returncode=0)
+
+    monkeypatch.setattr(agent_setup, "native_executable", fake_native_executable)
+    monkeypatch.setattr(agent_setup.shutil, "which", lambda name: "/usr/bin/npm")
+    monkeypatch.setattr(agent_setup.subprocess, "run", fake_run)
+
+    result = agent_setup.setup_provider("codex")
+    assert result == {"provider": "codex", "path": resolved_path, "logged_in": True}
 
 
 def test_setup_provider_raises_when_login_still_incomplete(monkeypatch):

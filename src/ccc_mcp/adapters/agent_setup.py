@@ -56,6 +56,12 @@ def _node_major_version():
 def _ensure_npm():
     if shutil.which("npm"):
         return
+    if os.name != "nt":
+        raise BridgeError(
+            "npm is required; install a current Node.js release with your system package "
+            "manager (for example, `brew install node` on macOS or your Linux distro's "
+            "Node.js package), then retry"
+        )
     if not shutil.which("winget") and not shutil.which("winget.exe"):
         raise BridgeError("npm is required, and WinGet is unavailable; install Node.js and retry")
     subprocess.run(
@@ -72,6 +78,36 @@ def _ensure_npm():
     os.environ["PATH"] = f"{node_dir}{os.pathsep}{os.environ['PATH']}"
     if not shutil.which("npm"):
         raise BridgeError("Node.js was installed, but npm is not visible yet; open a new terminal and retry")
+
+
+def _check_npm_prefix():
+    """A relative `prefix` set in any npm config layer (commonly ~/.npmrc) resolves
+    relative to whatever directory `npm install -g` happens to run from — confirmed in
+    practice: the exact same `ccc-mcp setup` command installs to a different, useless
+    location depending only on the caller's current directory, and native_executable
+    can never find the result. Caught here, before installing anything, with a clear
+    fix — rather than npm reporting success and ccc-mcp then failing confusingly later
+    with "executable unavailable" for something that actually did get installed."""
+    result = subprocess.run(
+        ["npm", "config", "get", "prefix"],
+        capture_output=True,
+        stdin=subprocess.DEVNULL,
+        timeout=15,
+        shell=False,
+        check=False,
+    )
+    if result.returncode:
+        return  # npm itself is about to fail right after anyway; let that surface normally
+    prefix = result.stdout.decode("utf-8", "replace").strip()
+    if prefix and not Path(prefix).is_absolute():
+        raise BridgeError(
+            f"npm's configured global prefix ({prefix!r}) is a relative path, so "
+            "`npm install -g` installs to a different location depending on the "
+            "current directory — never somewhere ccc-mcp (or your shell's PATH) can "
+            "reliably find it. Fix with: npm config set prefix /opt/homebrew "
+            "(or /usr/local, or wherever your shell's PATH already looks for global "
+            "binaries), then retry."
+        )
 
 
 def setup_provider(provider: str) -> dict:
@@ -93,6 +129,7 @@ def setup_provider(provider: str) -> dict:
                     "Claude Code npm installation requires Node.js 22+; the Node.js "
                     "already installed here is older — upgrade it manually and retry"
                 )
+        _check_npm_prefix()
         subprocess.run(["npm", "install", "-g", NPM_PACKAGE[provider]], shell=False, check=True)
         path = native_executable(provider)
     if not _logged_in(path, provider):

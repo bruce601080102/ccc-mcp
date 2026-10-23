@@ -23,6 +23,12 @@ EFFORTS = {
 
 PROFILE_NAMES = ("chatgpt-only", "best-model")
 
+# Meeting Mode's bounded SD/RD<->SA clarification loop: a project-wide hard ceiling on
+# how many rounds one task's single pre-implementation gate can ever use, independent
+# of what an operator configures as max_rounds.
+MEETING_MODE_HARD_CAP = 5
+DEFAULT_MEETING_MODE = {"enabled": False, "min_rounds": 0, "max_rounds": MEETING_MODE_HARD_CAP}
+
 
 def _detect_available_native_providers():
     """Which native CLIs (codex/claude) are actually installed on this machine right
@@ -140,6 +146,28 @@ class ConfigurationHub:
         return budget
 
     @staticmethod
+    def _validated_meeting_mode(value):
+        """{"enabled": bool, "min_rounds": int, "max_rounds": int}. min_rounds is
+        display-only (see docs/en/4-workflow.md) — the system never refuses
+        NO_BLOCKING_QUESTION because of it; only the 0 <= min <= max <= 5 shape is
+        enforced here. 5 is the hard system cap, never configurable past that."""
+        if not isinstance(value, dict):
+            raise BridgeError("meeting_mode must be an object")
+        enabled = value.get("enabled", False)
+        min_rounds = value.get("min_rounds", 0)
+        max_rounds = value.get("max_rounds", MEETING_MODE_HARD_CAP)
+        if not isinstance(enabled, bool):
+            raise BridgeError("meeting_mode.enabled must be a boolean")
+        for name, number in (("min_rounds", min_rounds), ("max_rounds", max_rounds)):
+            if not isinstance(number, int) or isinstance(number, bool):
+                raise BridgeError(f"meeting_mode.{name} must be an integer")
+        if not 0 <= min_rounds <= max_rounds <= MEETING_MODE_HARD_CAP:
+            raise BridgeError(
+                f"meeting_mode requires 0 <= min_rounds <= max_rounds <= {MEETING_MODE_HARD_CAP}"
+            )
+        return {"enabled": enabled, "min_rounds": min_rounds, "max_rounds": max_rounds}
+
+    @staticmethod
     def _validated_test_command(command):
         """A fixed argv (never a shell string) run via run_process's shell=False."""
         if command is None:
@@ -197,6 +225,8 @@ class ConfigurationHub:
             updated["context_token_budget"] = self._validated_context_token_budget(
                 document["context_token_budget"]
             )
+        if "meeting_mode" in document:
+            updated["meeting_mode"] = self._validated_meeting_mode(document["meeting_mode"])
         return updated
 
     def resolve_agent_settings(self, project_id, role, agent="auto", model=None, effort=None):
@@ -296,6 +326,7 @@ class ConfigurationHub:
             "worktree_dir": settings.get("worktree_dir", str(self.home / "worktrees")),
             "test_command": settings.get("test_command"),
             "context_token_budget": settings.get("context_token_budget"),
+            "meeting_mode": settings.get("meeting_mode", DEFAULT_MEETING_MODE),
         }
 
     def _save_settings(self, project_id, settings):
@@ -442,6 +473,7 @@ class ConfigurationHub:
                 "language": settings["language"],
                 "test_command": settings["test_command"],
                 "context_token_budget": settings["context_token_budget"],
+                "meeting_mode": settings["meeting_mode"],
             },
             "read_only_status": {
                 "project_access": settings["project_access"],
@@ -554,6 +586,22 @@ class ConfigurationHub:
         with self.lock(project_id):
             settings = self.get_project_settings(project_id)
             settings["context_token_budget"] = validated
+            return self._save_settings(project_id, settings)
+
+    def configure_meeting_mode(self, project_id, enabled, min_rounds=None, max_rounds=None):
+        """Default off, preserving today's behavior unless explicitly enabled. Omitted
+        min_rounds/max_rounds keep whatever is already configured (or the defaults) —
+        only enabled is required so `config meeting-mode off` never has to also repeat
+        the round bounds."""
+        with self.lock(project_id):
+            settings = self.get_project_settings(project_id)
+            current = settings.get("meeting_mode", DEFAULT_MEETING_MODE)
+            updated = {
+                "enabled": enabled,
+                "min_rounds": current["min_rounds"] if min_rounds is None else min_rounds,
+                "max_rounds": current["max_rounds"] if max_rounds is None else max_rounds,
+            }
+            settings["meeting_mode"] = self._validated_meeting_mode(updated)
             return self._save_settings(project_id, settings)
 
     def execution_workspace(self, row):

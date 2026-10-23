@@ -6,6 +6,7 @@ without requiring Git Bash, curl, unzip or sha256sum.
 
 import hashlib
 import json
+import os
 import platform
 import re
 import tempfile
@@ -15,6 +16,7 @@ from pathlib import Path
 
 from ..infra.config import setting_env
 from ..infra.errors import BridgeError
+from ..infra.security import atomic_write
 
 DEFAULT_RELEASE_API = "https://api.github.com/repos/openai/tunnel-client/releases/latest"
 OS_TAGS = {"windows": "windows", "darwin": "darwin", "linux": "linux"}
@@ -83,14 +85,60 @@ def tunnel_client_path(home: Path) -> Path:
     return Path(home) / "tools" / "tunnel-client" / _binary_name()
 
 
+def tunnel_client_metadata_path(home: Path) -> Path:
+    """Architecture stamp for the installed binary.
+
+    The binary's filename is deliberately the same for x64 and arm64 on macOS/Linux.
+    A host can therefore keep an incompatible executable after a Rosetta/native Python
+    switch unless we retain the platform tag that produced it.
+    """
+    return Path(home) / "tools" / "tunnel-client" / "installation.json"
+
+
+def _installed_platform_tag(home: Path) -> str | None:
+    try:
+        record = json.loads(tunnel_client_metadata_path(home).read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+    value = record.get("platform_tag") if isinstance(record, dict) else None
+    return value if isinstance(value, str) else None
+
+
+def _install_binary(source: Path, target: Path) -> None:
+    """Atomically replace the client, preserving a working old binary on failure.
+
+    Windows cannot replace a running executable. Surface that as an actionable error
+    rather than truncating the existing client with a direct write.
+    """
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, staged_name = tempfile.mkstemp(prefix=".tunnel-client-", dir=target.parent)
+    staged = Path(staged_name)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(source.read_bytes())
+            handle.flush()
+            os.fsync(handle.fileno())
+        if platform.system().lower() != "windows":
+            staged.chmod(staged.stat().st_mode | 0o111)
+        try:
+            os.replace(staged, target)
+        except PermissionError as exc:
+            raise BridgeError(
+                "Cannot replace tunnel-client while it is running; stop ccc-mcp connect and retry"
+            ) from exc
+    finally:
+        if staged.exists():
+            staged.unlink()
+
+
 def ensure_tunnel_client(home: Path, force: bool = False) -> Path:
-    """Return a verified tunnel-client binary under `home`, downloading it if needed."""
+    """Return a verified client for this OS/CPU, downloading it when stale or absent."""
     binary_name = _binary_name()
     target = tunnel_client_path(home)
-    if target.is_file() and not force:
+    platform_tag = _platform_tag()
+    if target.is_file() and not force and _installed_platform_tag(home) == platform_tag:
         return target
 
-    platform_tag = _platform_tag()
     release_api = setting_env("TUNNEL_CLIENT_RELEASE_API", DEFAULT_RELEASE_API)
     release = _fetch_json(release_api)
     assets = {asset["name"]: asset["browser_download_url"] for asset in release.get("assets", [])}
@@ -117,9 +165,14 @@ def ensure_tunnel_client(home: Path, force: bool = False) -> Path:
         extracted = next(Path(tmp).rglob(binary_name), None)
         if extracted is None:
             raise BridgeError(f"Downloaded archive does not contain {binary_name}")
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(extracted.read_bytes())
-        if platform.system().lower() != "windows":
-            # write_bytes above does not carry over the executable bit from the zip.
-            target.chmod(target.stat().st_mode | 0o111)
+        _install_binary(extracted, target)
+        atomic_write(
+            tunnel_client_metadata_path(home),
+            json.dumps(
+                {"platform_tag": platform_tag, "archive_name": archive_name},
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+            + "\n",
+        )
     return target

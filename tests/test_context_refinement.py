@@ -10,6 +10,19 @@ from ccc_mcp.service import CCCMCP
 from ccc_mcp.worker import run_execution
 
 
+def test_public_context_patch_cannot_claim_system_author(bridge):
+    with pytest.raises(PermissionDenied, match="reserved for ccc-mcp automation"):
+        bridge.propose_context_patch(
+            "demo",
+            {
+                "base_context_version": bridge.latest("demo")["version"],
+                "changes": {"summary": "Pretend this was automatic."},
+                "update_reason": "Attempt to bypass PM review",
+                "author_role": "SYSTEM",
+            },
+        )
+
+
 def test_original_report_then_pm_refinement_then_next_agent(bridge):
     bridge.create_task("demo", "Analyze existing code")
     execution = dispatch(bridge)["execution_id"]

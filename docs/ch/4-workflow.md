@@ -1,6 +1,6 @@
 # 4. PM、SA、SD/RD 協作操作
 
-此流程的工作記憶是 SQLite 與 `.ccc-mcp`，各 Agent 不讀取彼此聊天紀錄。所有 CLI 全域參數放在子命令之前，例如 `ccc-mcp --project my-project context show`。
+此流程的工作記憶是 SQLite 與 `.ccc-mcp`，各 Agent 不讀取彼此聊天紀錄。SA 的方案仍由 PM 整理；其後低風險的 SD/RD 成功報告會自動寫入 Context、執行主機測試並派出 REVIEW，低風險 REVIEW 成功則自動完成。失敗、測試未驗證、需要修訂或決策時才會停給 PM。所有 CLI 全域參數放在子命令之前，例如 `ccc-mcp --project my-project context show`。
 
 ## 1. PM 建立需求
 
@@ -113,6 +113,14 @@ ccc-mcp context export --out session-handoff.txt
 ```
 
 本工具不合併 Worktree、不推送、不部署。合併前請人工審閱 Diff、註解與實際測試證據。
+
+## 5a. Meeting Mode：SD/RD 動工前先問一輪（預設關閉）
+
+```powershell
+ccc-mcp --project my-project config meeting-mode on --min-rounds 1 --max-rounds 3
+```
+
+開啟後，PLAN-A 核准、SD/RD 第一次真正動工前會插入一輪最多 5 次來回的澄清對話：SD/RD 可以先提出剛好一個阻斷性問題（這個階段完全唯讀，不能寫檔），由 SA 以 `confirmed`、`recommendation` 或 `pm_decision_required` 回覆；只有 `pm_decision_required` 需要 PM 呼叫 `resolve_clarification` 做決策，其餘都自動接回 SD/RD。SD/RD 也可以直接回報 `no_blocking_question`，立即進入真正可寫檔的實作派工——`min_rounds` 只會出現在 `task status` 裡供參考，從不會因為沒達到就擋住這個直接實作的選項。輪次計數在重試、handoff、resume 之間永遠不會被重置，且這個澄清關卡每個任務只會觸發一次：之後若 REVIEW 要求修訂、重新派工 SD/RD，不會再問一次。詳見[可靠性與安全邊界](7-reliability-and-security.md)。
 
 ## 6. 全新 Session
 

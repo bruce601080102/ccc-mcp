@@ -73,7 +73,11 @@ def run_execution(bridge, execution_id):
 
             if cancelled():
                 raise AgentCancelled("Execution cancelled before start")
-            implementation = row["role"] not in {"SA", "REVIEW"}
+            # Meeting Mode's clarification-ask dispatch keeps role="SD/RD" but requests a
+            # non-AgentReport schema; it must never get a worktree or write access.
+            implementation = row["role"] not in {"SA", "REVIEW"} and (
+                options.get("report_schema", "agent_report") == "agent_report"
+            )
             cwd = root
             before = {}
             if implementation:
@@ -105,7 +109,9 @@ def run_execution(bridge, execution_id):
                         raise BridgeError("Invalid stored worktree path")
                     cwd = expected
             if row["adapter"] == "fake":
-                adapter = FakeAgentAdapter(options["scenario"], options["delay"])
+                adapter = FakeAgentAdapter(
+                    options["scenario"], options["delay"], options.get("clarification_text")
+                )
             elif row["agent"] in ADAPTERS:
                 adapter = ADAPTERS[row["agent"]]()
             else:
@@ -165,6 +171,15 @@ def run_execution(bridge, execution_id):
                     state = "BLOCKED"
                     extras["context_changed_during_execution"] = True
             bridge.finish_execution(execution_id, report=report, state=state, extras=extras)
+            # Outside finish_execution's own lock (already released): a no-op unless
+            # this was a real-adapter Meeting Mode clarification dispatch that just
+            # resolved into a follow-up dispatch.
+            bridge.advance_meeting_clarification(execution_id)
+            # Routine delivery reports no longer wait on a human to copy their
+            # already-validated summary into Context.  This is guarded inside
+            # auto_advance_low_risk; SA, failures, test problems, and requests for a
+            # decision remain pending for PM review.
+            bridge.auto_advance_low_risk(execution_id)
         except AgentCancelled as exc:
             bridge.finish_execution(
                 execution_id, error=str(exc), state="CANCELLED", extras={"invocation": audit}

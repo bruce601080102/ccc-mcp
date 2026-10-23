@@ -1,0 +1,26 @@
+{
+  "additionalProperties": false,
+  "description": "Meeting Mode's SA answer to one ClarificationRequest.",
+  "properties": {
+    "response_type": {
+      "enum": [
+        "confirmed",
+        "recommendation",
+        "pm_decision_required"
+      ],
+      "title": "Response Type",
+      "type": "string"
+    },
+    "content": {
+      "minLength": 1,
+      "title": "Content",
+      "type": "string"
+    }
+  },
+  "required": [
+    "response_type",
+    "content"
+  ],
+  "title": "ClarificationResponse",
+  "type": "object"
+}

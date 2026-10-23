@@ -4,7 +4,7 @@ from pathlib import Path
 
 from ...infra.errors import BridgeError
 from ...infra.telemetry import record_output
-from .base import BaseAgentAdapter, parse_report, probe, run_process, schema_file
+from .base import REPORT_MODELS, BaseAgentAdapter, parse_report, probe, run_process, schema_file
 
 
 class CodexAdapter(BaseAgentAdapter):
@@ -23,7 +23,12 @@ class CodexAdapter(BaseAgentAdapter):
     def run(self, package, instruction, cwd, timeout, cancelled):
         if package["role"] not in {"SA", "REVIEW", "SD", "RD", "SD/RD"}:
             raise BridgeError("Unsupported Codex role")
-        readonly = package["role"] in {"SA", "REVIEW"}
+        report_schema = package.get("report_schema", "agent_report")
+        model = REPORT_MODELS[report_schema]
+        # Requesting anything other than the normal AgentReport schema is itself the
+        # read-only signal (Meeting Mode's clarification-ask, role SD/RD, and
+        # clarification-answer, role SA which is already read-only anyway).
+        readonly = package["role"] in {"SA", "REVIEW"} or report_schema != "agent_report"
         options = package.get("agent_settings", {})
         executable = probe(
             "codex",
@@ -39,7 +44,7 @@ class CodexAdapter(BaseAgentAdapter):
         )
         with tempfile.TemporaryDirectory(prefix="ccc-mcp-codex-") as folder:
             output = Path(folder) / "report.json"
-            schema = schema_file(folder)
+            schema = schema_file(folder, model)
             argv = [
                 executable,
                 "-a",
@@ -68,4 +73,4 @@ class CodexAdapter(BaseAgentAdapter):
             record_output("codex", stdout, stderr)
             if not output.is_file():
                 raise BridgeError("Codex produced no final structured report")
-            return parse_report(output.read_text(encoding="utf-8"))
+            return parse_report(output.read_text(encoding="utf-8"), model)

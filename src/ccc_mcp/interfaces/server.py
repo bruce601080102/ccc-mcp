@@ -106,10 +106,15 @@ def create_server(
         "PM or performing a dispatched role (SA/SD/RD/REVIEW) yourself as agent=chatgpt: if any "
         "entry's description is relevant to the current request or the code you are about to write, "
         "follow its content, not only when relaying another Agent's report. "
-        "For every authorized project change, call start_project_request: it creates/reuses the "
-        "internal workstream and dispatches the configured SA. Do not edit files directly as PM. "
-        "After each Agent report, use advance_project with a provenance-backed PM ContextPatch; "
-        "it dispatches the configured SD/RD or REVIEW automatically. Only an active implementation "
+        "For every NEW authorized project change, call start_project_request: it creates/reuses the "
+        "internal workstream and dispatches the configured SA. Never call start_project_request merely "
+        "to continue, retry, recover, or check an existing task: it starts a new work round, invalidates "
+        "the prior plan approval, and dispatches SA again. For an existing task, inspect task_handoff; "
+        "use resume_pending_dispatch only for DISPATCH_RETRY_NEEDED, otherwise continue the role named "
+        "by status with advance_project or dispatch_agent. Do not edit files directly as PM. "
+        "SA reports and exceptional Agent outcomes need a provenance-backed PM ContextPatch. "
+        "Low-risk successful SD/RD and REVIEW reports are compacted by ccc-mcp automatically; "
+        "the host then runs tests and dispatches REVIEW. Only an active implementation "
         "execution can modify project files. "
         "When project_access.mode=read-write, that durable project authorization also authorizes plans "
         "and successful reviewed rounds; never ask for per-plan approve or task accept. "
@@ -132,7 +137,7 @@ def create_server(
         "Agent results are automatically appended as provenance-backed pending records. "
         "Never claim CLI invocation or token usage for ChatGPT web work. "
         "After SA/SD/RD/REVIEW completes, the next handoff may immediately use the automatically updated Context. "
-        "Check context_sync.needs_pm_refinement. After every role, refine facts, decisions, constraints and next actions "
+        "Check context_sync.needs_pm_refinement. When it is true, refine facts, decisions, constraints and next actions "
         "as PM; cite source_execution_ids and immutable original report SHA256 in ContextPatch, "
         "then propose_context_patch and commit_context_patch. A commit automatically removes consumed results "
         "from the latest working Context while retaining immutable raw evidence. Never claim semantic sections "
@@ -280,7 +285,7 @@ def create_server(
         async def start_project_request(
             project_id: str, requirement: str, acceptance: list[str] | None = None
         ) -> dict[str, Any]:
-            """Begin an authorized project change and automatically dispatch the configured SA Agent."""
+            """Begin a NEW authorized project change and dispatch SA. Never use this to continue, retry, recover, or inspect an existing task; doing so starts a new round and invalidates its prior plan approval."""
             return await call(bridge.start_project_request, project_id, requirement, acceptance)
 
         @server.tool(annotations=mutation)
@@ -394,6 +399,17 @@ def create_server(
             brief.pending_dispatch is not null). Never re-submits or re-commits Context; safe
             to call repeatedly."""
             return await call(bridge.resume_pending_dispatch, project_id, task_id)
+
+        @server.tool(annotations=mutation)
+        async def resolve_clarification(
+            project_id: str, task_id: str, decision: str
+        ) -> dict[str, Any]:
+            """PM resolves a Meeting Mode clarification SA escalated with
+            pm_decision_required (get_task_status.brief.waiting_on == PM_CLARIFICATION_DECISION;
+            brief.clarification.pending_pm_decision has the question and SA's recommendation).
+            Dispatches the next clarification round or the real implementation automatically;
+            never call dispatch_agent or advance_project for this instead."""
+            return await call(bridge.resolve_clarification, project_id, task_id, decision)
 
     return server
 

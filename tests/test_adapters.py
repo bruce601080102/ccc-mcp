@@ -42,6 +42,36 @@ def test_codex_native_discovery_without_tunnel_path(monkeypatch, tmp_path):
     assert probe("codex", ["exec"], ["--sandbox", "--json"]) == str(binary)
 
 
+def test_claude_native_discovery_in_local_bin_without_path(monkeypatch, tmp_path):
+    """Regression: a GUI-launched terminal/IDE integrated shell (or a long-running
+    `ccc-mcp connect` started before a shell rc file added a directory to PATH) often
+    has an incomplete PATH on macOS/Linux too, not just Windows — confirmed in
+    practice when Claude Code's native installer put the binary in ~/.local/bin."""
+    binary = tmp_path / ".local" / "bin" / "claude"
+    binary.parent.mkdir(parents=True)
+    binary.write_bytes(b"test native binary")
+    candidates = installed_native_candidates("claude", windows=False, home=tmp_path)
+    assert binary in candidates
+    monkeypatch.setattr("ccc_mcp.adapters.agents.base.shutil.which", lambda _: None)
+    monkeypatch.setattr(
+        "ccc_mcp.adapters.agents.base.installed_native_candidates", lambda _: candidates
+    )
+
+    def help_result(argv, **kwargs):
+        assert argv[0] == str(binary)
+        return subprocess.CompletedProcess(argv, 0, b"--print --output-format", b"")
+
+    monkeypatch.setattr("ccc_mcp.adapters.agents.base.subprocess.run", help_result)
+    assert probe("claude", [], ["--print", "--output-format"]) == str(binary)
+
+
+def test_installed_native_candidates_posix_checks_homebrew_and_usr_local(tmp_path):
+    candidates = installed_native_candidates("codex", windows=False, home=tmp_path)
+    assert tmp_path / ".local" / "bin" / "codex" in candidates
+    assert Path("/opt/homebrew/bin/codex") in candidates
+    assert Path("/usr/local/bin/codex") in candidates
+
+
 def test_codex_rejects_shell_launcher_without_native_binary(monkeypatch, tmp_path):
     launcher = tmp_path / "codex.cmd"
     launcher.write_text("@echo off\n")

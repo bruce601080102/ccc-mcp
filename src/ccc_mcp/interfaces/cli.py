@@ -16,7 +16,14 @@ from ..adapters.agent_setup import setup_provider
 from ..adapters.agents.base import native_executable
 from ..adapters.skills import install_skill, list_skills, remove_skill
 from ..adapters.tunnel_client import ensure_tunnel_client, tunnel_client_path
-from ..core.models import AgentReport, ContextPatch, ContextSnapshot, strict_json_schema
+from ..core.models import (
+    AgentReport,
+    ClarificationRequest,
+    ClarificationResponse,
+    ContextPatch,
+    ContextSnapshot,
+    strict_json_schema,
+)
 from ..infra.config import cli_language
 from ..infra.errors import BridgeError
 from ..infra.security import atomic_write, redact
@@ -330,6 +337,47 @@ def config_context_budget(
     if budget is None:
         raise BridgeError(t("請提供預算數字，或加 --clear 清除現有設定", "Provide a budget number, or pass --clear to remove the current setting"))
     output(bridge(ctx).configure_context_token_budget(project_id(ctx), budget))
+
+
+@config_app.command(
+    "meeting-mode",
+    help=t(
+        "預設關閉：開啟後在 SA 完成分析、SD/RD 開始實作前插入一輪最多 5 次來回的澄清對話，"
+        "SD/RD 可先問一個阻斷性問題再動工。min_rounds 僅供顯示，不會擋住 SD/RD 直接回報"
+        "沒有問題。例如：ccc-mcp config meeting-mode on --min-rounds 1 --max-rounds 3",
+        "Off by default: enable to insert a bounded (max 5) SD/RD<->SA clarification "
+        "round before SD/RD's first implementation attempt. min_rounds is display-only, "
+        "never blocking SD/RD from reporting no blocking question. "
+        "Example: ccc-mcp config meeting-mode on --min-rounds 1 --max-rounds 3",
+    ),
+)
+def config_meeting_mode(
+    ctx: typer.Context,
+    enabled: Annotated[str, typer.Argument(help=t("on 或 off", "on or off"))],
+    min_rounds: Annotated[
+        int | None,
+        typer.Option(
+            "--min-rounds",
+            help=t(
+                "顯示用途；從不阻止 SD/RD 直接回報沒有阻斷性問題",
+                "Display-only; never blocks SD/RD from reporting no blocking question",
+            ),
+        ),
+    ] = None,
+    max_rounds: Annotated[
+        int | None,
+        typer.Option(
+            "--max-rounds", help=t("系統硬上限 5", "Hard system cap of 5")
+        ),
+    ] = None,
+):
+    if enabled not in {"on", "off"}:
+        raise BridgeError(t("請輸入 on 或 off", "Enter on or off"))
+    output(
+        bridge(ctx).configure_meeting_mode(
+            project_id(ctx), enabled == "on", min_rounds, max_rounds
+        )
+    )
 
 
 @config_app.command(
@@ -1176,6 +1224,8 @@ PROTOCOL_MODELS = {
     "agent-report": AgentReport,
     "context-snapshot": ContextSnapshot,
     "context-patch": ContextPatch,
+    "clarification-request": ClarificationRequest,
+    "clarification-response": ClarificationResponse,
 }
 
 
@@ -1236,7 +1286,18 @@ def setup(provider: Annotated[str, typer.Argument()] = "codex"):
     if provider not in {"codex", "claude", "all"}:
         raise BridgeError("Unsupported provider: use codex, claude, or all")
     providers = ["codex", "claude"] if provider == "all" else [provider]
-    ready = [setup_provider(name) for name in providers]
+    if len(providers) == 1:
+        # A single explicit provider request fails loudly, as before.
+        ready = [setup_provider(providers[0])]
+    else:
+        # "all" means best-effort for each: one provider's broken npm cache,
+        # missing Node.js, etc. must not prevent even attempting the other.
+        ready = []
+        for name in providers:
+            try:
+                ready.append(setup_provider(name))
+            except (BridgeError, OSError, subprocess.SubprocessError) as exc:
+                ready.append({"provider": name, "logged_in": False, "error": redact(str(exc))})
     output(
         {
             "ready": ready,
@@ -1593,7 +1654,13 @@ def main():
         sys.stderr.reconfigure(encoding="utf-8")
     try:
         app()
-    except (BridgeError, ValidationError, OSError, sqlite3.IntegrityError) as exc:
+    except (
+        BridgeError,
+        ValidationError,
+        OSError,
+        sqlite3.IntegrityError,
+        subprocess.SubprocessError,
+    ) as exc:
         typer.echo(redact(str(exc)), err=True)
         raise SystemExit(1) from None
 

@@ -141,6 +141,21 @@ CREATE INDEX IF NOT EXISTS idx_workspace_batches_project
  ON workspace_batches(project_id);
 CREATE INDEX IF NOT EXISTS idx_project_access_events_project_seq
  ON project_access_events(project_id, seq);
+-- Meeting Mode's bounded SD/RD<->SA clarification loop. One row per round; rounds_used
+-- is always derived as COUNT(*) WHERE status='RESOLVED' (never a separately stored
+-- counter), so it is retry/resume-safe by construction and cannot be reset. Append +
+-- status update only, like workspace_edits' lifecycle; never deleted.
+CREATE TABLE IF NOT EXISTS meeting_clarifications (
+ id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
+ task_id TEXT NOT NULL, round INTEGER NOT NULL,
+ question TEXT NOT NULL, question_execution_id TEXT NOT NULL,
+ response_type TEXT, response_content TEXT, response_execution_id TEXT,
+ pm_decision_content TEXT, pm_decision_at TEXT,
+ status TEXT NOT NULL, created TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_meeting_clarifications_project_task
+ ON meeting_clarifications(project_id, task_id, round);
+CREATE TRIGGER IF NOT EXISTS meeting_clarifications_no_delete BEFORE DELETE ON meeting_clarifications
+ BEGIN SELECT RAISE(ABORT, 'Meeting Mode clarification history is immutable'); END;
 """
 
 
@@ -151,6 +166,12 @@ class Store:
         with self.connect() as conn:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.executescript(SCHEMA)
+            # Additive column migration: lets a Meeting Mode PM decision reuse the
+            # existing pending_dispatch/resume_pending_dispatch atomicity-and-resume
+            # machinery instead of a parallel one. NULL for every pre-existing row.
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(pending_dispatch)")}
+            if "meeting_round_action" not in columns:
+                conn.execute("ALTER TABLE pending_dispatch ADD COLUMN meeting_round_action TEXT")
 
     @contextmanager
     def connect(self):
