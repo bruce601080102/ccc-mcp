@@ -2,7 +2,7 @@
 
 這是一份可重複執行的步驟，用來端對端驗證 Meeting Mode 的 SD/RD↔SA 澄清對話，過程中 PM 仍然全程由 ChatGPT 擔任。在正式依賴 Meeting Mode 之前先照這份文件跑一次，並以下面這些步驟的實際輸出——而不是單純一句聊天回覆——當作證據。
 
-**範圍限制：** Meeting Mode 的澄清對話目前還不支援互動式 ChatGPT 角色（見[可靠性與安全邊界](7-reliability-and-security.md#9-meeting-modesdrd-動工前的澄清對話三個保證)）——`dispatch_agent` 會直接拒絕並給出明確錯誤訊息。因此這份走查會把 `SA` 和 `SD/RD` 設成原生 CLI provider（Codex 和／或 Claude Code），不是 `chatgpt`；只有 PM 維持 ChatGPT，跟預設的 best-model 工作流一樣。未來版本可能補上這個限制。
+**角色說明：** 這份走查把 `SA` 和 `SD/RD` 設成原生 CLI provider（Codex 和／或 Claude Code），PM 維持 ChatGPT，跟預設的 best-model 工作流一樣。Meeting Mode 也支援由 ChatGPT 自己擔任 `SA` 和／或 `SD/RD`（例如 `chatgpt-only` profile）：雙方都會以唯讀的 `CHATGPT_HANDOFF_PENDING` 交接出現，SD/RD 的檢查用 `submit_clarification_request` 提交、SA 的回覆用 `submit_clarification_response` 提交（不是 `submit_agent_report`），之後自動接續。請注意這種情況是同一個 ChatGPT 對話在扮演雙方，屬於留在同一份紀錄裡的結構化自我檢查，不是兩個獨立的意見。
 
 ## 先看一次真實執行
 
@@ -100,6 +100,6 @@ ccc-mcp --project meeting-mode-demo task show
 
 ## 失敗時怎麼辦
 
-如果派工被拒絕並顯示「does not yet support the interactive ChatGPT role」，代表還有角色設成 `chatgpt`——回去檢查 `config show`，把 `SA`／`SD/RD` 改成原生 CLI provider。如果澄清對話過程中 `task status` 顯示 `waiting_on: "DISPATCH_RETRY_NEEDED"`，照平常一樣執行 `ccc-mcp --project meeting-mode-demo task resume` 即可——輪次計數不會因此遺失或重複計算。
+如果 ChatGPT 用錯提交工具，錯誤訊息會指出正確的那個（Meeting Mode 交接用 `submit_clarification_request`／`submit_clarification_response`，其他用 `submit_agent_report`）。如果澄清對話過程中 `task status` 顯示 `waiting_on: "DISPATCH_RETRY_NEEDED"`，照平常一樣執行 `ccc-mcp --project meeting-mode-demo task resume` 即可——輪次計數不會因此遺失或重複計算。
 
 延伸閱讀：[可靠性與安全邊界](7-reliability-and-security.md#9-meeting-modesdrd-動工前的澄清對話三個保證)。

@@ -1581,9 +1581,20 @@ def skill_install(
     if source == "mcp":
         if not name:
             raise BridgeError(t("用法：skill install mcp <名稱>", "Usage: skill install mcp <name>"))
+        scope = ctx.obj["project"]  # only an explicit --project narrows it; none = global
         result = bridge(ctx).install_mcp_server(
-            project_id(ctx), name, command, arg, tools.split(",") if tools else None
+            scope, name, command, arg, tools.split(",") if tools else None
         )
+        if scope is None:
+            typer.echo(
+                t(
+                    "! 已安裝為「全域」：所有專案的 agent 都能使用這個 MCP 啟用的工具。"
+                    "只想給單一專案請加 --project <id>。",
+                    "! Installed GLOBALLY: every project's agents can use this MCP's enabled "
+                    "tools. Add --project <id> to scope it to one project.",
+                ),
+                err=True,
+            )
         for warning in result["warnings"]:
             typer.echo(f"! {warning}", err=True)
         output(result)
@@ -1605,18 +1616,46 @@ def skill_install(
     output(install_skill(bridge(ctx).home, source, repo_root=repo_root, cbm=cbm))
 
 
-@mcp_app.command("list", help=t("列出本機客戶端定義的 MCP 伺服器與這個專案已安裝的。", "List MCP servers defined by clients on this machine and the ones installed for this project."))
-def mcp_list(ctx: typer.Context):
-    try:
-        project = project_id(ctx)
-    except BridgeError:
-        project = None
-    output(bridge(ctx).list_mcp_servers(project))
+@mcp_app.command(
+    "list",
+    help=t(
+        "列出本機客戶端定義的 MCP 伺服器，以及已安裝的。有 --project：該專案的 agent 實際拿到的"
+        "（全域＋專案自己的，同名以專案為準）；沒有 --project（或加 --all）：全域安裝與各專案自己的安裝。",
+        "List MCP servers defined by clients on this machine and the installed ones. With --project: "
+        "what that project's agents actually get (global + its own; a project entry replaces a "
+        "global one of the same name). Without --project (or with --all): the global installs and "
+        "each project's own.",
+    ),
+)
+def mcp_list(
+    ctx: typer.Context,
+    all_projects: Annotated[
+        bool, typer.Option("--all", help=t("列出全域與所有專案", "List global and every project"))
+    ] = False,
+):
+    output(bridge(ctx).list_mcp_servers(ctx.obj["project"], all_projects))
 
 
-@mcp_app.command("remove", help=t("移除這個專案已安裝的 MCP 伺服器。", "Remove an MCP server installed for this project."))
+@mcp_app.command(
+    "calls",
+    help=t(
+        "唯讀：最近經由 ccc-mcp 中介（list/call_installed_mcp_tool）發生的 MCP 呼叫紀錄——"
+        "ChatGPT 有沒有真的呼叫的證據。只記錄參數摘要與結果狀態，不記錄回傳內容。",
+        "Read-only: recent MCP calls made through ccc-mcp's bridge (call_installed_mcp_tool) — "
+        "evidence of whether ChatGPT really called. Records argument summaries and outcome, "
+        "never the returned content.",
+    ),
+)
+def mcp_calls(
+    ctx: typer.Context,
+    limit: Annotated[int, typer.Option("--limit", help=t("顯示最近幾筆", "How many recent calls"))] = 20,
+):
+    output(bridge(ctx).mcp_call_log(limit))
+
+
+@mcp_app.command("remove", help=t("移除 MCP 伺服器：有 --project 移除該專案自己的；沒有則移除全域安裝。", "Remove an MCP server: with --project this project's own install, without it the global one."))
 def mcp_remove(ctx: typer.Context, name: str):
-    output(bridge(ctx).remove_mcp_server(project_id(ctx), name))
+    output(bridge(ctx).remove_mcp_server(ctx.obj["project"], name))
 
 
 @skill_app.command("list", help=t("列出所有已安裝的 Skill。", "List every installed skill."))

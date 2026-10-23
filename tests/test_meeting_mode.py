@@ -364,17 +364,6 @@ def test_clarification_ask_dispatch_is_never_write_capable(bridge, human):
     assert row["worktree"] is None
 
 
-def test_dispatch_agent_rejects_clarification_schema_for_chatgpt(bridge, human):
-    bridge.authorize_project_local("demo")
-    bridge.configure_role("demo", "SD/RD", "chatgpt")
-    task_id = bridge.create_task("demo", "Implement a change")["id"]
-    with pytest.raises(BridgeError, match="does not yet support the interactive ChatGPT role"):
-        bridge.dispatch_agent(
-            "demo", task_id, "auto", "SD/RD", bridge.latest("demo")["version"], "x",
-            adapter="real", report_schema="clarification_request",
-        )
-
-
 # --- the gate only ever fires once per task ----------------------------------
 
 

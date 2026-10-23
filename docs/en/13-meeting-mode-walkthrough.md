@@ -2,7 +2,7 @@
 
 A reproducible procedure for verifying Meeting Mode's SD/RD<->SA clarification round end-to-end, with ChatGPT still acting as PM throughout. Follow it once against a real project before relying on Meeting Mode, and treat the steps below — not a chat reply alone — as the evidence.
 
-**Scope limitation:** Meeting Mode's clarification exchange does not yet support the interactive ChatGPT role (see [reliability and security](7-reliability-and-security.md#meeting-mode)) — `dispatch_agent` refuses it outright with a clear error. This walkthrough therefore configures `SA` and `SD/RD` to a native CLI provider (Codex and/or Claude Code), not `chatgpt`; only PM stays ChatGPT, exactly as in the default best-model workflow. A future version may lift this limitation.
+**Roles:** this walkthrough configures `SA` and `SD/RD` to a native CLI provider (Codex and/or Claude Code) and keeps ChatGPT as PM, as in the default best-model workflow. Meeting Mode also works when ChatGPT performs `SA` and/or `SD/RD` itself (for example the `chatgpt-only` profile): each side then arrives as a read-only `CHATGPT_HANDOFF_PENDING` handoff, SD/RD's check is submitted with `submit_clarification_request` and SA's answer with `submit_clarification_response` (never `submit_agent_report`), and the exchange continues automatically. Note that in that case one ChatGPT conversation is playing both sides, so it is a structured self-check recorded in the same history, not two independent opinions.
 
 ## See a real run first
 
@@ -100,6 +100,6 @@ ccc-mcp --project meeting-mode-demo task show
 
 ## What to do on failure
 
-If a dispatch is rejected with "does not yet support the interactive ChatGPT role," a role is still configured to `chatgpt` — re-check `config show` and assign `SA`/`SD/RD` to a native CLI provider. If `task status` shows `waiting_on: "DISPATCH_RETRY_NEEDED"` at any point in the clarification round, run `ccc-mcp --project meeting-mode-demo task resume` exactly as for any other interrupted dispatch — the round count is never lost or duplicated by this.
+If ChatGPT submits with the wrong tool, the error names the right one (`submit_clarification_request` / `submit_clarification_response` for Meeting Mode handoffs, `submit_agent_report` otherwise). If `task status` shows `waiting_on: "DISPATCH_RETRY_NEEDED"` at any point in the clarification round, run `ccc-mcp --project meeting-mode-demo task resume` exactly as for any other interrupted dispatch — the round count is never lost or duplicated by this.
 
 Further reading: [reliability and security](7-reliability-and-security.md#meeting-mode).

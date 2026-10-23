@@ -204,11 +204,13 @@ ccc-mcp project delete demo-app   # 互動確認，需輸入 DELETE demo-app
 
 這個關卡每個任務只會觸發一次，就在 SD/RD 第一次真正動工派工之前；一旦真正開始實作過，之後即使 REVIEW 要求修訂、重新派工 SD/RD，也不會再觸發。升級給 PM 決策（`pm_decision_required`）沿用跟一般 `advance_project` 完全相同的 `pending_dispatch` 原子性與恢復機制——`resolve_clarification` 的決策內容跟它接下來要派工的指標會寫在同一個交易裡，萬一在那之後立刻 crash，`resume_pending_dispatch` 會跟處理其他任何被中斷的派工一樣正確恢復它。
 
+當 ChatGPT 自己擔任 SA 和／或 SD/RD 時，同樣的對話會以互動式交接進行（`submit_clarification_request`／`submit_clarification_response`）；SD/RD 的檢查仍然是結構性唯讀（不建立 worktree、`write_task_file` 會被拒絕），輪次、`min_rounds` 與升級規則全部相同。此時是同一個 ChatGPT 對話在扮演雙方，請把紀錄視為結構化的自我檢查，而不是兩個獨立的意見。
+
 `meeting_mode.escalation`（預設 `ask_user`，或 `auto_pm`）決定 `pm_decision_required` 這一輪該由誰決定；`clarification.triggered` 則告訴操作者這個關卡是否真的問出過一個問題。但跟上面三個保證不同，這兩個都不是程式碼強制執行的——ccc-mcp 沒有辦法從後端驗證已連線的 ChatGPT 對話是否真的詢問了真人並等待其回覆，還是自己直接決定了；`escalation` 只會改變 `task_handoff` 回傳文字與 MCP 伺服器給 ChatGPT 的指令內容（見 `interfaces/server.py`）。請把它當作一個強力的操作慣例，而不是像結構性唯讀或 `rounds_used` 那樣 ccc-mcp 能夠強制執行的邊界。
 
 ## 給 agent 使用的 MCP 伺服器
 
-除非操作者對該專案執行 `ccc-mcp skill install mcp <名稱>`，agent 一律不帶 MCP。安裝時會驗證指令並記下完整路徑；只有本機 CLI 能安裝（沒有 MCP 工具，`settings.json` 也不是匯入來源），而且只有 Claude Code 角色會拿到。已安裝的 MCP 工具不受角色唯讀檔案工具限制，它能做什麼取決於該伺服器，且 Claude 此時不帶 `--safe-mode`（詳見 [Skills](6-skills.md)）。請把安裝 MCP 視為「把它的工具授權給該專案所有 Claude 角色」。
+除非操作者執行 `ccc-mcp skill install mcp <名稱>`——不加 `--project` 為全域（所有專案），加 `--project <id>` 則只給單一專案；只有明確寫出的 `--project` 才會縮小範圍——否則 agent 一律不帶 MCP。安裝時會驗證指令並記下完整路徑；只有本機 CLI 能安裝（沒有 MCP 工具，`settings.json` 也不是匯入來源），而且三種 provider 都能用：Claude 與 Codex 以啟動時的設定取得，ChatGPT 則透過 `list_installed_mcp_tools`／`call_installed_mcp_tool` 由 ccc-mcp 代為執行，範圍僅限操作者啟用過的伺服器＋工具。已安裝的 MCP 工具不受角色唯讀檔案工具限制，它能做什麼取決於該伺服器，且 Claude 此時不帶 `--safe-mode`（詳見 [Skills](6-skills.md)）。請把安裝 MCP 視為「把它的工具授權給它涵蓋範圍內所有專案的所有角色（全域安裝就是所有專案），包含 ChatGPT PM」。
 
 ## 測試涵蓋
 

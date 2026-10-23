@@ -98,7 +98,7 @@ def test_install_records_absolute_path_and_roles_and_remove(bridge, fake_server)
     assert result["command"] == sys.executable
     assert {t["name"] for t in result["tools"]} == {"list_projects", "delete_project"}
     assert result["roles"]["SD/RD"] == "live"
-    assert "not supported" in result["roles"]["SA"]  # default SA is Codex
+    assert result["roles"]["SA"] == "live"  # default SA is Codex; it receives the server too
 
     stored = bridge.get_project_settings("demo")["mcp_servers"]["fakemem"]
     assert stored["allowed_tools"] == ["list_projects", "delete_project"]
@@ -211,3 +211,152 @@ def test_cli_install_list_and_remove(bridge, fake_server):
     assert "fakemem" in json.loads(listed.output)["installed"]
     assert runner.invoke(app, base + ["mcp", "remove", "fakemem"]).exit_code == 0
     assert runner.invoke(app, base + ["skill", "install", "mcp"]).exit_code != 0
+
+
+def run_codex_adapter(monkeypatch, tmp_path, package):
+    from pathlib import Path
+
+    from ccc_mcp.adapters.agents.codex import CodexAdapter
+
+    captured = {}
+
+    def fake_run_process(argv, cwd, prompt, timeout, cancelled):
+        captured["argv"] = argv
+        report = json.dumps({"summary": "s", "next_action": "n", "findings": [], "risks": [],
+                             "tests": [], "needs_revision": False, "simulated": False,
+                             "context_updates": []})
+        Path(argv[argv.index("--output-last-message") + 1]).write_text(report, encoding="utf-8")
+        return "", ""
+
+    monkeypatch.setattr("ccc_mcp.adapters.agents.codex.run_process", fake_run_process)
+    monkeypatch.setattr("ccc_mcp.adapters.agents.codex.probe", lambda *a, **k: "codex")
+    CodexAdapter().run({"role": "SA", **package}, "go", tmp_path, 30, lambda: False)
+    return captured["argv"]
+
+
+def test_codex_without_mcp_gets_no_server_overrides(monkeypatch, tmp_path):
+    argv = run_codex_adapter(monkeypatch, tmp_path, {})
+    assert not any(a.startswith("mcp_servers.") for a in argv)
+
+
+def test_codex_with_mcp_waits_for_it_auto_approves_and_limits_tools(monkeypatch, tmp_path):
+    binary = tmp_path / "srv"
+    binary.write_text("x")
+    argv = run_codex_adapter(
+        monkeypatch,
+        tmp_path,
+        {"mcp_servers": {"mem": {"command": str(binary), "args": ["--x"], "allowed_tools": ["a", "b"]}}},
+    )
+    overrides = {a.split("=", 1)[0]: a.split("=", 1)[1] for a in argv if a.startswith("mcp_servers.")}
+    assert json.loads(overrides["mcp_servers.mem.command"]) == str(binary)
+    assert json.loads(overrides["mcp_servers.mem.args"]) == ["--x"]
+    assert json.loads(overrides["mcp_servers.mem.enabled_tools"]) == ["a", "b"]
+    # needed in practice: without these Codex starts the turn before a slow server is
+    # up, and under `-a never` refuses every MCP call that needs approval.
+    assert overrides["mcp_servers.mem.required"] == "true"
+    assert json.loads(overrides["mcp_servers.mem.default_tools_approval_mode"]) == "approve"
+    assert argv[-1] == "-" and "--ignore-user-config" in argv
+
+
+def test_codex_fails_loudly_when_an_installed_command_disappeared(monkeypatch, tmp_path):
+    with pytest.raises(BridgeError, match="command is gone"):
+        run_codex_adapter(
+            monkeypatch,
+            tmp_path,
+            {"mcp_servers": {"mem": {"command": str(tmp_path / "gone"), "args": [], "allowed_tools": ["a"]}}},
+        )
+
+
+def test_no_project_means_global_and_reaches_every_project(bridge, fake_server, tmp_path):
+    other = tmp_path / "other"
+    other.mkdir()
+    bridge.register_project(str(other), "other", "second project")
+    result = bridge.install_mcp_server(None, "fakemem", command=sys.executable, args=[fake_server])
+    assert result["scope"] == "global"
+    assert "every role of every project" in result["roles"]
+    # no project settings were touched; both projects see it through the merge
+    assert bridge.get_project_settings("demo")["mcp_servers"] == {}
+    for project in ("demo", "other"):
+        assert bridge.effective_mcp_servers(project)["fakemem"]["scope"] == "global"
+    assert "fakemem" in json.loads((bridge.home / "mcp-servers.json").read_text())
+
+
+def test_a_project_install_is_scoped_and_overrides_the_global_one(bridge, fake_server, tmp_path):
+    other = tmp_path / "other"
+    other.mkdir()
+    bridge.register_project(str(other), "other", "second project")
+    bridge.install_mcp_server(None, "fakemem", command=sys.executable, args=[fake_server])
+    bridge.install_mcp_server(
+        "demo", "fakemem", command=sys.executable, args=[fake_server], tools=["list_projects"]
+    )
+    mine = bridge.effective_mcp_servers("demo")["fakemem"]
+    assert mine["scope"] == "project" and mine["allowed_tools"] == ["list_projects"]
+    assert bridge.effective_mcp_servers("other")["fakemem"]["allowed_tools"] == [
+        "list_projects", "delete_project"
+    ]
+
+
+def test_dispatch_package_carries_global_servers_too(bridge, human, fake_server):
+    bridge.install_mcp_server(None, "fakemem", command=sys.executable, args=[fake_server])
+    bridge.authorize_project_local("demo")
+    task_id = bridge.create_task("demo", "Do a thing")["id"]
+    dispatched = bridge.dispatch_agent(
+        "demo", task_id, "auto", "SA", bridge.latest("demo")["version"], "Analyze", adapter="fake"
+    )
+    row = bridge.store.one("SELECT package FROM agent_executions WHERE id=?", (dispatched["execution_id"],))
+    assert json.loads(row["package"])["mcp_servers"]["fakemem"]["scope"] == "global"
+
+
+def test_remove_targets_the_scope_it_was_asked_for(bridge, fake_server):
+    bridge.install_mcp_server(None, "fakemem", command=sys.executable, args=[fake_server])
+    with pytest.raises(BridgeError, match="installed globally"):
+        bridge.remove_mcp_server("demo", "fakemem")  # a project cannot remove a global one
+    assert bridge.remove_mcp_server(None, "fakemem")["scope"] == "global"
+    assert bridge.effective_mcp_servers("demo") == {}
+    with pytest.raises(BridgeError, match="not installed globally"):
+        bridge.remove_mcp_server(None, "fakemem")
+
+
+def test_list_shapes_for_project_and_for_global(bridge, fake_server):
+    bridge.install_mcp_server(None, "globalmem", command=sys.executable, args=[fake_server])
+    bridge.install_mcp_server("demo", "fakemem", command=sys.executable, args=[fake_server])
+    scoped = bridge.list_mcp_servers("demo")
+    assert {n: v["scope"] for n, v in scoped["installed"].items()} == {
+        "globalmem": "global", "fakemem": "project"
+    }
+    everything = bridge.list_mcp_servers()
+    assert set(everything["global"]) == {"globalmem"}
+    assert set(everything["projects"]["demo"]) == {"fakemem"}
+    assert "projects" in bridge.list_mcp_servers("demo", all_projects=True)
+
+
+def test_cli_scope_comes_only_from_an_explicit_project(bridge, fake_server, tmp_path, monkeypatch):
+    runner = CliRunner()
+    home = ["--home", str(bridge.home)]
+    arguments = ["skill", "install", "mcp", "fakemem", "--command", sys.executable, "--arg", fake_server]
+    # Even inside a registered project's directory, no --project still means global.
+    monkeypatch.chdir(bridge.project("demo")["root"])
+    installed = runner.invoke(app, home + arguments)
+    assert installed.exit_code == 0, installed.output
+    assert json.loads(installed.output[installed.output.index("{"):])["scope"] == "global"
+    assert bridge.get_project_settings("demo")["mcp_servers"] == {}
+
+    listed = json.loads(runner.invoke(app, home + ["mcp", "list"]).output)
+    assert "fakemem" in listed["global"]
+    scoped = json.loads(runner.invoke(app, home + ["--project", "demo", "mcp", "list"]).output)
+    assert scoped["installed"]["fakemem"]["scope"] == "global"
+
+    assert runner.invoke(app, home + ["--project", "demo", "mcp", "remove", "fakemem"]).exit_code != 0
+    assert runner.invoke(app, home + ["mcp", "remove", "fakemem"]).exit_code == 0
+
+
+def test_bootstrap_tells_chatgpt_about_installed_mcp_and_how_to_reach_it(bridge, fake_server):
+    empty = bridge.bootstrap_project("demo")["installed_mcp"]
+    assert empty["servers"] == {}
+    assert "skill install mcp" in empty["how_to_use"] and "cannot install" in empty["how_to_use"]
+    bridge.install_mcp_server("demo", "fakemem", command=sys.executable, args=[fake_server], tools=["list_projects"])
+    hint = bridge.bootstrap_project("demo")["installed_mcp"]
+    assert hint["servers"]["fakemem"] == {"scope": "project", "enabled_tools": ["list_projects"]}
+    assert "call_installed_mcp_tool" in hint["how_to_use"] and "NOT separate tools" in hint["how_to_use"]
+    bridge.install_mcp_server(None, "globalmem", command=sys.executable, args=[fake_server])
+    assert bridge.bootstrap_project("demo")["installed_mcp"]["servers"]["globalmem"]["scope"] == "global"

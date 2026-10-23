@@ -2,6 +2,7 @@ import json
 import uuid
 from pathlib import Path
 
+from ..adapters.agents.base import REPORT_MODELS
 from ..adapters.git import git, revision, worktree
 from ..adapters.storage import decode
 from ..infra.errors import BridgeError, PermissionDenied, VersionConflict
@@ -126,9 +127,14 @@ class WorkspaceHub:
                 if self.latest(project_id)["version"] != row["context_version"]:
                     raise VersionConflict("Context changed before ChatGPT handoff")
                 cwd = Path(self.project(project_id)["root"])
-                if row["role"] not in {"SA", "REVIEW"}:
+                options = json.loads(row["options"])
+                # Meeting Mode's SD/RD clarification check keeps role SD/RD but must be
+                # as read-only as SA/REVIEW: no worktree, no project-workspace claim.
+                readonly = row["role"] in {"SA", "REVIEW"} or options.get(
+                    "report_schema", "agent_report"
+                ) != "agent_report"
+                if not readonly:
                     self.approved_plan(project_id, row["task_id"])
-                    options = json.loads(row["options"])
                     if options.get("workspace_mode", "worktree") == "project":
                         cwd = self.prepare_project_workspace(
                             project_id, row["task_id"], execution_id
@@ -149,8 +155,7 @@ class WorkspaceHub:
                     "UPDATE agent_executions SET status='RUNNING',worktree=? WHERE id=? AND status='QUEUED'",
                     (
                         str(cwd)
-                        if row["role"] not in {"SA", "REVIEW"}
-                        or cwd != Path(self.project(project_id)["root"])
+                        if not readonly or cwd != Path(self.project(project_id)["root"])
                         else None,
                         execution_id,
                     ),
@@ -248,7 +253,9 @@ class WorkspaceHub:
         reject_secrets(content)
         with self.lock(project_id):
             row = self._interactive_execution(project_id, execution_id)
-            if row["role"] in {"SA", "REVIEW"}:
+            if row["role"] in {"SA", "REVIEW"} or row["options"].get(
+                "report_schema", "agent_report"
+            ) != "agent_report":
                 raise PermissionDenied("SA/Review is read-only regardless of provider")
             root = self.execution_workspace(row)
             if str(root) != row["worktree"]:
@@ -279,7 +286,23 @@ class WorkspaceHub:
             self.sync_documents(project_id)
             return receipt
 
+    def _expected_schema(self, project_id, execution_id):
+        row = self.store.one(
+            "SELECT options FROM agent_executions WHERE project_id=? AND id=?",
+            (project_id, execution_id),
+        )
+        if not row:
+            raise PermissionDenied("Execution does not belong to this project")
+        return json.loads(row["options"]).get("report_schema", "agent_report")
+
     def submit_agent_report(self, project_id, execution_id, report):
+        schema = self._expected_schema(project_id, execution_id)
+        if schema != "agent_report":
+            raise BridgeError(
+                f"This execution expects a Meeting Mode {schema}; submit it with "
+                f"{'submit_clarification_request' if schema == 'clarification_request' else 'submit_clarification_response'}"
+                ", not submit_agent_report"
+            )
         parsed = AgentReport.model_validate(report).model_dump()
         if parsed["simulated"]:
             raise BridgeError("Interactive ChatGPT results cannot claim simulated execution")
@@ -311,4 +334,43 @@ class WorkspaceHub:
             "execution_id": execution_id,
             "status": "RECORDED",
             "next_action": "PM collects context updates and refines ContextPatch before the next handoff",
+        }
+
+    def submit_clarification(self, project_id, execution_id, report):
+        """The interactive ChatGPT counterpart of a native CLI's Meeting Mode report:
+        SD/RD's ClarificationRequest or SA's ClarificationResponse. Records it exactly like
+        the worker does, then starts whatever Meeting Mode dispatches next (SA's answer, the
+        next round, or the real implementation) so the exchange continues without a PM step."""
+        schema = self._expected_schema(project_id, execution_id)
+        if schema == "agent_report":
+            raise BridgeError(
+                "This execution expects an AgentReport; submit it with submit_agent_report"
+            )
+        parsed = REPORT_MODELS[schema].model_validate(report).model_dump()
+        reject_secrets(parsed)
+        with self.lock(project_id):
+            self._interactive_execution(project_id, execution_id)
+            self.finish_execution(
+                execution_id,
+                report=parsed,
+                extras={
+                    "invocation": {
+                        "source": "chatgpt_web",
+                        "cli_invoked": False,
+                        "usage": {
+                            "available": False,
+                            "reason": "ChatGPT web usage is not exposed to MCP",
+                        },
+                    }
+                },
+                locked=True,
+            )
+        # Outside the lock, like the worker: a no-op unless a follow-up dispatch is due.
+        next_execution = self.advance_meeting_clarification(execution_id)
+        return {
+            "execution_id": execution_id,
+            "status": "RECORDED",
+            "report_schema": schema,
+            "next_execution": next_execution,
+            "next_action": "Meeting Mode continues automatically; follow the task handoff.",
         }

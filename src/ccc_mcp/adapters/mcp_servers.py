@@ -8,12 +8,15 @@ Environment variables from client configs are never copied (they commonly hold s
 """
 
 import asyncio
+import atexit
 import json
 import os
 import re
 import shutil
 import sys
+import threading
 import tomllib
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from pathlib import Path
 
 from ..infra.errors import BridgeError
@@ -193,4 +196,166 @@ def claude_tool_patterns(servers):
         f"mcp__{name}__{tool}"
         for name, spec in servers.items()
         for tool in spec.get("allowed_tools", [])
+    ]
+
+
+MAX_RESULT_CHARS = 60_000
+IDLE_SECONDS = 300
+
+
+class _Session:
+    """One long-lived MCP client session, owned by a single task.
+
+    anyio requires a connection to be entered and exited in the same task, so the session
+    lives inside `run()` and callers hand it work through a queue instead of sharing it."""
+
+    def __init__(self, command, args):
+        self.command, self.args = command, list(args)
+        self.queue = None
+        self.ready = None
+        self.closed = False
+        self.task = None
+
+    async def run(self):
+        from mcp import ClientSession, StdioServerParameters
+        from mcp.client.stdio import stdio_client
+
+        try:
+            with open(os.devnull, "w", encoding="utf-8") as quiet:
+                async with stdio_client(
+                    StdioServerParameters(command=self.command, args=self.args), quiet
+                ) as (reader, writer):
+                    async with ClientSession(reader, writer) as session:
+                        await session.initialize()
+                        self.ready.set_result(True)
+                        while True:
+                            try:
+                                item = await asyncio.wait_for(self.queue.get(), IDLE_SECONDS)
+                            except TimeoutError:
+                                return
+                            if item is None:
+                                return
+                            kind, payload, future = item
+                            try:
+                                if kind == "call":
+                                    outcome = await session.call_tool(*payload)
+                                else:
+                                    outcome = (await session.list_tools()).tools
+                                future.set_result(outcome)
+                            except Exception as exc:  # reported to the waiting caller
+                                future.set_exception(exc)
+        except BaseException as exc:
+            if not self.ready.done():
+                self.ready.set_exception(exc if isinstance(exc, Exception) else RuntimeError("cancelled"))
+            if not isinstance(exc, Exception):
+                raise
+        finally:
+            self.closed = True
+
+
+class McpPool:
+    """Keeps started MCP servers alive between calls (a slow starter such as
+    codebase-memory-mcp takes ~6 s), one process per (scope, command, args), so projects
+    never share a server's state. Idle servers are closed after IDLE_SECONDS."""
+
+    def __init__(self):
+        self._loop = None
+        self._guard = threading.Lock()
+        self._sessions = {}
+
+    def _event_loop(self):
+        with self._guard:
+            if self._loop is None:
+                loop = asyncio.new_event_loop()
+                threading.Thread(target=loop.run_forever, name="ccc-mcp-pool", daemon=True).start()
+                self._loop = loop
+            return self._loop
+
+    async def _session(self, key, command, args, timeout):
+        session = self._sessions.get(key)
+        if session is None or session.closed:
+            session = _Session(command, args)
+            session.queue = asyncio.Queue()
+            session.ready = asyncio.get_running_loop().create_future()
+            session.task = asyncio.get_running_loop().create_task(session.run())
+            self._sessions[key] = session
+        await asyncio.wait_for(asyncio.shield(session.ready), timeout)
+        return session
+
+    async def _submit(self, key, command, args, kind, payload, timeout):
+        for attempt in (1, 2):
+            session = await self._session(key, command, args, timeout)
+            future = asyncio.get_running_loop().create_future()
+            await session.queue.put((kind, payload, future))
+            try:
+                return await asyncio.wait_for(asyncio.shield(future), timeout)
+            except TimeoutError:
+                session.task.cancel()  # a stuck server must not block the next caller
+                raise
+            except Exception:
+                # A connection that died while idle fails the first attempt only.
+                session.task.cancel()
+                self._sessions.pop(key, None)
+                if attempt == 2:
+                    raise
+
+    def submit(self, scope, command, args, kind, payload, timeout):
+        key = (scope, command, tuple(args))
+        loop = self._event_loop()
+        return asyncio.run_coroutine_threadsafe(
+            self._submit(key, command, list(args), kind, payload, timeout), loop
+        ).result(timeout + 30)
+
+    def close_all(self):
+        with self._guard:
+            loop = self._loop
+        if loop is None:
+            return
+
+        async def stop():
+            for session in list(self._sessions.values()):
+                session.task.cancel()
+            self._sessions.clear()
+            await asyncio.sleep(0.2)
+
+        asyncio.run_coroutine_threadsafe(stop(), loop).result(15)
+
+
+POOL = McpPool()
+atexit.register(POOL.close_all)
+
+
+def call_tool(scope, command, args, tool, arguments, timeout=180):
+    """Run one tool and return {is_error, text, truncated}. The server stays running
+    between calls for the same scope (project), so only the first call pays its startup."""
+    try:
+        result = POOL.submit(scope, command, args, "call", (tool, arguments), timeout)
+    except (TimeoutError, FutureTimeoutError):
+        raise BridgeError(f"{tool} did not finish within {timeout}s") from None
+    except Exception as exc:  # third-party server: report, never crash the caller
+        raise BridgeError(f"{tool} failed: {exc}") from None
+    text = "\n".join(
+        getattr(block, "text", None) or f"[{getattr(block, 'type', 'content')} omitted]"
+        for block in result.content
+    )
+    return {
+        "is_error": bool(result.is_error),
+        "text": text[:MAX_RESULT_CHARS],
+        "truncated": len(text) > MAX_RESULT_CHARS,
+    }
+
+
+def describe_tools(scope, command, args=(), timeout=90):
+    """[{name, description, input_schema}] — what a model needs to call each tool."""
+    try:
+        tools = POOL.submit(scope, command, args, "list", None, timeout)
+    except Exception as exc:
+        raise BridgeError(f"could not list tools of {command}: {exc}") from None
+    return [
+        {
+            "name": tool.name,
+            "description": (tool.description or "").strip(),
+            "input_schema": tool.input_schema,
+        }
+        for tool in tools
     ]
