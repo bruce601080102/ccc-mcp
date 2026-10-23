@@ -1462,6 +1462,10 @@ class TaskHub:
             package["agent_settings"] = settings
             package["workspace_mode"] = workspace_mode
             package["report_schema"] = report_schema
+            if project_settings.get("mcp_servers"):
+                # Operator-installed local MCP servers (CLI only); adapters that support
+                # them expose exactly these, nothing else.
+                package["mcp_servers"] = project_settings["mcp_servers"]
             execution_id = "EXEC-" + uuid.uuid4().hex[:16]
             state = (
                 "AWAITING_SA_CLARIFICATION"
@@ -1957,11 +1961,32 @@ class TaskHub:
             # escalation="ask_user" (default): a real decision/approval requiring the
             # actual human's input, so it stays a legitimate stop like USER_APPROVAL.
             must_continue = handoff["clarification"]["escalation"] == "auto_pm"
+        action_required = None
+        if must_continue:
+            # The same fact as must_continue_in_this_turn, restated as a top-level,
+            # directly executable instruction: a model skips a nested boolean but
+            # follows "call this tool now" (observed: a chat ended on RUNNING).
+            keep_waiting = timed_out or waiting_on == "AGENT_RUNNING"
+            action_required = {
+                "do_not_end_turn": True,
+                "call_tool": "wait_for_task" if keep_waiting else None,
+                "arguments": {"project_id": project_id, "task_id": task_id} if keep_waiting else None,
+                "instruction": (
+                    f"The task is still {waiting_on}. Do NOT write a final answer or tell the "
+                    "user it is still running. Immediately call wait_for_task with `arguments` "
+                    "again, and repeat until it returns a terminal state or a decision that "
+                    "needs the user."
+                    if keep_waiting
+                    else "Do NOT write a final answer yet. Do this now, in this same turn: "
+                    + str(handoff.get("next_action"))
+                ),
+            }
         return {
             "task_id": task_id,
             "timed_out": timed_out,
             "elapsed_seconds": round(elapsed, 2),
             "must_continue_in_this_turn": must_continue,
+            "action_required": action_required,
             "terminal": waiting_on in {"COMPLETED", "CANCELLED", "REJECTED", "FAILED", "BLOCKED"},
             "meeting_mode_notice": handoff["meeting_mode_notice"],
             "handoff": handoff,

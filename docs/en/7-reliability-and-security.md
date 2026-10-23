@@ -23,6 +23,10 @@ The gate fires at most once per task, immediately before SD/RD's first-ever impl
 
 `meeting_mode.escalation` (`ask_user`, the default, or `auto_pm`) decides who is supposed to resolve a `pm_decision_required` round, and `clarification.triggered` tells the operator whether the gate ever actually produced a real question — but unlike the three guarantees above, neither is code-enforced. ccc-mcp has no way to verify from the backend whether the connected ChatGPT conversation actually asked the real human and waited for their reply, or decided on its own; `escalation` only shapes the wording `task_handoff` returns and the instructions the MCP server gives ChatGPT (see `interfaces/server.py`). Treat it as a strong operating convention, not a boundary ccc-mcp can enforce the way it enforces structural read-only access or `rounds_used`.
 
+## MCP servers for agents
+
+Agents run without MCP unless an operator runs `ccc-mcp skill install mcp <name>` for that project. The command is verified and recorded as an absolute path at install time; installation is possible only from the local CLI (no MCP tool, and `settings.json` is not an import source), and only Claude Code roles receive it. An installed MCP tool is not bound by a role's read-only file tools; it can do whatever that server allows, and Claude then runs without `--safe-mode` (see [Skills](6-skills.md#mcp-servers-let-dispatched-agents-call-a-local-mcp-live)). Treat installing an MCP as granting its tools to every Claude role of that project.
+
 ## Authorization and execution
 
 `project authorize` permits writes inside the registered project plus configured test execution. ccc-mcp may create a project venv and install dependencies found in `requirements.txt`, `pyproject.toml`, or `package.json`; package install hooks can execute code. Review dependency diffs.

@@ -133,6 +133,14 @@ app.add_typer(workspace_app, name="workspace", hidden=True)
 app.add_typer(config_app, name="config")
 app.add_typer(schema_app, name="schema")
 app.add_typer(skill_app, name="skill")
+mcp_app = typer.Typer(
+    no_args_is_help=True,
+    help=t(
+        "本機 MCP 伺服器：列出本機各客戶端定義的伺服器，以及這個專案已安裝給 agent 用的",
+        "Local MCP servers: list what clients on this machine define, and what this project installed for agents",
+    ),
+)
+app.add_typer(mcp_app, name="mcp")
 
 
 @app.callback(
@@ -1536,11 +1544,50 @@ def schema_export(out_dir: Path):
 @skill_app.command(
     "install",
     help=t(
-        "從本機路徑或 URL（.md 單檔／.zip 封存）安裝一個全局 Skill。",
-        "Install a global skill from a local path or URL (a single .md file, or a .zip archive).",
+        "從本機路徑或 URL（.md 單檔／.zip 封存）安裝一個全局 Skill。"
+        "`skill install mcp <名稱>` 則是讓這個專案派出的 agent 能即時呼叫本機的 stdio MCP 伺服器"
+        "（先確認指令存在並完成 MCP 握手，記下完整路徑，所以之後不依賴 conda/venv 的啟用）。"
+        "也可用 codebase-memory:<repo 路徑> 把該 repo 的 codebase-memory-mcp 索引存成快照 Skill"
+        "（路徑留空則使用 --project 的專案根目錄）；agent 讀得到這些檔案。",
+        "Install a global skill from a local path or URL (a single .md file, or a .zip archive). "
+        "`skill install mcp <name>` instead lets this project's dispatched agents call a local "
+        "stdio MCP server live (the command must exist and complete an MCP handshake; its full "
+        "path is recorded, so later runs do not depend on an activated conda/venv). "
+        "Also accepts codebase-memory:<repo path> to save that repo's codebase-memory-mcp index "
+        "as a snapshot skill (empty path = the --project's root); agents can read these files.",
     ),
 )
-def skill_install(ctx: typer.Context, source: str):
+def skill_install(
+    ctx: typer.Context,
+    source: str,
+    name: Annotated[str | None, typer.Argument(help=t("MCP 名稱（搭配 mcp）", "MCP name (with `mcp`)"))] = None,
+    command: Annotated[
+        str | None,
+        typer.Option("--command", help=t("MCP 伺服器的完整指令路徑", "Full path of the MCP server command")),
+    ] = None,
+    arg: Annotated[
+        list[str] | None,
+        typer.Option("--arg", help=t("傳給 MCP 指令的參數（可重複）", "Argument for the MCP command (repeatable)")),
+    ] = None,
+    tools: Annotated[
+        str | None,
+        typer.Option("--tools", help=t("只啟用這些工具，逗號分隔（預設全部）", "Enable only these tools, comma-separated (default: all)")),
+    ] = None,
+    cbm: Annotated[
+        str | None,
+        typer.Option("--cbm", help=t("codebase-memory-mcp 執行檔路徑", "Path to the codebase-memory-mcp binary")),
+    ] = None,
+):
+    if source == "mcp":
+        if not name:
+            raise BridgeError(t("用法：skill install mcp <名稱>", "Usage: skill install mcp <name>"))
+        result = bridge(ctx).install_mcp_server(
+            project_id(ctx), name, command, arg, tools.split(",") if tools else None
+        )
+        for warning in result["warnings"]:
+            typer.echo(f"! {warning}", err=True)
+        output(result)
+        return
     if source.startswith(("http://", "https://")):
         typer.echo(
             t(
@@ -1549,7 +1596,27 @@ def skill_install(ctx: typer.Context, source: str):
             ),
             err=True,
         )
-    output(install_skill(bridge(ctx).home, source))
+    if not source.startswith("codebase-memory:"):
+        output(install_skill(bridge(ctx).home, source))
+        return
+    repo_root = None
+    if not source[len("codebase-memory:"):].strip():
+        repo_root = bridge(ctx).project(project_id(ctx))["root"]
+    output(install_skill(bridge(ctx).home, source, repo_root=repo_root, cbm=cbm))
+
+
+@mcp_app.command("list", help=t("列出本機客戶端定義的 MCP 伺服器與這個專案已安裝的。", "List MCP servers defined by clients on this machine and the ones installed for this project."))
+def mcp_list(ctx: typer.Context):
+    try:
+        project = project_id(ctx)
+    except BridgeError:
+        project = None
+    output(bridge(ctx).list_mcp_servers(project))
+
+
+@mcp_app.command("remove", help=t("移除這個專案已安裝的 MCP 伺服器。", "Remove an MCP server installed for this project."))
+def mcp_remove(ctx: typer.Context, name: str):
+    output(bridge(ctx).remove_mcp_server(project_id(ctx), name))
 
 
 @skill_app.command("list", help=t("列出所有已安裝的 Skill。", "List every installed skill."))

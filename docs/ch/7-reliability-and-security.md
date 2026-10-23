@@ -206,6 +206,10 @@ ccc-mcp project delete demo-app   # 互動確認，需輸入 DELETE demo-app
 
 `meeting_mode.escalation`（預設 `ask_user`，或 `auto_pm`）決定 `pm_decision_required` 這一輪該由誰決定；`clarification.triggered` 則告訴操作者這個關卡是否真的問出過一個問題。但跟上面三個保證不同，這兩個都不是程式碼強制執行的——ccc-mcp 沒有辦法從後端驗證已連線的 ChatGPT 對話是否真的詢問了真人並等待其回覆，還是自己直接決定了；`escalation` 只會改變 `task_handoff` 回傳文字與 MCP 伺服器給 ChatGPT 的指令內容（見 `interfaces/server.py`）。請把它當作一個強力的操作慣例，而不是像結構性唯讀或 `rounds_used` 那樣 ccc-mcp 能夠強制執行的邊界。
 
+## 給 agent 使用的 MCP 伺服器
+
+除非操作者對該專案執行 `ccc-mcp skill install mcp <名稱>`，agent 一律不帶 MCP。安裝時會驗證指令並記下完整路徑；只有本機 CLI 能安裝（沒有 MCP 工具，`settings.json` 也不是匯入來源），而且只有 Claude Code 角色會拿到。已安裝的 MCP 工具不受角色唯讀檔案工具限制，它能做什麼取決於該伺服器，且 Claude 此時不帶 `--safe-mode`（詳見 [Skills](6-skills.md)）。請把安裝 MCP 視為「把它的工具授權給該專案所有 Claude 角色」。
+
 ## 測試涵蓋
 
 - [tests/test_resumable_advance.py](../tests/test_resumable_advance.py)：派工失敗後的恢復、拒絕不相關的 Patch、`resume_pending_dispatch`、`task cancel` 清理指標、主機測試失敗覆蓋 REVIEW 自述、未收集到測試一樣擋住自動結案、Context 提交與 `pending_dispatch` 指標確實寫在同一個交易裡。

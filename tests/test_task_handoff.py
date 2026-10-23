@@ -229,6 +229,22 @@ def test_wait_for_task_timeout_requires_same_turn_to_keep_waiting(bridge):
     assert waited["timed_out"] is True
     assert waited["handoff"]["waiting_on"] == "AGENT_RUNNING"
     assert waited["must_continue_in_this_turn"] is True
+    # The same fact as a top-level, directly executable instruction (a chat once ended
+    # on RUNNING because only the nested boolean said to keep going).
+    action = waited["action_required"]
+    assert action["do_not_end_turn"] is True
+    assert action["call_tool"] == "wait_for_task"
+    assert action["arguments"] == {"project_id": "demo", "task_id": task_id}
+    assert "Do NOT write a final answer" in action["instruction"]
+
+
+def test_wait_for_task_has_no_action_required_once_settled(bridge):
+    task_id = bridge.create_task("demo", "Implement a change")["id"]
+    bridge.cancel_task("demo", task_id)
+    waited = bridge.wait_for_task("demo", task_id, timeout_seconds=0)
+    assert waited["terminal"] is True
+    assert waited["must_continue_in_this_turn"] is False
+    assert waited["action_required"] is None
 
 
 def test_wait_for_task_stays_through_implementation_tests_and_review(bridge, human, monkeypatch):

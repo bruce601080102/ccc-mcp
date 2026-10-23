@@ -1,0 +1,105 @@
+name: Release
+
+# Push a tag like v0.2.0 to test on every OS, build, smoke-install on every OS, then
+# publish to PyPI. "Run workflow" (workflow_dispatch) builds and uploads the artifacts
+# only; it never publishes.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    uses: ./.github/workflows/ci.yml
+
+  build:
+    name: build sdist + wheel
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Tag must match the package version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          version=$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' src/ccc_mcp/__init__.py)
+          if [ "refs/tags/v${version}" != "${GITHUB_REF}" ]; then
+            echo "Tag ${GITHUB_REF#refs/tags/} does not match src/ccc_mcp/__init__.py version ${version}" >&2
+            exit 1
+          fi
+      - run: python -m pip install build twine
+      - run: python -m build
+      - run: python -m twine check --strict dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  # The package is pure Python, so one wheel serves every OS. This proves it: install
+  # the exact built wheel into a fresh environment on each OS and run the CLI.
+  smoke-install:
+    name: install wheel (${{ matrix.os }}, py${{ matrix.python-version }})
+    needs: build
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ["3.11", "3.14"]
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - name: Install the wheel into a clean venv
+        shell: bash
+        run: |
+          python -m venv smoke-venv
+          if [ -x smoke-venv/Scripts/python.exe ]; then py=smoke-venv/Scripts/python.exe; else py=smoke-venv/bin/python; fi
+          "$py" -m pip install dist/*.whl
+          "$py" -m ccc_mcp --help
+          "$py" -c "import ccc_mcp, importlib.metadata as m; print(ccc_mcp.__version__, m.version('ccc-mcp'))"
+          if [ "$RUNNER_OS" = "Windows" ]; then "$py" -c "import win32job"; fi
+
+  github-release:
+    name: attach build to GitHub Release
+    needs: [build, smoke-install]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - name: Create release with the sdist and wheel
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${GITHUB_REF_NAME}" dist/* --repo "${GITHUB_REPOSITORY}" --title "${GITHUB_REF_NAME}" --generate-notes
+
+  publish-pypi:
+    name: publish to PyPI
+    needs: [build, smoke-install]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/ccc-mcp
+    permissions:
+      id-token: write # PyPI Trusted Publishing (OIDC); no API token is stored
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@release/v1

@@ -106,7 +106,28 @@ def _install_from_url(home: Path, url: str) -> dict:
     raise BridgeError("Skill URL must end in .md (single file) or .zip (archive)")
 
 
-def install_skill(home: Path, source: str) -> dict:
+SNAPSHOT_PREFIX = "codebase-memory:"
+
+
+def _install_codebase_snapshot(home, source, repo_root, cbm):
+    from .codebase_snapshot import build_snapshot, cli_runner, resolve_binary
+
+    target = source[len(SNAPSHOT_PREFIX):].strip() or repo_root
+    if not target:
+        raise BridgeError(
+            "Give a repo path (codebase-memory:/path/to/repo) or select a project with --project"
+        )
+    with tempfile.TemporaryDirectory() as tmp:
+        out = Path(tmp) / "snapshot"
+        built = build_snapshot(cli_runner(resolve_binary(cbm)), target, out)
+        return {**_install_from_path(home, out), "indexed_now": built["indexed_now"]}
+
+
+def install_skill(
+    home: Path, source: str, *, repo_root: str | None = None, cbm: str | None = None
+) -> dict:
+    if source.startswith(SNAPSHOT_PREFIX):
+        return _install_codebase_snapshot(home, source, repo_root, cbm)
     if source.startswith(("http://", "https://")):
         return _install_from_url(home, source)
     path = Path(source).expanduser()

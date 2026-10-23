@@ -4,14 +4,36 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ccc-mcp"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Persistent context and governed agent orchestration over MCP"
 readme = "README.md"
 requires-python = ">=3.11"
+keywords = ["mcp", "chatgpt", "codex", "claude-code", "ai-agents", "workflow"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Operating System :: MacOS",
+  "Operating System :: Microsoft :: Windows",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Software Development",
+]
 dependencies = [
   "mcp>=2.3,<3", "pydantic>=2.10,<3", "typer>=0.16,<1",
   "portalocker>=3,<4", "psutil>=7,<8", "PyJWT[crypto]>=2.10,<3",
+  # adapters/agents/base.py imports win32api/win32con/win32job to kill agent process trees
+  "pywin32>=311; sys_platform == 'win32'",
 ]
+
+[project.urls]
+Homepage = "https://github.com/bruce601080102/ccc-mcp"
+Repository = "https://github.com/bruce601080102/ccc-mcp"
+Issues = "https://github.com/bruce601080102/ccc-mcp/issues"
 
 [project.optional-dependencies]
 dev = ["pytest>=8,<10", "pytest-asyncio>=1,<2", "httpx>=0.28,<1", "ruff>=0.13,<1"]
@@ -33,6 +55,9 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F", "I", "UP", "PLW1510"]
+
+[tool.hatch.version]
+path = "src/ccc_mcp/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/ccc_mcp"]

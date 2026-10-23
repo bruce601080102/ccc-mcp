@@ -116,7 +116,9 @@ def create_server(
         "Low-risk successful SD/RD and REVIEW reports are compacted by ccc-mcp automatically; "
         "the host then runs tests and dispatches REVIEW. Only an active implementation "
         "execution can modify project files. "
-        "WORKFLOW COMPLETION CONTRACT: when the user asked for a project change, keep the entire "
+        "WORKFLOW COMPLETION CONTRACT: any result with a non-null action_required means DO NOT end your turn — "
+        "perform it immediately (usually call wait_for_task again) before writing any reply. "
+        "When the user asked for a project change, keep the entire "
         "wait/refine/advance loop inside this same assistant turn. Never send a final response merely "
         "because SA, SD/RD, REVIEW, or tests are running. start_project_request and advance_project "
         "return a workflow snapshot after waiting; if workflow.must_continue_in_this_turn is true, "
@@ -235,8 +237,10 @@ def create_server(
         must_continue_in_this_turn is true, do not end the chat turn: wait again or
         perform the returned PM/ChatGPT handoff. Returns early for terminal states,
         failures, and decisions that genuinely require user input.
-            If the result has a non-null meeting_mode_notice, your reply to the user MUST
-            begin with meeting_mode_notice.text verbatim as its first line."""
+            If the result has a non-null action_required, do NOT end your turn: perform
+            it immediately (usually wait_for_task again). If it has a non-null
+            meeting_mode_notice, your reply to the user MUST begin with
+            meeting_mode_notice.text verbatim as its first line."""
         resolved = task_id or await call(bridge.project_workstream_task, project_id)
         return await call(bridge.wait_for_task, project_id, resolved, timeout_seconds)
 
@@ -348,14 +352,17 @@ def create_server(
             Never use this to continue, retry, recover, or inspect an existing task;
             doing so starts a new round and invalidates its prior plan approval. The
             caller must continue in this turn whenever workflow says so.
-            If the result has a non-null meeting_mode_notice, your reply to the user MUST
-            begin with meeting_mode_notice.text verbatim as its first line."""
+            If the result has a non-null action_required, do NOT end your turn: perform
+            it immediately (usually wait_for_task again). If it has a non-null
+            meeting_mode_notice, your reply to the user MUST begin with
+            meeting_mode_notice.text verbatim as its first line."""
             result = await call(bridge.start_project_request, project_id, requirement, acceptance)
             task_id = result["workstream"]["id"]
             result["workflow"] = await call(
                 bridge.wait_for_task, project_id, task_id, wait_seconds
             )
             result["meeting_mode_notice"] = result["workflow"]["meeting_mode_notice"]
+            result["action_required"] = result["workflow"]["action_required"]
             return result
 
         @server.tool(annotations=mutation)
@@ -368,8 +375,10 @@ def create_server(
         ) -> dict[str, Any]:
             """Compatibility alias: start the project request, dispatch SA, and wait.
             Do not call dispatch_agent again; continue according to workflow.
-            If the result has a non-null meeting_mode_notice, your reply to the user MUST
-            begin with meeting_mode_notice.text verbatim as its first line."""
+            If the result has a non-null action_required, do NOT end your turn: perform
+            it immediately (usually wait_for_task again). If it has a non-null
+            meeting_mode_notice, your reply to the user MUST begin with
+            meeting_mode_notice.text verbatim as its first line."""
             result = await call(bridge.start_project_request, project_id, requirement, acceptance)
             result["id"] = result["workstream"]["id"]
             result["task_id"] = result["workstream"]["id"]
@@ -383,6 +392,7 @@ def create_server(
                 bridge.wait_for_task, project_id, result["task_id"], wait_seconds
             )
             result["meeting_mode_notice"] = result["workflow"]["meeting_mode_notice"]
+            result["action_required"] = result["workflow"]["action_required"]
             return result
 
         @server.tool(annotations=mutation)
@@ -394,8 +404,10 @@ def create_server(
         ) -> dict[str, Any]:
             """PM refines one completed Agent result; backend starts the next role and
             waits for progress. Continue this turn whenever workflow says so.
-            If the result has a non-null meeting_mode_notice, your reply to the user MUST
-            begin with meeting_mode_notice.text verbatim as its first line."""
+            If the result has a non-null action_required, do NOT end your turn: perform
+            it immediately (usually wait_for_task again). If it has a non-null
+            meeting_mode_notice, your reply to the user MUST begin with
+            meeting_mode_notice.text verbatim as its first line."""
             result = await call(
                 bridge.advance_project, project_id, patch.model_dump(), plan_content
             )
@@ -408,6 +420,7 @@ def create_server(
                 bridge.wait_for_task, project_id, task_id, wait_seconds
             )
             result["meeting_mode_notice"] = result["workflow"]["meeting_mode_notice"]
+            result["action_required"] = result["workflow"]["action_required"]
             return result
 
         @server.tool(annotations=mutation)
@@ -421,8 +434,10 @@ def create_server(
         ) -> dict[str, Any]:
             """Dispatch the configured provider with real execution and wait for
             progress; no simulated Agent option.
-            If the result has a non-null meeting_mode_notice, your reply to the user MUST
-            begin with meeting_mode_notice.text verbatim as its first line."""
+            If the result has a non-null action_required, do NOT end your turn: perform
+            it immediately (usually wait_for_task again). If it has a non-null
+            meeting_mode_notice, your reply to the user MUST begin with
+            meeting_mode_notice.text verbatim as its first line."""
             result = await call(
                 bridge.dispatch_agent,
                 project_id,
@@ -436,6 +451,7 @@ def create_server(
                 bridge.wait_for_task, project_id, task_id, wait_seconds
             )
             result["meeting_mode_notice"] = result["workflow"]["meeting_mode_notice"]
+            result["action_required"] = result["workflow"]["action_required"]
             return result
 
         @server.tool(annotations=mutation)

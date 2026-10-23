@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+from ..adapters import mcp_servers as mcp_registry
 from ..adapters.agents import ADAPTERS, CodexAdapter
 from ..adapters.agents.base import native_executable, operator_policy
 from ..adapters.git import git
@@ -351,6 +352,10 @@ class ConfigurationHub:
             "worktree_dir": settings.get("worktree_dir", str(self.home / "worktrees")),
             "test_command": settings.get("test_command"),
             "context_token_budget": settings.get("context_token_budget"),
+            # Installed only through the local CLI (install_mcp_server): settings.json is
+            # deliberately not an import source for this key, because it holds commands
+            # that get executed on dispatch.
+            "mcp_servers": settings.get("mcp_servers", {}),
             # Merge (not replace) so a project saved before `escalation` existed still
             # reads a complete dict instead of KeyError-ing downstream.
             "meeting_mode": {**DEFAULT_MEETING_MODE, **settings.get("meeting_mode", {})},
@@ -635,6 +640,77 @@ class ConfigurationHub:
             }
             settings["meeting_mode"] = self._validated_meeting_mode(updated)
             return self._save_settings(project_id, settings)
+
+    def list_mcp_servers(self, project_id=None):
+        """Servers clients on this machine define (discovered) and the ones installed here."""
+        root = self.project(project_id)["root"] if project_id else None
+        installed = self.get_project_settings(project_id)["mcp_servers"] if project_id else {}
+        return {
+            "discovered": mcp_registry.discover(root),
+            "installed": {
+                name: {
+                    **spec,
+                    "command_exists": Path(spec["command"]).is_file(),
+                }
+                for name, spec in installed.items()
+            },
+        }
+
+    def install_mcp_server(self, project_id, name, command=None, args=None, tools=None):
+        """Make a local stdio MCP server callable by this project's dispatched agents.
+
+        Verifies the command exists and completes a real MCP handshake first, records its
+        absolute path (so later runs do not depend on the shell's PATH or on an activated
+        conda/venv), and enables only `tools` (default: all it exposes)."""
+        project = self.project(project_id)
+        found = mcp_registry.resolve_server(name, command, args, project["root"])
+        listed = mcp_registry.probe_tools(found["command"], found["args"])
+        available = {tool["name"] for tool in listed}
+        allowed = list(tools) if tools else [tool["name"] for tool in listed]
+        unknown = sorted(set(allowed) - available)
+        if unknown:
+            raise BridgeError(f"{found['name']} does not expose: {', '.join(unknown)}")
+        with self.lock(project_id):
+            settings = self.get_project_settings(project_id)
+            servers = dict(settings.get("mcp_servers", {}))
+            servers[found["name"]] = {
+                "command": found["command"],
+                "args": found["args"],
+                "allowed_tools": allowed,
+                "source": found["source"],
+            }
+            settings["mcp_servers"] = servers
+            self._save_settings(project_id, settings)
+        support = {}
+        for role, values in settings["roles"].items():
+            provider = values["provider"]
+            support[role] = {
+                "claude": "live",
+                "codex": "not supported yet (Codex does not load MCP servers in this workflow)",
+                "chatgpt": "n/a (interactive role)",
+            }.get(provider, "unknown")
+        return {
+            "name": found["name"],
+            "command": found["command"],
+            "args": found["args"],
+            "source": found["source"],
+            "tools": [
+                {**tool, "enabled": tool["name"] in allowed} for tool in listed
+            ],
+            "roles": support,
+            "warnings": found["warnings"],
+        }
+
+    def remove_mcp_server(self, project_id, name):
+        with self.lock(project_id):
+            settings = self.get_project_settings(project_id)
+            servers = dict(settings.get("mcp_servers", {}))
+            if name not in servers:
+                raise BridgeError(f"MCP server not installed for this project: {name}")
+            del servers[name]
+            settings["mcp_servers"] = servers
+            self._save_settings(project_id, settings)
+        return {"name": name, "removed": True}
 
     def execution_workspace(self, row):
         options = row.get("options") or {}
