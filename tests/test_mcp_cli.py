@@ -74,9 +74,10 @@ def test_task_oneline_has_project_task_timeline_and_workflow_detail_levels(bridg
 
     assert timeline.exit_code == 0, timeline.output
     execution_id = execution["execution_id"]
+    short_id = execution_id.removeprefix("EXEC-")[:7]
     assert timeline.output.splitlines() == [
         "TASK-0001 AWAITING_PM_DECISION",
-        f"{execution_id} SA codex SUCCEEDED",
+        f"{short_id} SA codex SUCCEEDED",
         "PM-REFINEMENT PM PENDING",
         "SD-RD SD/RD NOT_STARTED",
         "HOST-TEST HOST NOT_RUN",
@@ -93,7 +94,7 @@ def test_task_oneline_has_project_task_timeline_and_workflow_detail_levels(bridg
             "task",
             "TASK-0001",
             "--oneline",
-            f"id={execution_id}",
+            f"id={short_id}",
         ],
     )
     assert detail.exit_code == 0, detail.output
@@ -405,6 +406,9 @@ def test_server_instructions_tell_pm_about_available_skills(bridge):
     # reason to notice or act on the field at all.
     server = create_server(bridge.home)
     assert "available_skills" in server.instructions
+    assert "WORKFLOW COMPLETION CONTRACT" in server.instructions
+    assert "Never send a final response merely because" in server.instructions
+    assert "call wait_for_task again" in server.instructions
 
 
 def test_http_auth_required_for_remote_and_writes(bridge):

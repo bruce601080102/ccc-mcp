@@ -78,10 +78,10 @@ ccc-mcp --project demo-app config role REVIEW chatgpt
 ```bash
 ccc-mcp --project demo-app task --oneline
 ccc-mcp --project demo-app task TASK-0001 --oneline
-ccc-mcp --project demo-app task TASK-0001 --oneline id=EXEC-xxxxxxxx
+ccc-mcp --project demo-app task TASK-0001 --oneline id=8f0bc17
 ```
 
-第一行每個 Task 只列 `TASK-ID 總狀態`。指定 `TASK-ID` 後，會依序列出 SA、PM refinement、SD/RD、主機測試與 REVIEW；真實 Agent 執行會顯示可複製的 `EXEC-...`。再加上 `id=流程代號` 會輸出該流程的完整資料；除了 `EXEC-...`，也可用 `id=SA`、`id=PM-REFINEMENT`、`id=SD-RD`、`id=HOST-TEST`、`id=REVIEW` 查最近一次角色執行或虛擬階段。
+第一行每個 Task 只列 `TASK-ID 總狀態`。指定 `TASK-ID` 後，會依序列出 SA、PM refinement、SD/RD、主機測試與 REVIEW；真實 Agent 執行會把完整 `EXEC-...` 縮成類似 Git 的 7 碼十六進位代號。再加上 `id=短代號` 會輸出該流程的完整資料；短前綴必須唯一（碰撞時會要求多輸入幾碼）。也可用 `id=SA`、`id=PM-REFINEMENT`、`id=SD-RD`、`id=HOST-TEST`、`id=REVIEW` 查最近一次角色執行或虛擬階段。
 
 需要完整交接內容時：
 

@@ -107,7 +107,7 @@ def create_server(
         "entry's description is relevant to the current request or the code you are about to write, "
         "follow its content, not only when relaying another Agent's report. "
         "For every NEW authorized project change, call start_project_request: it creates/reuses the "
-        "internal workstream and dispatches the configured SA. Never call start_project_request merely "
+        "internal workstream, dispatches the configured SA, and waits for initial progress. Never call start_project_request merely "
         "to continue, retry, recover, or check an existing task: it starts a new work round, invalidates "
         "the prior plan approval, and dispatches SA again. For an existing task, inspect task_handoff; "
         "use resume_pending_dispatch only for DISPATCH_RETRY_NEEDED, otherwise continue the role named "
@@ -116,6 +116,17 @@ def create_server(
         "Low-risk successful SD/RD and REVIEW reports are compacted by ccc-mcp automatically; "
         "the host then runs tests and dispatches REVIEW. Only an active implementation "
         "execution can modify project files. "
+        "WORKFLOW COMPLETION CONTRACT: when the user asked for a project change, keep the entire "
+        "wait/refine/advance loop inside this same assistant turn. Never send a final response merely "
+        "because SA, SD/RD, REVIEW, or tests are running. start_project_request and advance_project "
+        "return a workflow snapshot after waiting; if workflow.must_continue_in_this_turn is true, "
+        "obey its handoff now. For AGENT_RUNNING or timed_out=true, call wait_for_task again without "
+        "asking the user to check later. For PM_REFINEMENT or PM_DECISION, inspect the completed report, "
+        "produce the provenance-backed ContextPatch/plan, call advance_project, and wait again. For "
+        "CHATGPT_HANDOFF_PENDING, perform that role and submit_agent_report in this conversation, then "
+        "continue. Stop only at COMPLETED, a genuine failure/blocker, or a clarification/approval that "
+        "requires information or authority from the user. Status-only user requests are the exception: "
+        "report the requested snapshot without advancing it. "
         "When project_access.mode=read-write, that durable project authorization also authorizes plans "
         "and successful reviewed rounds; never ask for per-plan approve or task accept. "
         "Do not report completion unless the implementation execution succeeded and context_sync has no pending reports. "
@@ -192,6 +203,17 @@ def create_server(
         """Read the current project workstream; task_id is only for historical/internal lookup."""
         resolved = task_id or await call(bridge.project_workstream_task, project_id)
         return await call(bridge.get_task_status, project_id, resolved)
+
+    @server.tool(annotations=readonly)
+    async def wait_for_task(
+        project_id: str, task_id: str | None = None, timeout_seconds: int = 50
+    ) -> dict[str, Any]:
+        """Wait for background Agent work to settle. If timed_out or
+        must_continue_in_this_turn is true, do not end the chat turn: wait again or
+        perform the returned PM/ChatGPT handoff. Returns early for terminal states,
+        failures, and decisions that genuinely require user input."""
+        resolved = task_id or await call(bridge.project_workstream_task, project_id)
+        return await call(bridge.wait_for_task, project_id, resolved, timeout_seconds)
 
     @server.tool(annotations=readonly)
     async def get_task_result(project_id: str, task_id: str | None = None) -> list[dict[str, Any]]:
@@ -283,10 +305,21 @@ def create_server(
 
         @server.tool(annotations=mutation)
         async def start_project_request(
-            project_id: str, requirement: str, acceptance: list[str] | None = None
+            project_id: str,
+            requirement: str,
+            acceptance: list[str] | None = None,
+            wait_seconds: int = 50,
         ) -> dict[str, Any]:
-            """Begin a NEW authorized project change and dispatch SA. Never use this to continue, retry, recover, or inspect an existing task; doing so starts a new round and invalidates its prior plan approval."""
-            return await call(bridge.start_project_request, project_id, requirement, acceptance)
+            """Begin a NEW authorized project change, dispatch SA, and wait for progress.
+            Never use this to continue, retry, recover, or inspect an existing task;
+            doing so starts a new round and invalidates its prior plan approval. The
+            caller must continue in this turn whenever workflow says so."""
+            result = await call(bridge.start_project_request, project_id, requirement, acceptance)
+            task_id = result["workstream"]["id"]
+            result["workflow"] = await call(
+                bridge.wait_for_task, project_id, task_id, wait_seconds
+            )
+            return result
 
         @server.tool(annotations=mutation)
         async def create_task(
@@ -294,27 +327,45 @@ def create_server(
             requirement: str,
             acceptance: list[str] | None = None,
             task_id: str | None = None,
+            wait_seconds: int = 50,
         ) -> dict[str, Any]:
-            """Compatibility alias for older ChatGPT clients: start the project request and dispatch SA now. Do not call dispatch_agent again."""
+            """Compatibility alias: start the project request, dispatch SA, and wait.
+            Do not call dispatch_agent again; continue according to workflow."""
             result = await call(bridge.start_project_request, project_id, requirement, acceptance)
             result["id"] = result["workstream"]["id"]
             result["task_id"] = result["workstream"]["id"]
             if task_id is not None:
                 result["requested_task_id_ignored"] = task_id
             result["next_action"] = (
-                "SA was dispatched automatically. Read get_task_status/get_task_result; "
-                "do not dispatch SA a second time. After the report, use advance_project."
+                "SA was dispatched automatically. Do not dispatch SA a second time. "
+                "Continue this same turn according to workflow."
+            )
+            result["workflow"] = await call(
+                bridge.wait_for_task, project_id, result["task_id"], wait_seconds
             )
             return result
 
         @server.tool(annotations=mutation)
         async def advance_project(
-            project_id: str, patch: ContextPatch, plan_content: str | None = None
+            project_id: str,
+            patch: ContextPatch,
+            plan_content: str | None = None,
+            wait_seconds: int = 50,
         ) -> dict[str, Any]:
-            """PM refines one completed Agent result; backend starts the next role or finishes the round."""
-            return await call(
+            """PM refines one completed Agent result; backend starts the next role and
+            waits for progress. Continue this turn whenever workflow says so."""
+            result = await call(
                 bridge.advance_project, project_id, patch.model_dump(), plan_content
             )
+            task_id = (
+                patch.source_task_ids[-1]
+                if patch.source_task_ids
+                else await call(bridge.project_workstream_task, project_id)
+            )
+            result["workflow"] = await call(
+                bridge.wait_for_task, project_id, task_id, wait_seconds
+            )
+            return result
 
         @server.tool(annotations=mutation)
         async def dispatch_agent(
@@ -323,9 +374,11 @@ def create_server(
             role: str,
             context_version: int,
             instruction: str,
+            wait_seconds: int = 50,
         ) -> dict[str, Any]:
-            """Dispatch the configured provider with real execution; no simulated Agent option."""
-            return await call(
+            """Dispatch the configured provider with real execution and wait for
+            progress; no simulated Agent option."""
+            result = await call(
                 bridge.dispatch_agent,
                 project_id,
                 task_id,
@@ -334,6 +387,10 @@ def create_server(
                 context_version,
                 instruction,
             )
+            result["workflow"] = await call(
+                bridge.wait_for_task, project_id, task_id, wait_seconds
+            )
+            return result
 
         @server.tool(annotations=mutation)
         async def create_managed_project(

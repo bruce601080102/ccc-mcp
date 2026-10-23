@@ -6,12 +6,14 @@ at the terminal cannot tell what to paste into the chat without this.
 
 import json
 import sys
+import threading
 
 import pytest
 from typer.testing import CliRunner
 
 from ccc_mcp.core.models import AgentReport
 from ccc_mcp.interfaces.cli import app
+from ccc_mcp.worker import run_execution
 
 
 def report(**kwargs):
@@ -166,6 +168,99 @@ def test_handoff_for_background_agent_reuses_progress_note(bridge):
     assert handoff["waiting_on"] == "AGENT_RUNNING"
     assert handoff["chatgpt_prompt"] is None
     assert handoff["next_action"] == bridge.get_task_status("demo", task_id)["brief"]["progress"]["note"]
+
+
+def test_wait_for_task_blocks_until_background_agent_finishes(bridge):
+    task_id = bridge.create_task("demo", "Implement a change")["id"]
+    execution = bridge.dispatch_agent(
+        "demo",
+        task_id,
+        "codex",
+        "SA",
+        bridge.latest("demo")["version"],
+        "Analyze",
+        adapter="fake",
+    )
+    worker = threading.Thread(
+        target=run_execution, args=(bridge, execution["execution_id"]), daemon=True
+    )
+    worker.start()
+
+    waited = bridge.wait_for_task("demo", task_id, timeout_seconds=2, poll_seconds=0.05)
+    worker.join(timeout=2)
+
+    assert waited["timed_out"] is False
+    assert waited["handoff"]["waiting_on"] == "PM_REFINEMENT"
+    assert waited["must_continue_in_this_turn"] is True
+
+
+def test_wait_for_task_timeout_requires_same_turn_to_keep_waiting(bridge):
+    task_id = bridge.create_task("demo", "Implement a change")["id"]
+    bridge.dispatch_agent(
+        "demo",
+        task_id,
+        "codex",
+        "SA",
+        bridge.latest("demo")["version"],
+        "Analyze",
+        adapter="fake",
+    )
+
+    waited = bridge.wait_for_task("demo", task_id, timeout_seconds=0.05, poll_seconds=0.05)
+
+    assert waited["timed_out"] is True
+    assert waited["handoff"]["waiting_on"] == "AGENT_RUNNING"
+    assert waited["must_continue_in_this_turn"] is True
+
+
+def test_wait_for_task_stays_through_implementation_tests_and_review(bridge, human, monkeypatch):
+    bridge.authorize_project_local("demo")
+    bridge.configure_test_command("demo", [sys.executable, "-c", "print('ok')"])
+    original_auto_advance = bridge.auto_advance_low_risk
+    monkeypatch.setattr(
+        bridge,
+        "auto_advance_low_risk",
+        lambda execution_id: original_auto_advance(execution_id, allow_fake=True),
+    )
+    workers = []
+
+    def spawn(execution_id):
+        worker = threading.Thread(
+            target=run_execution, args=(bridge, execution_id), daemon=True
+        )
+        workers.append(worker)
+        worker.start()
+
+    monkeypatch.setattr(bridge, "spawn_worker", spawn)
+    task_id = bridge.create_task("demo", "Implement a change")["id"]
+    sa = bridge.dispatch_agent(
+        "demo",
+        task_id,
+        "codex",
+        "SA",
+        bridge.latest("demo")["version"],
+        "Analyze",
+        adapter="fake",
+    )
+    after_sa = bridge.wait_for_task("demo", task_id, timeout_seconds=2, poll_seconds=0.05)
+    assert after_sa["handoff"]["waiting_on"] == "PM_REFINEMENT"
+
+    advanced = bridge.advance_project(
+        "demo",
+        pending_patch(bridge, sa["execution_id"]),
+        "Implement the approved change",
+        adapter="fake",
+    )
+    assert advanced["next_execution"]["status"] == "QUEUED"
+
+    completed = bridge.wait_for_task("demo", task_id, timeout_seconds=5, poll_seconds=0.05)
+    for worker in workers:
+        worker.join(timeout=2)
+
+    assert completed["timed_out"] is False
+    assert completed["terminal"] is True
+    assert completed["must_continue_in_this_turn"] is False
+    assert completed["handoff"]["waiting_on"] == "COMPLETED"
 
 
 def test_handoff_defaults_to_the_project_workstream_task(bridge, human):

@@ -8,6 +8,12 @@ ChatGPT (PM) → Codex (SA) → Claude Code (SD/RD) → host tests → Codex (RE
 
 The PM creates a requirement and turns the SA report into a versioned context patch and plan. Thereafter, a successful low-risk SD/RD report is automatically written into Context, followed by host-run tests and REVIEW; a successful low-risk REVIEW report completes the task. Failures, unverified tests, revision requests, and decisions remain pending for PM review. Only observed host test evidence can complete a task.
 
+## Keep waiting in the same ChatGPT turn
+
+For a new MCP-driven change, `start_project_request` dispatches SA and waits for progress; `advance_project` also waits after dispatching the next role. If one long-poll expires while an Agent is still running, `workflow.must_continue_in_this_turn` is `true`: ChatGPT must call `wait_for_task` again in the same turn, not answer “still running” and stop. When SA finishes, ChatGPT performs the provenance-backed PM refinement and plan in that same turn, calls `advance_project`, then keeps waiting through SD/RD, host tests, and REVIEW.
+
+The loop may stop only at completion, a genuine failure/blocker, or a decision/approval requiring new user information or authority. An explicit status-only request is the exception and must not advance the task. ccc-mcp does not fabricate the PM's semantic review of an SA report; it returns the actionable handoff and `must_continue_in_this_turn` so the calling ChatGPT can make that judgment before continuing.
+
 ## Work safely through the MCP tools
 
 1. Start with `bootstrap_project` and `get_context`.

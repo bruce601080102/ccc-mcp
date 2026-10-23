@@ -163,7 +163,7 @@ async def test_mcp_exposes_agent_entry_point_but_no_pm_write_bypass(bridge, huma
     bridge.authorize_project_local("demo")
     tools = await create_server(bridge.home).list_tools()
     names = {tool.name for tool in tools}
-    assert {"start_project_request", "dispatch_agent", "write_task_file"} <= names
+    assert {"start_project_request", "dispatch_agent", "wait_for_task", "write_task_file"} <= names
     dispatch_schema = next(tool.input_schema for tool in tools if tool.name == "dispatch_agent")
     assert "adapter" not in dispatch_schema["properties"]
     assert "agent" not in dispatch_schema["properties"]
@@ -171,5 +171,5 @@ async def test_mcp_exposes_agent_entry_point_but_no_pm_write_bypass(bridge, huma
     assert "adapter" not in advance_schema["properties"]
     assert not {"write_workspace", "propose_workspace_edit", "create_workspace_batch"} & names
     readonly = {tool.name for tool in await create_server(bridge.home, http=True).list_tools()}
-    assert "read_workspace" in readonly
+    assert {"read_workspace", "wait_for_task"} <= readonly
     assert "start_project_request" not in readonly

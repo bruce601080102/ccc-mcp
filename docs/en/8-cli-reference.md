@@ -12,7 +12,7 @@ ccc-mcp project add <path> --id <id>
 ccc-mcp project authorize <id>
 ccc-mcp --project <id> task --oneline
 ccc-mcp --project <id> task TASK-0001 --oneline
-ccc-mcp --project <id> task TASK-0001 --oneline id=EXEC-xxxxxxxx
+ccc-mcp --project <id> task TASK-0001 --oneline id=8f0bc17
 ccc-mcp --project <id> task handoff
 ccc-mcp --project <id> task preflight
 ccc-mcp --project <id> task status
@@ -31,7 +31,7 @@ Use `config show`, `config providers`, and `config prompt <ROLE>` before changin
 
 `task handoff` reads whose turn it is right now and what to do about it — purely derived from `task status`/context/pending ChatGPT handoffs, never a second tracked state. When an interactive ChatGPT execution is what's blocking progress, it also includes `chatgpt_prompt` (paste-ready text for that role) and `expected_report_fields`.
 
-`task --oneline` lists every task as `TASK-ID STATE`, one per line. `task TASK-0001 --oneline` drills into that task and lists SA, PM refinement, SD/RD, host tests, and REVIEW, including each real Agent execution's copyable `EXEC-...` ID. Append `id=WORKFLOW-ID` for the selected workflow's full record. Besides an exact execution ID, selectors may be `SA`, `PM-REFINEMENT`, `SD-RD`, `HOST-TEST`, or `REVIEW`; role selectors return the latest matching execution. All views are read-only and derived from existing task/execution/test data.
+`task --oneline` lists every task as `TASK-ID STATE`, one per line. `task TASK-0001 --oneline` drills into that task and lists SA, PM refinement, SD/RD, host tests, and REVIEW. Real Agent execution IDs are displayed as Git-like seven-character hexadecimal prefixes; append `id=8f0bc17` for the selected workflow's full record. A prefix is accepted only when unique, otherwise the CLI asks for more characters. Selectors may also be `SA`, `PM-REFINEMENT`, `SD-RD`, `HOST-TEST`, or `REVIEW`; role selectors return the latest matching execution. All views are read-only and derived from existing task/execution/test data.
 
 To start the workflow over without retiring the project ID, run `ccc-mcp --project <id> clear history` (or the `clear-history` alias) in a local terminal. Do not use `project delete` for this: deletion permanently retires the ID. The clear command requires typing `CLEAR HISTORY <id>`, refuses while an Agent execution is queued or running, archives the full database plus generated project metadata and managed task worktrees, clears workflow records, and recreates Context v1. The project directory and source, ID, settings, authorization, and direct-write audit remain intact; the next task starts again at `TASK-0001`. The command returns the local archive path, normally below `~/.ccc-mcp/archives/`.
 

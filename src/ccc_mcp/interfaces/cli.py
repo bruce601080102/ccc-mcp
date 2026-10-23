@@ -193,6 +193,11 @@ def _role_rows(executions, roles):
     return [row for row in executions if row["role"] in roles]
 
 
+def _short_execution_id(execution_id):
+    value = execution_id[5:] if execution_id.upper().startswith("EXEC-") else execution_id
+    return value[:7]
+
+
 def _task_timeline(service, project, task_id):
     handoff = service.task_handoff(project, task_id)
     executions = service.get_task_result(project, task_id)
@@ -215,7 +220,10 @@ def _task_timeline(service, project, task_id):
         if not rows:
             lines.append(f"{stage_id} {label} NOT_STARTED")
             continue
-        lines.extend(f"{row['id']} {row['role']} {row['agent']} {row['status']}" for row in rows)
+        lines.extend(
+            f"{_short_execution_id(row['id'])} {row['role']} {row['agent']} {row['status']}"
+            for row in rows
+        )
     return handoff, executions, lines
 
 
@@ -264,7 +272,24 @@ def _task_flow_detail(service, project, task_id, selector):
             "tests": status["tests"],
             "verification": status["verification"],
         }
-    available = [row["id"] for row in executions]
+    prefix = normalized[5:] if normalized.startswith("EXEC-") else normalized
+    if len(prefix) >= 4 and all(character in "0123456789ABCDEF" for character in prefix):
+        matches = [
+            row
+            for row in executions
+            if row["id"].upper().removeprefix("EXEC-").startswith(prefix)
+        ]
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            raise typer.BadParameter(
+                t(
+                    f"短代號 {selector} 對應到多個流程，請多輸入幾碼。",
+                    f"Short ID {selector} matches multiple workflows; provide more characters.",
+                    f"短代号 {selector} 对应到多个流程，请多输入几码。",
+                )
+            )
+    available = [_short_execution_id(row["id"]) for row in executions]
     available.extend(["SA", "PM-REFINEMENT", "SD-RD", "HOST-TEST", "REVIEW"])
     raise typer.BadParameter(
         t(
@@ -330,9 +355,9 @@ def task_timeline(
     if not workflow.lower().startswith("id=") or len(workflow) == 3:
         raise typer.BadParameter(
             t(
-                "流程代號格式必須是 id=EXEC-...、id=SA、id=PM-REFINEMENT 等。",
-                "The workflow selector must look like id=EXEC-..., id=SA, or id=PM-REFINEMENT.",
-                "流程代号格式必须是 id=EXEC-...、id=SA、id=PM-REFINEMENT 等。",
+                "流程代號格式必須是 id=8f0bc17、id=SA、id=PM-REFINEMENT 等。",
+                "The workflow selector must look like id=8f0bc17, id=SA, or id=PM-REFINEMENT.",
+                "流程代号格式必须是 id=8f0bc17、id=SA、id=PM-REFINEMENT 等。",
             )
         )
     output(_task_flow_detail(service, project, task_id, workflow[3:]))

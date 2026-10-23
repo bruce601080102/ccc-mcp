@@ -2,6 +2,12 @@
 
 此流程的工作記憶是 SQLite 與 `.ccc-mcp`，各 Agent 不讀取彼此聊天紀錄。SA 的方案仍由 PM 整理；其後低風險的 SD/RD 成功報告會自動寫入 Context、執行主機測試並派出 REVIEW，低風險 REVIEW 成功則自動完成。失敗、測試未驗證、需要修訂或決策時才會停給 PM。所有 CLI 全域參數放在子命令之前，例如 `ccc-mcp --project my-project context show`。
 
+## 同一輪 ChatGPT 對話等待工作流
+
+透過 MCP 提出新的修改需求時，`start_project_request` 會派 SA 並先等待進度；`advance_project` 派出下一角色後也會等待。若單次長輪詢到期但 Agent 還在跑，回應的 `workflow.must_continue_in_this_turn` 會是 `true`，ChatGPT 必須在同一輪再次呼叫 `wait_for_task`，不能只回覆「執行中」後結束。SA 完成而需要 PM 整理時，ChatGPT 應在同一輪讀取報告、建立有來源的 ContextPatch／PLAN、呼叫 `advance_project`，再繼續等待 SD/RD、主機測試與 REVIEW。
+
+只有以下情況才應停止等待並回覆使用者：任務已完成；真實失敗／阻擋；或需要使用者提供產品決策、本機核准等新資訊／權限。使用者若只是明確要求「查狀態」，則只回傳快照，不擅自推進。這是 MCP 呼叫端的同輪完成合約；ccc-mcp 不會替 PM 偽造 SA 報告的語意審查，但會把每次應繼續的動作與 `must_continue_in_this_turn` 一起回傳。
+
 ## 1. PM 建立需求
 
 ```powershell

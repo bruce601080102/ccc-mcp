@@ -3,6 +3,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 import uuid
 from contextlib import nullcontext
 from datetime import UTC, datetime
@@ -1678,6 +1679,67 @@ class TaskHub:
                 brief.get("next_action") or brief.get("summary") or brief.get("error")
             )
         return result
+
+    def wait_for_task(self, project_id, task_id=None, timeout_seconds=50, poll_seconds=0.5):
+        """Long-poll one task until background work settles or a PM/user action is needed.
+
+        A completed native execution can briefly expose PM_REFINEMENT while its worker
+        still holds the lease and is auto-compacting/dispatching the next low-risk
+        stage. Treat that lease as background activity too, so callers do not wake in
+        the middle of the automatic SD/RD -> host-test -> REVIEW chain.
+        """
+        task_id = task_id or self.project_workstream_task(project_id)
+        if not 0 <= timeout_seconds <= 3600:
+            raise BridgeError("timeout_seconds must be between 0 and 3600")
+        if not 0.05 <= poll_seconds <= 10:
+            raise BridgeError("poll_seconds must be between 0.05 and 10")
+        started = time.monotonic()
+        deadline = started + timeout_seconds
+        while True:
+            handoff = self.task_handoff(project_id, task_id)
+            latest = self.store.one(
+                "SELECT id,adapter,status FROM agent_executions WHERE project_id=? "
+                "AND task_id=? ORDER BY created DESC LIMIT 1",
+                (project_id, task_id),
+            )
+            worker_settling = False
+            if latest and latest["adapter"] != "interactive" and latest["status"] not in {
+                "QUEUED",
+                "RUNNING",
+            }:
+                lockfile = self.home / "locks" / f"{latest['id']}.lock"
+                lockfile.parent.mkdir(exist_ok=True)
+                try:
+                    with portalocker.Lock(lockfile, timeout=0):
+                        pass
+                except portalocker.exceptions.LockException:
+                    worker_settling = True
+            still_running = handoff["waiting_on"] == "AGENT_RUNNING" or worker_settling
+            elapsed = time.monotonic() - started
+            if not still_running:
+                timed_out = False
+                break
+            if time.monotonic() >= deadline:
+                timed_out = True
+                break
+            time.sleep(min(poll_seconds, max(0.0, deadline - time.monotonic())))
+
+        waiting_on = handoff["waiting_on"]
+        must_continue = timed_out or waiting_on in {
+            "AGENT_RUNNING",
+            "CHATGPT_HANDOFF_PENDING",
+            "PM_REFINEMENT",
+            "PM_DECISION",
+            "DISPATCH_RETRY_NEEDED",
+        }
+        return {
+            "task_id": task_id,
+            "timed_out": timed_out,
+            "elapsed_seconds": round(elapsed, 2),
+            "must_continue_in_this_turn": must_continue,
+            "terminal": waiting_on in {"COMPLETED", "CANCELLED", "REJECTED", "FAILED", "BLOCKED"},
+            "handoff": handoff,
+        }
 
     _NEXT_AUTO_ROLE = {"SA": "SD/RD", "SD": "REVIEW", "RD": "REVIEW", "SD/RD": "REVIEW", "REVIEW": "SD/RD"}
 
