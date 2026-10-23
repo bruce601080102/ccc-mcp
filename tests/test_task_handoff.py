@@ -204,8 +204,12 @@ def test_wait_for_task_blocks_until_background_agent_finishes(bridge):
     )
     worker.start()
 
-    waited = bridge.wait_for_task("demo", task_id, timeout_seconds=2, poll_seconds=0.05)
-    worker.join(timeout=2)
+    # Shared CI runners (and especially emulated architectures) can take more than
+    # two seconds to finish the SQLite/Git handoff even though the worker is healthy.
+    # wait_for_task returns as soon as it settles, so this only widens the failure
+    # ceiling; it does not add delay to the normal path.
+    waited = bridge.wait_for_task("demo", task_id, timeout_seconds=10, poll_seconds=0.05)
+    worker.join(timeout=5)
 
     assert waited["timed_out"] is False
     assert waited["handoff"]["waiting_on"] == "PM_REFINEMENT"
@@ -276,7 +280,7 @@ def test_wait_for_task_stays_through_implementation_tests_and_review(bridge, hum
         "Analyze",
         adapter="fake",
     )
-    after_sa = bridge.wait_for_task("demo", task_id, timeout_seconds=2, poll_seconds=0.05)
+    after_sa = bridge.wait_for_task("demo", task_id, timeout_seconds=10, poll_seconds=0.05)
     assert after_sa["handoff"]["waiting_on"] == "PM_REFINEMENT"
 
     advanced = bridge.advance_project(
@@ -287,9 +291,9 @@ def test_wait_for_task_stays_through_implementation_tests_and_review(bridge, hum
     )
     assert advanced["next_execution"]["status"] == "QUEUED"
 
-    completed = bridge.wait_for_task("demo", task_id, timeout_seconds=5, poll_seconds=0.05)
+    completed = bridge.wait_for_task("demo", task_id, timeout_seconds=30, poll_seconds=0.05)
     for worker in workers:
-        worker.join(timeout=2)
+        worker.join(timeout=5)
 
     assert completed["timed_out"] is False
     assert completed["terminal"] is True
