@@ -2,6 +2,16 @@
 
 **讓最適合的 coding agent 負責最適合的工作，並讓每一次交接都能驗證。**
 
+[![CI](https://img.shields.io/github/actions/workflow/status/bruce601080102/ccc-mcp/ci.yml?branch=main&style=flat-square&logo=githubactions&logoColor=white&label=CI)](https://github.com/bruce601080102/ccc-mcp/actions/workflows/ci.yml)
+[![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/downloads/)
+[![Platforms](https://img.shields.io/badge/Platforms-macOS%20%7C%20Linux%20%7C%20Windows-555555?style=flat-square)](docs/ch/1-install-and-sign-in.md)
+[![MCP](https://img.shields.io/badge/Protocol-MCP-6E56CF?style=flat-square)](https://modelcontextprotocol.io/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue?style=flat-square)](LICENSE)
+
+[![ChatGPT](https://img.shields.io/badge/ChatGPT-PM-10A37F?style=flat-square)](docs/ch/2-connect-chatgpt.md)
+[![Codex](https://img.shields.io/badge/Codex-SA%20%C2%B7%20REVIEW-000000?style=flat-square)](docs/ch/4-workflow.md)
+[![Claude Code](https://img.shields.io/badge/Claude%20Code-SD%2FRD-D97757?style=flat-square)](docs/ch/4-workflow.md)
+
 ccc-mcp 是給軟體專案使用的本機 MCP 工作流程。ChatGPT 管理需求與共用 Context；Codex 可以負責分析與審查；Claude Code 可以負責實作。若那才是合適選擇，也能讓 ChatGPT 單獨完成所有工作流角色。每一次交接都會保留繼續工作、審查或恢復任務需要的證據。
 
 它適合同時使用多種 AI coding 工具的人：不讓額度耗盡、對話遺失，或模型一句「測試通過」就中止專案。
