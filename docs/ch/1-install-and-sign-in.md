@@ -15,10 +15,10 @@ ChatGPT PM → Codex SA → SA-REPORT.md
 
 ## 1. 安裝與登入
 
-分兩步：第一步在專案根目錄建立 `.venv`、把 ccc-mcp 本身裝起來（這是唯一需要腳本的地方，因為 `ccc-mcp` 指令此時還不存在）；第二步起，裝缺少的 CLI、引導登入都交給 `ccc-mcp setup`，純 Python 執行，不需要 `source`：
+先從 PyPI 安裝 ccc-mcp；接著把安裝缺少的 CLI、引導登入交給 `ccc-mcp setup`：
 
 ```bash
-source scripts/setup-real-agents.sh
+pip install ccc-mcp
 
 # 預設只準備 Codex
 ccc-mcp setup codex
@@ -28,6 +28,14 @@ ccc-mcp setup claude
 
 # 同時準備兩個 CLI
 ccc-mcp setup all
+```
+
+若要開發目前的原始碼版本，再改用 repository 內的設定腳本：
+
+```bash
+git clone https://github.com/bruce601080102/ccc-mcp.git
+cd ccc-mcp
+source scripts/setup-real-agents.sh
 ```
 
 若 Node.js／npm 不存在，`ccc-mcp setup` 會嘗試透過 WinGet 安裝 Node.js LTS；安裝後若在同一個指令裡還找不到 npm，開新的 Git Bash 再跑一次 `ccc-mcp setup` 即可。

@@ -37,9 +37,8 @@ ccc-mcp 是給軟體專案使用的本機 MCP 工作流程。ChatGPT 管理需�
 需求：Git、Python 3.11 以上、OpenAI Platform Tunnel。最佳模型工作流另需已登入的 Codex 和／或 Claude Code 帳戶。
 
 ```bash
-git clone https://github.com/bruce601080102/ccc-mcp.git
-cd ccc-mcp
-source scripts/setup-real-agents.sh
+pip install ccc-mcp
+
 # 只有要使用 Codex 和／或 Claude Code 時才執行：
 ccc-mcp setup all
 

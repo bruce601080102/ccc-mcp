@@ -37,9 +37,8 @@ It is designed for people who use more than one AI coding tool and do not want a
 Prerequisites: Git, Python 3.11+, and an OpenAI Platform Tunnel. The best-model workflow also needs signed-in Codex and/or Claude Code accounts.
 
 ```bash
-git clone https://github.com/bruce601080102/ccc-mcp.git
-cd ccc-mcp
-source scripts/setup-real-agents.sh
+pip install ccc-mcp
+
 # Run this only when using Codex and/or Claude Code:
 ccc-mcp setup all
 

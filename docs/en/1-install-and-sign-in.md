@@ -5,15 +5,21 @@ Requirements: Git, Python 3.11 or later, and a Codex and/or Claude Code account.
 ## Install ccc-mcp
 
 ```bash
-git clone https://github.com/bruce601080102/ccc-mcp.git
-cd ccc-mcp
-source scripts/setup-real-agents.sh
+pip install ccc-mcp
 ccc-mcp setup all
 ```
 
-The setup script creates a Python virtual environment and installs ccc-mcp. `ccc-mcp setup all` then checks, installs when necessary, and signs in to Codex and Claude Code. Use Git Bash on Windows, or bash/zsh on macOS and Linux.
+`ccc-mcp setup all` then checks, installs when necessary, and signs in to Codex and Claude Code. Use PowerShell or Git Bash on Windows, or bash/zsh on macOS and Linux.
 
-The script must be sourced from the repository directory. If a Node.js installation asks you to reopen the terminal, reopen it and run `ccc-mcp setup all` again.
+If a Node.js installation asks you to reopen the terminal, reopen it and run `ccc-mcp setup all` again.
+
+To install the current source checkout for development instead:
+
+```bash
+git clone https://github.com/bruce601080102/ccc-mcp.git
+cd ccc-mcp
+source scripts/setup-real-agents.sh
+```
 
 ## Choose the agents you need
 
