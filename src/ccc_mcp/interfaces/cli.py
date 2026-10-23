@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
+from typer.core import TyperGroup
 
 from ..adapters.agent_setup import setup_provider
 from ..adapters.agents.base import native_executable
@@ -49,6 +50,21 @@ def t(zh: str, en: str, ch: str | None = None) -> str:
     return zh
 
 
+class TaskGroup(TyperGroup):
+    """Let ``task TASK-xxxx ...`` act as the task's Git-like timeline view.
+
+    Typer normally interprets the first positional token of a command group as a
+    fixed subcommand. Task IDs are dynamic, so translate just that well-defined
+    shape to the hidden implementation command while leaving every existing task
+    subcommand (status, show, cancel, ...) untouched.
+    """
+
+    def resolve_command(self, ctx, args):
+        if args and re.fullmatch(r"TASK-[A-Za-z0-9_-]+", args[0], re.IGNORECASE):
+            args = ["_timeline", *args]
+        return super().resolve_command(ctx, args)
+
+
 app = typer.Typer(
     no_args_is_help=True,
     help=t(
@@ -59,7 +75,24 @@ app = typer.Typer(
 )
 project_app = typer.Typer(no_args_is_help=True)
 context_app = typer.Typer(no_args_is_help=True)
-task_app = typer.Typer(no_args_is_help=True)
+task_app = typer.Typer(
+    no_args_is_help=True,
+    cls=TaskGroup,
+    subcommand_metavar="[TASK-ID|COMMAND] [ARGS]...",
+    help=t(
+        "task --oneline 列出所有任務；task TASK-ID --oneline 列出該任務的流程。",
+        "task --oneline lists tasks; task TASK-ID --oneline lists that task's workflow.",
+        "task --oneline 列出所有任务；task TASK-ID --oneline 列出该任务的流程。",
+    ),
+)
+clear_app = typer.Typer(
+    no_args_is_help=True,
+    help=t(
+        "封存並清除目前狀態，但保留可繼續使用的專案註冊。",
+        "Archive and clear current state while preserving a reusable project registration.",
+        "归档并清除当前状态，但保留可继续使用的项目注册。",
+    ),
+)
 workspace_app = typer.Typer(
     no_args_is_help=True,
     help=t(
@@ -95,6 +128,7 @@ skill_app = typer.Typer(
 app.add_typer(project_app, name="project")
 app.add_typer(context_app, name="context")
 app.add_typer(task_app, name="task")
+app.add_typer(clear_app, name="clear")
 app.add_typer(workspace_app, name="workspace", hidden=True)
 app.add_typer(config_app, name="config")
 app.add_typer(schema_app, name="schema")
@@ -137,6 +171,173 @@ def output(value):
     typer.echo(json.dumps(value, ensure_ascii=False, indent=2))
 
 
+def _host_test_state(tests):
+    if not tests["executed_by_host"]:
+        return "NOT_RUN"
+    if tests.get("no_tests_collected"):
+        return "NO_TESTS_COLLECTED"
+    return "PASSED" if tests["passed"] else "FAILED"
+
+
+def _pm_stage_state(handoff, executions):
+    if handoff["waiting_on"] in {"PM_DECISION", "PM_REFINEMENT", "PM_CLARIFICATION_DECISION"}:
+        return "PENDING"
+    if any(row["role"] in {"SD", "RD", "SD/RD", "REVIEW"} for row in executions):
+        return "COMPLETED"
+    if any(row["role"] == "SA" and row["status"] == "SUCCEEDED" for row in executions):
+        return "PENDING"
+    return "NOT_STARTED"
+
+
+def _role_rows(executions, roles):
+    return [row for row in executions if row["role"] in roles]
+
+
+def _task_timeline(service, project, task_id):
+    handoff = service.task_handoff(project, task_id)
+    executions = service.get_task_result(project, task_id)
+    lines = [f"{task_id} {handoff['state']}"]
+    stages = (
+        ("SA", {"SA"}, "SA"),
+        ("PM-REFINEMENT", set(), "PM"),
+        ("SD-RD", {"SD", "RD", "SD/RD"}, "SD/RD"),
+        ("HOST-TEST", set(), "HOST"),
+        ("REVIEW", {"REVIEW"}, "REVIEW"),
+    )
+    for stage_id, roles, label in stages:
+        if stage_id == "PM-REFINEMENT":
+            lines.append(f"{stage_id} {label} {_pm_stage_state(handoff, executions)}")
+            continue
+        if stage_id == "HOST-TEST":
+            lines.append(f"{stage_id} {label} {_host_test_state(handoff['tests'])}")
+            continue
+        rows = _role_rows(executions, roles)
+        if not rows:
+            lines.append(f"{stage_id} {label} NOT_STARTED")
+            continue
+        lines.extend(f"{row['id']} {row['role']} {row['agent']} {row['status']}" for row in rows)
+    return handoff, executions, lines
+
+
+def _task_flow_detail(service, project, task_id, selector):
+    handoff, executions, _ = _task_timeline(service, project, task_id)
+    normalized = selector.upper()
+    by_id = next((row for row in executions if row["id"].upper() == normalized), None)
+    if by_id:
+        return by_id
+    role_aliases = {
+        "SA": {"SA"},
+        "SD": {"SD"},
+        "RD": {"RD"},
+        "SD-RD": {"SD", "RD", "SD/RD"},
+        "SD/RD": {"SD", "RD", "SD/RD"},
+        "REVIEW": {"REVIEW"},
+    }
+    if normalized in role_aliases:
+        rows = _role_rows(executions, role_aliases[normalized])
+        if rows:
+            return rows[-1]
+        return {
+            "id": normalized,
+            "task_id": task_id,
+            "stage": normalized,
+            "status": "NOT_STARTED",
+        }
+    if normalized == "PM-REFINEMENT":
+        return {
+            "id": "PM-REFINEMENT",
+            "task_id": task_id,
+            "stage": "PM",
+            "status": _pm_stage_state(handoff, executions),
+            "task_state": handoff["state"],
+            "waiting_on": handoff["waiting_on"],
+            "context_version": handoff["context_version"],
+            "context_sync": service.context_sync_status(project),
+        }
+    if normalized == "HOST-TEST":
+        status = service.get_task_status(project, task_id)["brief"]
+        return {
+            "id": "HOST-TEST",
+            "task_id": task_id,
+            "stage": "HOST",
+            "status": _host_test_state(status["tests"]),
+            "tests": status["tests"],
+            "verification": status["verification"],
+        }
+    available = [row["id"] for row in executions]
+    available.extend(["SA", "PM-REFINEMENT", "SD-RD", "HOST-TEST", "REVIEW"])
+    raise typer.BadParameter(
+        t(
+            f"找不到流程 {selector}；可用代號：{', '.join(available)}",
+            f"Workflow {selector} was not found; available IDs: {', '.join(available)}",
+            f"找不到流程 {selector}；可用代号：{', '.join(available)}",
+        )
+    )
+
+
+@task_app.callback(invoke_without_command=True)
+def task_options(
+    ctx: typer.Context,
+    oneline: Annotated[
+        bool,
+        typer.Option(
+            "--oneline",
+            help=t(
+                "每行只顯示一個 Task ID 與總狀態。",
+                "Show one task ID and overall state per line.",
+                "每行只显示一个 Task ID 与总状态。",
+            ),
+        ),
+    ] = False,
+):
+    if ctx.invoked_subcommand is not None or not oneline:
+        return
+    service, project = bridge(ctx), project_id(ctx)
+    for task in service.list_tasks(project):
+        typer.echo(f"{task['id']} {task['state']}")
+
+
+@task_app.command("_timeline", hidden=True)
+def task_timeline(
+    ctx: typer.Context,
+    task_id: str,
+    workflow: Annotated[str | None, typer.Argument()] = None,
+    oneline: Annotated[
+        bool,
+        typer.Option(
+            "--oneline",
+            help=t(
+                "列出 Task 內所有階段；加上 id=流程代號查看該流程細節。",
+                "List every stage in the task; add id=WORKFLOW-ID for its details.",
+                "列出 Task 内所有阶段；加上 id=流程代号查看该流程细节。",
+            ),
+        ),
+    ] = False,
+):
+    if not oneline:
+        raise typer.BadParameter(
+            t(
+                "Task ID 位置語法需搭配 --oneline；完整任務資訊可用 task show TASK-ID。",
+                "The positional task-ID syntax requires --oneline; use task show TASK-ID for the full task view.",
+                "Task ID 位置语法需搭配 --oneline；完整任务信息可用 task show TASK-ID。",
+            )
+        )
+    service, project = bridge(ctx), project_id(ctx)
+    if workflow is None:
+        for line in _task_timeline(service, project, task_id)[2]:
+            typer.echo(line)
+        return
+    if not workflow.lower().startswith("id=") or len(workflow) == 3:
+        raise typer.BadParameter(
+            t(
+                "流程代號格式必須是 id=EXEC-...、id=SA、id=PM-REFINEMENT 等。",
+                "The workflow selector must look like id=EXEC-..., id=SA, or id=PM-REFINEMENT.",
+                "流程代号格式必须是 id=EXEC-...、id=SA、id=PM-REFINEMENT 等。",
+            )
+        )
+    output(_task_flow_detail(service, project, task_id, workflow[3:]))
+
+
 @app.command(
     help=t(
         "註冊專案並產生 .ccc-mcp 共用記憶。",
@@ -152,6 +353,30 @@ def init(
     language: str = "zh-TW",
 ):
     output(bridge(ctx).register_project(path, id, purpose, language))
+
+
+@app.command(
+    "clear-history",
+    help=t(
+        "保留 project ID、程式碼、設定與授權，封存後清除工作流歷史並重建 Context v1。",
+        "Preserve the project ID, source, settings and authorization; archive and clear workflow history, then rebuild Context v1.",
+        "保留 project ID、代码、设置与授权，归档后清除工作流历史并重建 Context v1。",
+    ),
+)
+def clear_history(ctx: typer.Context):
+    output(bridge(ctx).clear_project_history_local(project_id(ctx)))
+
+
+@clear_app.command(
+    "history",
+    help=t(
+        "等同 clear-history：封存後清除工作流歷史，保留 project ID 與程式碼。",
+        "Alias of clear-history: archive and clear workflow history, preserving project ID and source.",
+        "等同 clear-history：归档后清除工作流历史，保留 project ID 与代码。",
+    ),
+)
+def clear_history_alias(ctx: typer.Context):
+    output(bridge(ctx).clear_project_history_local(project_id(ctx)))
 
 
 @project_app.command(

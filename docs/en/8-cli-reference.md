@@ -10,6 +10,9 @@ ccc-mcp connect tunnel_...
 ccc-mcp project create <id> [--path <path>] [--profile chatgpt-only|best-model]
 ccc-mcp project add <path> --id <id>
 ccc-mcp project authorize <id>
+ccc-mcp --project <id> task --oneline
+ccc-mcp --project <id> task TASK-0001 --oneline
+ccc-mcp --project <id> task TASK-0001 --oneline id=EXEC-xxxxxxxx
 ccc-mcp --project <id> task handoff
 ccc-mcp --project <id> task preflight
 ccc-mcp --project <id> task status
@@ -17,6 +20,7 @@ ccc-mcp --project <id> task usage
 ccc-mcp --project <id> task resume
 ccc-mcp --project <id> context show
 ccc-mcp --project <id> verify
+ccc-mcp --project <id> clear history
 ```
 
 Use `config show`, `config providers`, and `config prompt <ROLE>` before changing roles. Role values include `SA`, `SD`, `RD`, `SD/RD`, and `REVIEW`; automatic workflow advancement uses `SD/RD`.
@@ -26,6 +30,10 @@ Use `config show`, `config providers`, and `config prompt <ROLE>` before changin
 `config meeting-mode on|off [--min-rounds N] [--max-rounds N]` toggles the bounded SD/RD<->SA clarification round described in [step 4](4-workflow.md#meeting-mode-an-optional-clarification-round-before-sdrd-writes-anything); off by default, `max_rounds` capped at 5. There is no CLI equivalent for resolving an escalated clarification (`resolve_clarification` is the MCP tool the PM/ChatGPT calls) — consistent with `advance_project`/`propose_context_patch`/`commit_context_patch`, which also have none.
 
 `task handoff` reads whose turn it is right now and what to do about it — purely derived from `task status`/context/pending ChatGPT handoffs, never a second tracked state. When an interactive ChatGPT execution is what's blocking progress, it also includes `chatgpt_prompt` (paste-ready text for that role) and `expected_report_fields`.
+
+`task --oneline` lists every task as `TASK-ID STATE`, one per line. `task TASK-0001 --oneline` drills into that task and lists SA, PM refinement, SD/RD, host tests, and REVIEW, including each real Agent execution's copyable `EXEC-...` ID. Append `id=WORKFLOW-ID` for the selected workflow's full record. Besides an exact execution ID, selectors may be `SA`, `PM-REFINEMENT`, `SD-RD`, `HOST-TEST`, or `REVIEW`; role selectors return the latest matching execution. All views are read-only and derived from existing task/execution/test data.
+
+To start the workflow over without retiring the project ID, run `ccc-mcp --project <id> clear history` (or the `clear-history` alias) in a local terminal. Do not use `project delete` for this: deletion permanently retires the ID. The clear command requires typing `CLEAR HISTORY <id>`, refuses while an Agent execution is queued or running, archives the full database plus generated project metadata and managed task worktrees, clears workflow records, and recreates Context v1. The project directory and source, ID, settings, authorization, and direct-write audit remain intact; the next task starts again at `TASK-0001`. The command returns the local archive path, normally below `~/.ccc-mcp/archives/`.
 
 `task preflight` is a read-only pre-dispatch check — it installs nothing, never runs the test command, never touches Git, never dispatches or commits anything. The output is a leveled `checks[]` list (each `ready`/`warning`/`blocker`, with a `remediation` for anything short of `ready`) plus a `summary` tally; `ready` means there is no `blocker`:
 

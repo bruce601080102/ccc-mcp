@@ -50,6 +50,107 @@ def test_cli_workflow(tmp_path):
     assert json.loads(imported.output)["context_version"] == 2
 
 
+def test_task_oneline_has_project_task_timeline_and_workflow_detail_levels(bridge):
+    from conftest import dispatch
+
+    from ccc_mcp.worker import run_execution
+
+    bridge.create_task("demo", "Analyze repository")
+    execution = dispatch(bridge)
+    run_execution(bridge, execution["execution_id"])
+    bridge.create_task("demo", "Second task", task_id="TASK-0002")
+
+    runner = CliRunner()
+    args = ["--home", str(bridge.home), "--project", "demo", "task", "--oneline"]
+    listed = runner.invoke(app, args)
+
+    assert listed.exit_code == 0, listed.output
+    assert listed.output == "TASK-0001 AWAITING_PM_DECISION\nTASK-0002 CREATED\n"
+
+    timeline = runner.invoke(
+        app,
+        ["--home", str(bridge.home), "--project", "demo", "task", "TASK-0001", "--oneline"],
+    )
+
+    assert timeline.exit_code == 0, timeline.output
+    execution_id = execution["execution_id"]
+    assert timeline.output.splitlines() == [
+        "TASK-0001 AWAITING_PM_DECISION",
+        f"{execution_id} SA codex SUCCEEDED",
+        "PM-REFINEMENT PM PENDING",
+        "SD-RD SD/RD NOT_STARTED",
+        "HOST-TEST HOST NOT_RUN",
+        "REVIEW REVIEW NOT_STARTED",
+    ]
+
+    detail = runner.invoke(
+        app,
+        [
+            "--home",
+            str(bridge.home),
+            "--project",
+            "demo",
+            "task",
+            "TASK-0001",
+            "--oneline",
+            f"id={execution_id}",
+        ],
+    )
+    assert detail.exit_code == 0, detail.output
+    payload = json.loads(detail.output)
+    assert payload["id"] == execution_id
+    assert payload["role"] == "SA"
+    assert payload["status"] == "SUCCEEDED"
+
+    by_role = runner.invoke(
+        app,
+        [
+            "--home",
+            str(bridge.home),
+            "--project",
+            "demo",
+            "task",
+            "TASK-0001",
+            "--oneline",
+            "id=SA",
+        ],
+    )
+    assert by_role.exit_code == 0, by_role.output
+    assert json.loads(by_role.output)["id"] == execution_id
+
+
+def test_task_positional_id_requires_oneline(bridge):
+    bridge.create_task("demo", "Analyze repository")
+    result = CliRunner().invoke(
+        app,
+        ["--home", str(bridge.home), "--project", "demo", "task", "TASK-0001"],
+    )
+
+    assert result.exit_code != 0
+    assert "--oneline" in result.output
+
+
+def test_task_timeline_can_show_pseudo_stage_detail(bridge):
+    bridge.create_task("demo", "Analyze repository")
+    runner = CliRunner()
+    base = [
+        "--home",
+        str(bridge.home),
+        "--project",
+        "demo",
+        "task",
+        "TASK-0001",
+        "--oneline",
+    ]
+    for selector, expected in (
+        ("id=PM-REFINEMENT", "PM"),
+        ("id=HOST-TEST", "HOST"),
+    ):
+        result = runner.invoke(app, [*base, selector])
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.output)["stage"] == expected
+
+
 def test_cli_language_defaults_to_zh_tw_and_rejects_unsupported_values(monkeypatch):
     from ccc_mcp.infra.config import cli_language
 

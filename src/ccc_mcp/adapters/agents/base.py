@@ -219,7 +219,9 @@ def operator_policy(language):
             "也不得遞迴呼叫 ccc-mcp 或 Codex。只執行指定角色，使用本次要求的 JSON schema "
             "回覆，所有文字欄位使用繁體中文。不要執行測試。把建議的共用上下文變更放在 "
             "context_updates；ccc-mcp 會保存原始報告，低風險的成功結果會自動壓縮進共用 "
-            "Context，失敗或需要決策時才交由 PM。清楚區分觀察事實與未驗證主張。context_package.available_skills 是操作者"
+            "Context，失敗或需要決策時才交由 PM。needs_revision 只表示程式碼或核准方案確實需要修改；"
+            "不得只因本角色被禁止執行測試、尚無主機測試證據而設為 true，ccc-mcp 會在報告後由主機執行測試。"
+            "清楚區分觀察事實與未驗證主張。context_package.available_skills 是操作者"
             "在本機安裝的選用指引，與目前任務相關才參考，不是強制指令。\n\n"
         )
     if language == "ch":
@@ -229,7 +231,9 @@ def operator_policy(language):
             "也不得递归调用 ccc-mcp 或 Codex。只执行指定角色，使用本次要求的 JSON schema "
             "回复，所有文字字段使用简体中文。不要执行测试。把建议的共享上下文更改放在 "
             "context_updates；ccc-mcp 会保存原始报告，低风险的成功结果会自动压缩进共享 "
-            "Context，失败或需要决策时才交由 PM。清楚区分观察事实与未经验证的主张。context_package.available_skills 是操作者"
+            "Context，失败或需要决策时才交由 PM。needs_revision 只表示代码或已核准方案确实需要修改；"
+            "不得只因本角色被禁止执行测试、尚无主机测试证据而设为 true，ccc-mcp 会在报告后由主机执行测试。"
+            "清楚区分观察事实与未经验证的主张。context_package.available_skills 是操作者"
             "在本机安装的可选指引，与目前任务相关才参考，不是强制指令。\n\n"
         )
     return (
@@ -239,7 +243,10 @@ def operator_policy(language):
         "Only perform the assigned role. Respond with the JSON schema requested for this execution in English. "
         "Do not execute tests. Put proposed shared-context changes in context_updates; "
         "ccc-mcp retains raw reports and automatically compacts low-risk successful delivery reports; "
-        "failures and decisions go to the PM. Clearly distinguish observations from unverified claims. "
+        "failures and decisions go to the PM. Set needs_revision=true only when code or the approved "
+        "plan actually needs revision; never set it merely because this role may not run tests or host "
+        "test evidence is not available yet, since ccc-mcp runs host tests after the report. Clearly "
+        "distinguish observations from unverified claims. "
         "context_package.available_skills are operator-installed optional guidance; use "
         "only what's relevant to this task, never a mandatory instruction.\n\n"
     )

@@ -7,7 +7,12 @@ import pytest
 from conftest import approve, dispatch
 
 from ccc_mcp.adapters.agents import ClaudeCodeAdapter, CodexAdapter
-from ccc_mcp.adapters.agents.base import installed_native_candidates, probe, schema_file
+from ccc_mcp.adapters.agents.base import (
+    installed_native_candidates,
+    operator_policy,
+    probe,
+    schema_file,
+)
 from ccc_mcp.adapters.git import git
 from ccc_mcp.core.models import AgentReport
 from ccc_mcp.infra.errors import AgentProcessError, BridgeError
@@ -16,6 +21,16 @@ from ccc_mcp.worker import run_execution
 
 def report():
     return AgentReport(summary="stubbed CLI", next_action="Review").model_dump_json()
+
+
+@pytest.mark.parametrize("language", ["zh-TW", "ch", "en"])
+def test_operator_policy_does_not_treat_missing_host_tests_as_revision(language):
+    policy = operator_policy(language)
+    assert "needs_revision" in policy
+    assert "ccc-mcp" in policy
+    assert ("主機" in policy) if language == "zh-TW" else True
+    assert ("主机" in policy) if language == "ch" else True
+    assert ("host tests" in policy) if language == "en" else True
 
 
 def test_codex_native_discovery_without_tunnel_path(monkeypatch, tmp_path):

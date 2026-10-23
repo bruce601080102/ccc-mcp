@@ -1,7 +1,10 @@
 import difflib
 import json
 import re
+import shutil
+import sqlite3
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 
 import portalocker
@@ -237,6 +240,192 @@ class ContextHub:
             "SELECT * FROM projects WHERE id NOT IN "
             "(SELECT project_id FROM project_deletions) ORDER BY id"
         )
+
+    def clear_project_history_local(self, project_id):
+        """Reset one registered project's workflow history without retiring its ID.
+
+        The operation is intentionally local-terminal-only and recoverable: before
+        removing current task/context rows it snapshots the whole SQLite database and
+        moves this project's generated metadata (plus managed worktrees) under
+        ``<home>/archives``. Repository source files, project registration, settings,
+        continuous authorization, and direct-write audit rows are preserved.
+        """
+        from .approval import confirm_local
+
+        project = self.project(project_id)
+        if self.store.one(
+            "SELECT 1 FROM agent_executions WHERE project_id=? "
+            "AND status IN ('QUEUED','RUNNING')",
+            (project_id,),
+        ):
+            raise BridgeError("Wait for or cancel the active execution before clearing history")
+        identity = confirm_local(
+            f"清除 ccc-mcp 專案工作歷史：{project_id}\n{project['root']}\n\n"
+            "將清除目前資料庫中的 task、Agent execution、PLAN、approval、decision、"
+            "Meeting Mode、artifact 與 Context 版本，然後重建 Context v1。\n"
+            "project ID、專案資料夾、程式碼、設定、讀寫授權與直接寫檔稽核會保留。"
+            "清除前會把完整 SQLite 與 .ccc-mcp／managed worktree 搬到 ~/.ccc-mcp/archives。",
+            f"CLEAR HISTORY {project_id}",
+        )
+
+        with self.lock(project_id):
+            if self.store.one(
+                "SELECT 1 FROM agent_executions WHERE project_id=? "
+                "AND status IN ('QUEUED','RUNNING')",
+                (project_id,),
+            ):
+                raise BridgeError("Wait for or cancel the active execution before clearing history")
+            project = self.project(project_id)
+            root = Path(project["root"])
+            settings = self.get_project_settings(project_id)
+            previous = self.latest(project_id)["snapshot"]
+            stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+            archive = self.home / "archives" / f"{project_id}-{stamp}-{uuid.uuid4().hex[:6]}"
+            archive.mkdir(parents=True, mode=0o700)
+            archive_db = archive / "bridge.sqlite3"
+            with sqlite3.connect(self.store.path) as source, sqlite3.connect(archive_db) as target:
+                source.backup(target)
+            try:
+                archive_db.chmod(0o600)
+            except OSError:
+                pass
+
+            worktree_rows = self.store.all(
+                "SELECT DISTINCT task_id,worktree FROM agent_executions "
+                "WHERE project_id=? AND worktree IS NOT NULL",
+                (project_id,),
+            )
+            worktrees_to_archive = []
+            for row in worktree_rows:
+                worktree_path = Path(row["worktree"])
+                if worktree_path == root or not worktree_path.exists():
+                    continue
+                expected = self.task_worktree(project_id, row["task_id"])
+                if worktree_path.resolve() != expected.resolve():
+                    raise BridgeError(f"Refusing to archive unexpected worktree path: {worktree_path}")
+                worktrees_to_archive.append((row["task_id"], worktree_path))
+
+            metadata = root / metadata_name(root)
+            archived_metadata = archive / "project-metadata"
+            archived_worktrees = archive / "worktrees"
+            moved = []
+            try:
+                if metadata.exists():
+                    shutil.move(str(metadata), str(archived_metadata))
+                    moved.append((archived_metadata, metadata))
+                for task_id, worktree_path in worktrees_to_archive:
+                    archived_worktrees.mkdir(exist_ok=True)
+                    target = archived_worktrees / task_id
+                    if target.exists():
+                        continue
+                    shutil.move(str(worktree_path), str(target))
+                    moved.append((target, worktree_path))
+            except BaseException:
+                for archived_path, original_path in reversed(moved):
+                    if archived_path.exists() and not original_path.exists():
+                        original_path.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.move(str(archived_path), str(original_path))
+                raise
+
+            language = settings["language"]
+            snapshot = ContextSnapshot(
+                project_name=previous["project_name"],
+                purpose=previous["purpose"],
+                status={"zh-TW": "已重新初始化", "ch": "已重新初始化", "en": "Reinitialized"}[
+                    language
+                ],
+                next_action={
+                    "zh-TW": "直接提出第一個專案需求。",
+                    "ch": "直接提出第一个项目需求。",
+                    "en": "Submit the first project request.",
+                }[language],
+                summary={
+                    "zh-TW": "工作歷史已清除，尚無 Agent 成果。",
+                    "ch": "工作历史已清除，尚无 Agent 成果。",
+                    "en": "Workflow history was cleared; no agent results yet.",
+                }[language],
+                invariants=previous["invariants"],
+            )
+            metadata_record = {
+                "new_context_version": 1,
+                "changed_sections": list(ContextSnapshot.model_fields),
+                "source_task_ids": [],
+                "source_document_refs": [],
+                "update_reason": "Local operator cleared project workflow history",
+                "author_role": "operator",
+                "identity": identity,
+                "history_archive": str(archive),
+                "git_revision": self.git_revision(root),
+                "timestamp": now(),
+            }
+            try:
+                with self.store.transaction() as conn:
+                    for trigger in (
+                        "meeting_clarifications_no_delete",
+                        "decisions_no_delete",
+                        "context_no_delete",
+                    ):
+                        conn.execute(f"DROP TRIGGER {trigger}")
+                    for table in (
+                        "pending_dispatch",
+                        "meeting_clarifications",
+                        "approvals",
+                        "plans",
+                        "task_events",
+                        "agent_executions",
+                        "artifacts",
+                        "decisions",
+                        "context_patches",
+                        "context_versions",
+                        "tasks",
+                    ):
+                        conn.execute(f"DELETE FROM {table} WHERE project_id=?", (project_id,))
+                    conn.execute(
+                        "INSERT INTO context_versions VALUES(?,?,?,?,?)",
+                        (
+                            project_id,
+                            1,
+                            snapshot.model_dump_json(),
+                            canonical(metadata_record),
+                            now(),
+                        ),
+                    )
+                    conn.execute(
+                        "CREATE TRIGGER meeting_clarifications_no_delete BEFORE DELETE "
+                        "ON meeting_clarifications BEGIN SELECT RAISE(ABORT, "
+                        "'Meeting Mode clarification history is immutable'); END"
+                    )
+                    conn.execute(
+                        "CREATE TRIGGER decisions_no_delete BEFORE DELETE ON decisions "
+                        "BEGIN SELECT RAISE(ABORT, 'Decisions are append-only'); END"
+                    )
+                    conn.execute(
+                        "CREATE TRIGGER context_no_delete BEFORE DELETE ON context_versions "
+                        "BEGIN SELECT RAISE(ABORT, 'Context history is immutable'); END"
+                    )
+            except BaseException:
+                for archived_path, original_path in reversed(moved):
+                    if archived_path.exists() and not original_path.exists():
+                        original_path.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.move(str(archived_path), str(original_path))
+                raise
+
+            # Recreate projections/settings only after the reset transaction commits.
+            self._save_settings(project_id, settings)
+            self.sync_documents(project_id)
+            if archived_worktrees.exists():
+                from ..adapters.git import git
+
+                git(root, "worktree", "prune")
+            return {
+                "project_id": project_id,
+                "history_cleared": True,
+                "context_version": 1,
+                "archive": str(archive),
+                "project_files_deleted": False,
+                "settings_preserved": True,
+                "authorization_preserved": self.get_project_access(project_id)["mode"],
+            }
 
     def register_project(self, path, project_id=None, purpose=None, language="zh-TW"):
         if language not in {"zh-TW", "ch", "en"}:

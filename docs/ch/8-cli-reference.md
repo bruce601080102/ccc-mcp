@@ -73,6 +73,18 @@ ccc-mcp --project demo-app config role REVIEW chatgpt
 
 ## 現在輪到誰、下一步該貼什麼？
 
+只想快速看一眼時：
+
+```bash
+ccc-mcp --project demo-app task --oneline
+ccc-mcp --project demo-app task TASK-0001 --oneline
+ccc-mcp --project demo-app task TASK-0001 --oneline id=EXEC-xxxxxxxx
+```
+
+第一行每個 Task 只列 `TASK-ID 總狀態`。指定 `TASK-ID` 後，會依序列出 SA、PM refinement、SD/RD、主機測試與 REVIEW；真實 Agent 執行會顯示可複製的 `EXEC-...`。再加上 `id=流程代號` 會輸出該流程的完整資料；除了 `EXEC-...`，也可用 `id=SA`、`id=PM-REFINEMENT`、`id=SD-RD`、`id=HOST-TEST`、`id=REVIEW` 查最近一次角色執行或虛擬階段。
+
+需要完整交接內容時：
+
 ```bash
 ccc-mcp --project demo-app task handoff
 ```
@@ -83,6 +95,20 @@ ccc-mcp --project demo-app task handoff
 - `expected_report_fields`：提醒該角色完成後 `submit_agent_report` 要帶的欄位（`summary`、`findings`、`risks`、`next_action`、`tests`、`needs_revision` 等）。
 
 其他情況（背景 Agent 執行中、PM 需要用 `advance_project` 整理報告、派工中斷需要 `task resume`、等待本機核准方案等）會直接回報目前真正在等什麼，文字跟 `task status`／`context sync` 既有欄位一致，不會另外編一套說法。
+
+## 保留專案名稱，從頭開始
+
+不要用 `project delete` 來重跑專案；那是永久註銷，舊 project ID 按設計不能再使用。要清除目前工作流、但保留相同 project ID、原始碼、設定與讀寫授權，請在本機終端執行：
+
+```bash
+ccc-mcp --project demo-app clear history
+# 同義的單字指令
+ccc-mcp --project demo-app clear-history
+```
+
+指令會要求輸入 `CLEAR HISTORY demo-app` 確認，且有 Agent 正在 `QUEUED`／`RUNNING` 時會拒絕執行。成功後會清除該專案的 Task、Agent execution、PLAN、approval、decision、Meeting Mode、artifact 與舊 Context，重建 `Context v1`；下一個 Task 會重新從 `TASK-0001` 開始。
+
+這不是刪除原始碼或 Git reset。專案資料夾、project ID、角色／Meeting Mode／測試設定、專案授權與直接寫檔稽核都會保留。清除前的完整 SQLite、`.ccc-mcp` metadata 和受管理 task worktree 會移到回傳的 `archive` 路徑（預設位於 `~/.ccc-mcp/archives/`），因此仍可稽核或人工復原。
 
 ## 派工前先檢查環境
 
