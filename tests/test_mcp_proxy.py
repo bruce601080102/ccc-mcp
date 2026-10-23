@@ -8,6 +8,7 @@ import os
 import sys
 import textwrap
 
+import psutil
 import pytest
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -165,18 +166,10 @@ def test_each_scope_gets_its_own_server_process(bridge, installed):
 
 
 def test_a_killed_server_is_restarted_transparently(bridge, installed):
-    import signal
-
     first = int(server_pid(bridge))
-    os.kill(first, signal.SIGKILL)
-    for _ in range(40):  # wait until the connection notices
-        try:
-            os.kill(first, 0)
-        except OSError:
-            break
-        import time
-
-        time.sleep(0.05)
+    process = psutil.Process(first)
+    process.kill()
+    process.wait(timeout=5)
     second = server_pid(bridge)
     assert second != str(first)
 

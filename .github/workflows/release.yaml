@@ -33,8 +33,21 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        python-version: ["3.11", "3.12", "3.13", "3.14"]
+        include:
+          # Linux covers every supported Python version. macOS and Windows run the
+          # same suite once to catch OS-specific path, process and locking behavior.
+          - os: ubuntu-latest
+            python-version: "3.11"
+          - os: ubuntu-latest
+            python-version: "3.12"
+          - os: ubuntu-latest
+            python-version: "3.13"
+          - os: ubuntu-latest
+            python-version: "3.14"
+          - os: macos-latest
+            python-version: "3.14"
+          - os: windows-latest
+            python-version: "3.14"
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -51,7 +64,6 @@ jobs:
 
   build:
     name: build sdist + wheel
-    needs: [lint, test]
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -83,18 +95,17 @@ jobs:
           if-no-files-found: error
 
   smoke-install:
-    name: install wheel (${{ matrix.os }}, py${{ matrix.python-version }})
+    name: install wheel (${{ matrix.os }})
     needs: build
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        python-version: ["3.11", "3.14"]
     steps:
       - uses: actions/setup-python@v7
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.14"
       - uses: actions/download-artifact@v8
         with:
           name: dist
@@ -111,7 +122,7 @@ jobs:
 
   github-release:
     name: attach build to GitHub Release
-    needs: [build, smoke-install]
+    needs: [lint, test, build, smoke-install]
     runs-on: ubuntu-latest
     permissions:
       contents: write

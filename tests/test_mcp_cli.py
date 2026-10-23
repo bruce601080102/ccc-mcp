@@ -593,8 +593,8 @@ def test_connect_mcp_command_keeps_symlinked_interpreter_path(tmp_path, monkeypa
     assert result.exit_code == 0, result.output
     init_call = next(call for call in calls if call[1] == "init")
     command = init_call[init_call.index("--mcp-command") + 1]
-    assert str(venv_python) in command
-    assert str(real_target) not in command
+    assert venv_python.absolute().as_posix() in command
+    assert real_target.absolute().as_posix() not in command
 
 
 def test_connect_recreates_profile_with_unusable_saved_interpreter(tmp_path, monkeypatch):

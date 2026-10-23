@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import time
 from pathlib import Path
@@ -57,6 +58,7 @@ def test_codex_native_discovery_without_tunnel_path(monkeypatch, tmp_path):
     assert probe("codex", ["exec"], ["--sandbox", "--json"]) == str(binary)
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX native install path")
 def test_claude_native_discovery_in_local_bin_without_path(monkeypatch, tmp_path):
     """Regression: a GUI-launched terminal/IDE integrated shell (or a long-running
     `ccc-mcp connect` started before a shell rc file added a directory to PATH) often

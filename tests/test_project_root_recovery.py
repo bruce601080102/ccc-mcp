@@ -7,11 +7,11 @@ silently.
 """
 
 import os
-import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
+from conftest import remove_tree
 from typer.testing import CliRunner
 
 from ccc_mcp.infra.errors import BridgeError
@@ -25,7 +25,7 @@ def root(bridge):
 def test_missing_project_root_is_automatically_recreated(bridge):
     project_root = root(bridge)
     version_before = bridge.latest("demo")["version"]
-    shutil.rmtree(project_root)
+    remove_tree(project_root)
     assert not project_root.exists()
 
     row = bridge.project("demo")
@@ -46,7 +46,7 @@ def test_missing_project_root_is_automatically_recreated(bridge):
 
 def test_missing_project_root_recovery_is_idempotent(bridge):
     project_root = root(bridge)
-    shutil.rmtree(project_root)
+    remove_tree(project_root)
     bridge.project("demo")
     version_after_first_repair = bridge.latest("demo")["version"]
     commit_after_first_repair = subprocess.run(
@@ -75,7 +75,7 @@ def test_missing_project_root_recovery_preserves_project_settings(bridge, human)
     bridge.configure_profile("demo", "chatgpt-only")
     assert bridge.public_project_settings("demo")["profile"] == "chatgpt-only"
 
-    shutil.rmtree(root(bridge))
+    remove_tree(root(bridge))
 
     settings = bridge.public_project_settings("demo")
     assert settings["profile"] == "chatgpt-only"
@@ -87,7 +87,7 @@ def test_missing_project_root_recovery_preserves_project_settings(bridge, human)
 def test_cli_config_show_transparently_recovers_a_deleted_project_root(bridge):
     """The exact real-world repro: a command that looks read-only (`config show`)
     must not just fail forever after the project folder is deleted by hand."""
-    shutil.rmtree(root(bridge))
+    remove_tree(root(bridge))
 
     result = CliRunner().invoke(
         app, ["--home", str(bridge.home), "--project", "demo", "config", "show"]
@@ -104,7 +104,7 @@ def test_symlinked_project_root_is_still_rejected_not_repaired(bridge, tmp_path)
     project_root = root(bridge)
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
-    shutil.rmtree(project_root)
+    remove_tree(project_root)
     os.symlink(elsewhere, project_root)
 
     with pytest.raises(BridgeError, match="moved or is unavailable"):

@@ -1,8 +1,24 @@
+import os
+import shutil
+import stat
 import subprocess
 
 import pytest
 
 from ccc_mcp.service import CCCMCP
+
+
+def remove_tree(path):
+    """Remove a test Git repository, including read-only object files on Windows."""
+
+    def make_writable_and_retry(function, name, exc_info):
+        try:
+            os.chmod(name, os.stat(name).st_mode | stat.S_IWRITE)
+            function(name)
+        except OSError:
+            raise exc_info[1]
+
+    shutil.rmtree(path, onerror=make_writable_and_retry)
 
 
 @pytest.fixture

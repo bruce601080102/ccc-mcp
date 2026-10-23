@@ -108,7 +108,9 @@ def test_dependency_manifest_is_detected_without_installing_anything(bridge, hum
     assert not venv_python_path(venv_dir).is_file()
     # sync_documents always writes a placeholder TEST-RESULT.md on task creation;
     # preflight must not have replaced it with real (fabricated) test evidence.
-    placeholder = (root(bridge) / ".ccc-mcp" / "tasks" / task_id / "TEST-RESULT.md").read_text()
+    placeholder = (
+        root(bridge) / ".ccc-mcp" / "tasks" / task_id / "TEST-RESULT.md"
+    ).read_text(encoding="utf-8")
     assert "尚未產生" in placeholder
 
 

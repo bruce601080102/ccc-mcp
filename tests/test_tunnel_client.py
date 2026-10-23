@@ -1,6 +1,7 @@
 import hashlib
 import io
 import json
+import os
 import zipfile
 
 import pytest
@@ -157,6 +158,7 @@ def test_ensure_tunnel_client_replaces_wrong_architecture_for_same_binary_name(
     }
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX executable mode bits")
 def test_ensure_tunnel_client_downloads_darwin_arm64_and_sets_executable_bit(tmp_path, monkeypatch):
     monkeypatch.setattr(tunnel_client.platform, "system", lambda: "Darwin")
     monkeypatch.setattr(tunnel_client.platform, "machine", lambda: "arm64")
@@ -177,6 +179,7 @@ def test_ensure_tunnel_client_downloads_darwin_arm64_and_sets_executable_bit(tmp
     assert target.stat().st_mode & 0o111
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX executable mode bits")
 def test_ensure_tunnel_client_downloads_linux_amd64_and_sets_executable_bit(tmp_path, monkeypatch):
     monkeypatch.setattr(tunnel_client.platform, "system", lambda: "Linux")
     monkeypatch.setattr(tunnel_client.platform, "machine", lambda: "x86_64")
