@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from click import unstyle
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from typer.testing import CliRunner
@@ -128,7 +129,9 @@ def test_task_positional_id_requires_oneline(bridge):
     )
 
     assert result.exit_code != 0
-    assert "--oneline" in result.output
+    # GitHub Actions can force Rich color even for CliRunner.  ANSI sequences may
+    # split a styled option name, so compare the terminal's visible text.
+    assert "--oneline" in unstyle(result.output)
 
 
 def test_task_timeline_can_show_pseudo_stage_detail(bridge):
