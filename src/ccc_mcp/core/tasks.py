@@ -300,6 +300,75 @@ def chatgpt_handoff_prompt(project_id, pending, language):
     )
 
 
+def _clip(text, limit=90):
+    text = " ".join(str(text or "").split())
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def meeting_mode_notice(clarification, language):
+    """A ready-to-quote ONE-LINE status of Meeting Mode, or None when it is off.
+
+    Kept to a single short line on purpose: a model skips long relayed blocks but
+    repeats a short one. The unclipped record lives in meeting_transcript. Derived only
+    from the `clarification` block so it can never drift from it."""
+    if not clarification["enabled"]:
+        return None
+    zh = language in {"zh-TW", "ch"}
+    gate, history = clarification["gate"], clarification["history"]
+    who = {
+        ("ask_user", True): "未達共識由你決定",
+        ("auto_pm", True): "未達共識由 PM 自動決定",
+        ("ask_user", False): "no consensus: you decide",
+        ("auto_pm", False): "no consensus: PM decides",
+    }[(clarification["escalation"], zh)]
+    if history:
+        row = history[-1]
+        n = len(history)
+        answer = ""
+        if row["response_type"]:
+            answer = f" → SA（{row['response_type']}）「{_clip(row['response_content'], 110)}」" if zh \
+                else f" -> SA ({row['response_type']}) \"{_clip(row['response_content'], 110)}\""
+        if row["pm_decision_content"]:
+            answer += f" → 決策「{_clip(row['pm_decision_content'], 60)}」" if zh \
+                else f" -> decision \"{_clip(row['pm_decision_content'], 60)}\""
+        return (
+            f"【Meeting Mode 已觸發｜共 {n} 輪】SD/RD 問「{_clip(row['question'])}」{answer}｜{who}｜"
+            "完整對話：get_meeting_transcript"
+            if zh
+            else f"[Meeting Mode TRIGGERED | {n} round(s)] SD/RD asked \"{_clip(row['question'])}\"{answer} | "
+            f"{who} | full text: get_meeting_transcript"
+        )
+    if gate is None:
+        return (
+            f"【Meeting Mode 已啟用】SD/RD 動工前會先做澄清檢查（最多 {clarification['max_rounds']} 輪｜{who}）"
+            if zh
+            else f"[Meeting Mode ENABLED] SD/RD runs a clarification check before implementing "
+            f"(max {clarification['max_rounds']} rounds | {who})"
+        )
+    if gate["status"] in {"QUEUED", "RUNNING"}:
+        return (
+            "【Meeting Mode 已啟用】SD/RD 正在進行動工前澄清檢查"
+            if zh
+            else "[Meeting Mode ENABLED] SD/RD is running its clarification check"
+        )
+    if gate["outcome"] == "no_blocking_question":
+        unmet = gate["min_rounds_unmet"]
+        return (
+            "【Meeting Mode 已啟用】SD/RD 檢查後沒有要問的"
+            + ("（未達 min_rounds）" if unmet else "")
+            + f"：{_clip(gate['rationale'], 110)}"
+            if zh
+            else "[Meeting Mode ENABLED] SD/RD found nothing to ask"
+            + (" (min_rounds unmet)" if unmet else "")
+            + f": {_clip(gate['rationale'], 110)}"
+        )
+    return (
+        f"【Meeting Mode 已啟用】SD/RD 動工前檢查狀態：{gate['status']}"
+        if zh
+        else f"[Meeting Mode ENABLED] SD/RD's check status: {gate['status']}"
+    )
+
+
 class TaskHub:
     def task(self, project_id, task_id):
         self.project(project_id)
@@ -537,6 +606,44 @@ class TaskHub:
             clarification_text=clarification_text,
         )
 
+    def _meeting_gate_due(self, project_id, task_id):
+        """(due, rounds_used, min_rounds): whether SD/RD's read-only Meeting Mode check
+        must be dispatched next instead of real implementation. Derived fresh from
+        durable rows, shared by the automatic chain and by direct dispatch_agent calls
+        so the two can never disagree."""
+        meeting = self.get_project_settings(project_id).get("meeting_mode") or {
+            "enabled": False, "min_rounds": 0, "max_rounds": 0,
+        }
+        ever_implemented = self.store.one(
+            "SELECT 1 FROM agent_executions WHERE project_id=? AND task_id=? "
+            "AND role IN ('SD','RD','SD/RD') AND "
+            "COALESCE(json_extract(options,'$.report_schema'),'agent_report')='agent_report'",
+            (project_id, task_id),
+        )
+        gates_succeeded = self.store.one(
+            "SELECT COUNT(*) AS n FROM agent_executions WHERE project_id=? AND task_id=? "
+            "AND status='SUCCEEDED' AND "
+            "json_extract(options,'$.report_schema')='clarification_request'",
+            (project_id, task_id),
+        )["n"]
+        rounds_used = self.store.one(
+            "SELECT COUNT(*) AS n FROM meeting_clarifications WHERE project_id=? "
+            "AND task_id=? AND status='RESOLVED'",
+            (project_id, task_id),
+        )["n"]
+        min_rounds = meeting.get("min_rounds", 0)
+        # Every completed check so far produced a resolved round (none said "no
+        # question"), so min_rounds can still demand another one. A check that declined
+        # to ask is final: the workflow proceeds and the notice reports min_rounds unmet.
+        owed_round = gates_succeeded == rounds_used and rounds_used < min_rounds
+        due = bool(
+            meeting["enabled"]
+            and not ever_implemented
+            and (gates_succeeded == 0 or owed_round)
+            and rounds_used < meeting["max_rounds"]
+        )
+        return due, rounds_used, min_rounds
+
     def _start_implementation_or_clarification(
         self, project_id, task_id, adapter, fake_scenario, clarification_text=None
     ):
@@ -549,38 +656,26 @@ class TaskHub:
         to call again after any crash or resume without re-deriving the decision by
         hand."""
         plan_content = self.approved_plan(project_id, task_id)["content"]
-        meeting = self.get_project_settings(project_id).get("meeting_mode") or {
-            "enabled": False, "min_rounds": 0, "max_rounds": 0,
-        }
-        ever_implemented = self.store.one(
-            "SELECT 1 FROM agent_executions WHERE project_id=? AND task_id=? "
-            "AND role IN ('SD','RD','SD/RD') AND "
-            "COALESCE(json_extract(options,'$.report_schema'),'agent_report')='agent_report'",
-            (project_id, task_id),
-        )
-        clarification_completed = self.store.one(
-            "SELECT 1 FROM agent_executions WHERE project_id=? AND task_id=? "
-            "AND status='SUCCEEDED' AND "
-            "json_extract(options,'$.report_schema')='clarification_request' LIMIT 1",
-            (project_id, task_id),
-        )
-        rounds_used = self.store.one(
-            "SELECT COUNT(*) AS n FROM meeting_clarifications WHERE project_id=? "
-            "AND task_id=? AND status='RESOLVED'",
-            (project_id, task_id),
-        )["n"]
-        if (
-            meeting["enabled"]
-            and not ever_implemented
-            and not clarification_completed
-            and rounds_used < meeting["max_rounds"]
-        ):
+        due, rounds_used, min_rounds = self._meeting_gate_due(project_id, task_id)
+        if due:
+            if rounds_used < min_rounds:
+                ask = (
+                    f"Meeting Mode requires at least {min_rounds} clarification round(s) "
+                    f"and {rounds_used} are done. Before implementing the approved plan "
+                    "below, you MUST raise exactly one question: the single most valuable "
+                    "ambiguity, risky assumption, or design choice you would want the SA "
+                    "to confirm. Set no_blocking_question=false and fill blocking_question; "
+                    "no_blocking_question=true is not acceptable in this round."
+                )
+            else:
+                ask = (
+                    "Decide whether you have exactly one blocking question before "
+                    "implementing the approved plan below. If you do not, respond with "
+                    "no_blocking_question=true and proceed with no further action here — "
+                    "the real implementation dispatch follows automatically."
+                )
             return self._dispatch_or_adopt(
-                project_id, task_id, "SD/RD",
-                "Decide whether you have exactly one blocking question before "
-                "implementing the approved plan below. If you do not, respond with "
-                "no_blocking_question=true and proceed with no further action here — "
-                "the real implementation dispatch follows automatically.\n\n" + plan_content,
+                project_id, task_id, "SD/RD", ask + "\n\n" + plan_content,
                 adapter, fake_scenario, report_schema="clarification_request",
                 clarification_text=clarification_text,
             )
@@ -1275,6 +1370,30 @@ class TaskHub:
         if not 0.05 <= timeout <= 7200 or not 0 <= fake_delay <= 60:
             raise BridgeError("Timeout/delay outside supported bounds")
         if (
+            report_schema == "agent_report"
+            and role in {"SD", "RD", "SD/RD"}
+            and agent != "chatgpt"
+        ):
+            # A direct dispatch_agent for SD/RD must not skip Meeting Mode: when its
+            # read-only check is still owed, run that instead (the same decision the
+            # automatic advance_project chain makes), and say so in the result.
+            self.task(project_id, task_id)
+            if self._meeting_gate_due(project_id, task_id)[0]:
+                redirected = self._start_implementation_or_clarification(
+                    project_id, task_id, adapter,
+                    # The fake adapter's scenarios are per-schema; a caller's
+                    # agent_report scenario means nothing to the clarification check.
+                    fake_scenario
+                    if fake_scenario in REPORT_SCHEMAS["clarification_request"]
+                    else "ask_question",
+                )
+                return {
+                    **redirected,
+                    "meeting_mode_redirect": "Meeting Mode's SD/RD clarification check was "
+                    "still owed, so it was dispatched instead of real implementation; the "
+                    "implementation dispatch follows automatically once it resolves.",
+                }
+        if (
             adapter == "real"
             and agent != "chatgpt"
             and self.get_project_access(project_id)["mode"] != "read-write"
@@ -1502,7 +1621,7 @@ class TaskHub:
                 (project_id, task_id),
             )
             meeting_settings = self.get_project_settings(project_id).get("meeting_mode") or {
-                "enabled": False, "min_rounds": 0, "max_rounds": 0,
+                "enabled": False, "min_rounds": 0, "max_rounds": 0, "escalation": "ask_user",
             }
             pending_clarification = next(
                 (r for r in meeting_rows if r["status"] == "AWAITING_PM"), None
@@ -1510,6 +1629,38 @@ class TaskHub:
             current_question = next(
                 (r for r in meeting_rows if r["status"] == "AWAITING_SA"), None
             )
+            # The gate's own read-only check runs even when SD/RD has nothing to ask;
+            # without surfacing it, "checked, no question" looks identical to "Meeting
+            # Mode never ran". Derived from the execution row, never a second tracker.
+            gate_row = self.store.one(
+                "SELECT status,result FROM agent_executions WHERE project_id=? AND task_id=? "
+                "AND json_extract(options,'$.report_schema')='clarification_request' "
+                "ORDER BY created DESC LIMIT 1",
+                (project_id, task_id),
+            )
+            gate = None
+            if gate_row:
+                gate_report = (
+                    (json.loads(gate_row["result"]) if gate_row["result"] else {}).get("report")
+                    or {}
+                )
+                outcome = None
+                if gate_row["status"] == "SUCCEEDED":
+                    outcome = (
+                        "question_asked"
+                        if gate_report.get("blocking_question")
+                        and not gate_report.get("no_blocking_question")
+                        else "no_blocking_question"
+                    )
+                gate = {
+                    "status": gate_row["status"],
+                    "outcome": outcome,
+                    "rationale": gate_report.get("rationale"),
+                    # SD/RD declined to ask although min_rounds still required a round.
+                    "min_rounds_unmet": outcome == "no_blocking_question"
+                    and sum(1 for r in meeting_rows if r["status"] == "RESOLVED")
+                    < meeting_settings["min_rounds"],
+                }
             task["brief"] = {
                 "task_id": task_id,
                 "state": task["state"],
@@ -1565,6 +1716,16 @@ class TaskHub:
                     "enabled": meeting_settings["enabled"],
                     "min_rounds": meeting_settings["min_rounds"],
                     "max_rounds": meeting_settings["max_rounds"],
+                    "escalation": meeting_settings.get("escalation", "ask_user"),
+                    # A meeting_clarifications row only ever exists once SD/RD actually
+                    # asked a real blocking question (see _record_clarification_result);
+                    # this is the one signal that the gate truly fired for this task,
+                    # independent of whether any round has resolved yet.
+                    "triggered": bool(meeting_rows),
+                    # None until SD/RD's read-only check was dispatched; afterwards its
+                    # status plus (once SUCCEEDED) question_asked / no_blocking_question
+                    # and SD/RD's own rationale — proof the gate really ran.
+                    "gate": gate,
                     "rounds_used": sum(1 for r in meeting_rows if r["status"] == "RESOLVED"),
                     "current_question": current_question["question"] if current_question else None,
                     "pending_pm_decision": (
@@ -1606,6 +1767,16 @@ class TaskHub:
             "agent": brief["agent"],
             "context_version": brief["context_version"],
             "tests": brief["tests"],
+            "clarification": brief["clarification"],
+            "meeting_mode_notice": (
+                {
+                    "text": notice,
+                    "rule": "Open your reply to the user with `text` verbatim as the very "
+                    "first line, before any other content, then continue the workflow.",
+                }
+                if (notice := meeting_mode_notice(brief["clarification"], language))
+                else None
+            ),
             "chatgpt_prompt": None,
             "next_action": None,
         }
@@ -1634,16 +1805,35 @@ class TaskHub:
             result["next_action"] = brief["pending_dispatch"]["next_action"]
         elif waiting_on == "PM_CLARIFICATION_DECISION":
             pending = brief["clarification"]["pending_pm_decision"]
-            result["next_action"] = (
-                f"SD/RD 第 {pending['round']} 輪的問題被 SA 升級給 PM：「{pending['question']}」"
-                f"（SA 建議：{pending['sa_recommendation']}）。呼叫 resolve_clarification 決策後"
-                "會自動派下一輪或開始實作。"
-                if zh
-                else f"SD/RD's round {pending['round']} question was escalated to the PM: "
-                f"\"{pending['question']}\" (SA's recommendation: {pending['sa_recommendation']}). "
-                "Call resolve_clarification with a decision; the next round or real "
-                "implementation dispatches automatically."
-            )
+            escalation = brief["clarification"]["escalation"]
+            if escalation == "auto_pm":
+                result["next_action"] = (
+                    f"SD/RD 第 {pending['round']} 輪的問題被 SA 升級給 PM：「{pending['question']}」"
+                    f"（SA 建議：{pending['sa_recommendation']}）。本專案設定為 auto-pm："
+                    "PM（你）可直接依自己的判斷決定，呼叫 resolve_clarification 後會自動派下一輪或"
+                    "開始實作；完成後請把決定內容與理由告知使用者。"
+                    if zh
+                    else f"SD/RD's round {pending['round']} question was escalated to the PM: "
+                    f"\"{pending['question']}\" (SA's recommendation: {pending['sa_recommendation']}). "
+                    "This project is configured auto-pm: the PM (you) may decide immediately "
+                    "using your own judgement — call resolve_clarification now; the next round "
+                    "or real implementation dispatches automatically. Tell the user what you "
+                    "decided and why afterward."
+                )
+            else:
+                result["next_action"] = (
+                    f"SD/RD 第 {pending['round']} 輪的問題被 SA 升級給 PM：「{pending['question']}」"
+                    f"（SA 建議：{pending['sa_recommendation']}）。本專案設定為 ask-user：這是需要"
+                    "真人使用者決定的情況，不可由你自行判斷——請把問題與 SA 的建議呈現給使用者，"
+                    "等待使用者在對話中的實際回覆後，才能呼叫 resolve_clarification 送出決策。"
+                    if zh
+                    else f"SD/RD's round {pending['round']} question was escalated to the PM: "
+                    f"\"{pending['question']}\" (SA's recommendation: {pending['sa_recommendation']}). "
+                    "This project is configured ask-user: this genuinely needs the real human "
+                    "user's decision — do not decide it yourself. Present the question and SA's "
+                    "recommendation to the user in chat and wait for their actual reply before "
+                    "calling resolve_clarification with a decision."
+                )
         elif waiting_on == "PM_REFINEMENT":
             result["next_action"] = self.context_sync_status(project_id)["workflow"]
         elif waiting_on in {"AGENT_RUNNING", "BLOCKED"} and brief.get("progress"):
@@ -1679,6 +1869,35 @@ class TaskHub:
                 brief.get("next_action") or brief.get("summary") or brief.get("error")
             )
         return result
+
+    def meeting_transcript(self, project_id, task_id=None):
+        """Read-only, unclipped record of Meeting Mode for a task, derived from the same
+        `clarification` block everything else uses. Exists so the operator can read the
+        SA/SD exchange without depending on ChatGPT choosing to relay it."""
+        task_id = task_id or self.project_workstream_task(project_id)
+        clar = self.get_task_status(project_id, task_id)["brief"]["clarification"]
+        zh = self.get_project_settings(project_id)["language"] in {"zh-TW", "ch"}
+        lines = [
+            f"# Meeting Mode — {task_id}",
+            f"- enabled: {clar['enabled']} · min/max rounds: {clar['min_rounds']}/{clar['max_rounds']}"
+            f" · escalation: {clar['escalation']} · rounds_used: {clar['rounds_used']}",
+        ]
+        gate = clar["gate"]
+        if gate is None:
+            lines.append("- gate: " + ("尚未執行 SD/RD 動工前檢查" if zh else "SD/RD pre-implementation check has not run"))
+        else:
+            lines.append(f"- gate: {gate['status']} / {gate['outcome']}"
+                         + (" (min_rounds unmet)" if gate.get("min_rounds_unmet") else ""))
+            if gate["outcome"] == "no_blocking_question" and gate["rationale"]:
+                lines.append(("- SD/RD 理由：" if zh else "- SD/RD rationale: ") + gate["rationale"])
+        for row in clar["history"]:
+            lines += ["", f"## {'第' if zh else 'Round '} {row['round']} {'輪' if zh else ''} ({row['status']})",
+                      f"**SD/RD →** {row['question']}"]
+            if row["response_type"]:
+                lines.append(f"**SA ({row['response_type']}) →** {row['response_content']}")
+            if row["pm_decision_content"]:
+                lines.append(f"**{'決策' if zh else 'Decision'} →** {row['pm_decision_content']}")
+        return {"task_id": task_id, "clarification": clar, "markdown": "\n".join(lines)}
 
     def wait_for_task(self, project_id, task_id=None, timeout_seconds=50, poll_seconds=0.5):
         """Long-poll one task until background work settles or a PM/user action is needed.
@@ -1732,12 +1951,19 @@ class TaskHub:
             "PM_DECISION",
             "DISPATCH_RETRY_NEEDED",
         }
+        if waiting_on == "PM_CLARIFICATION_DECISION":
+            # escalation="auto_pm": the PM (ChatGPT) can decide immediately with no new
+            # information, so this is not a genuine stop — same bucket as PM_DECISION.
+            # escalation="ask_user" (default): a real decision/approval requiring the
+            # actual human's input, so it stays a legitimate stop like USER_APPROVAL.
+            must_continue = handoff["clarification"]["escalation"] == "auto_pm"
         return {
             "task_id": task_id,
             "timed_out": timed_out,
             "elapsed_seconds": round(elapsed, 2),
             "must_continue_in_this_turn": must_continue,
             "terminal": waiting_on in {"COMPLETED", "CANCELLED", "REJECTED", "FAILED", "BLOCKED"},
+            "meeting_mode_notice": handoff["meeting_mode_notice"],
             "handoff": handoff,
         }
 

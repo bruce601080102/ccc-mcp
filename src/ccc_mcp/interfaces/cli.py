@@ -593,12 +593,19 @@ def config_context_budget(
     "meeting-mode",
     help=t(
         "預設關閉：開啟後在 SA 完成分析、SD/RD 開始實作前插入一輪最多 5 次來回的澄清對話，"
-        "SD/RD 可先問一個阻斷性問題再動工。min_rounds 僅供顯示，不會擋住 SD/RD 直接回報"
-        "沒有問題。例如：ccc-mcp config meeting-mode on --min-rounds 1 --max-rounds 3",
+        "SD/RD 可先問一個阻斷性問題再動工。min_rounds 為最少澄清輪數：未達標前會要求 SD/RD 必須提問；"
+        "若 SD/RD 仍拒絕，流程不會卡住，但會標示未達標。--escalation 決定 SA/SD 討論未果（pm_decision_required）時由誰決定："
+        "ask-user（預設）要求 ChatGPT 把問題與 SA 建議呈現給真人使用者、等待其實際回覆後"
+        "才能呼叫 resolve_clarification；auto-pm 允許 ChatGPT 以 PM 身分立即自行決定。"
+        "例如：ccc-mcp config meeting-mode on --min-rounds 1 --max-rounds 3 --escalation ask-user",
         "Off by default: enable to insert a bounded (max 5) SD/RD<->SA clarification "
-        "round before SD/RD's first implementation attempt. min_rounds is display-only, "
-        "never blocking SD/RD from reporting no blocking question. "
-        "Example: ccc-mcp config meeting-mode on --min-rounds 1 --max-rounds 3",
+        "round before SD/RD's first implementation attempt. min_rounds is the minimum number of rounds: until met, SD/RD is told it MUST ask; "
+        "if it still declines the workflow proceeds and reports min_rounds_unmet. --escalation decides "
+        "who resolves a pm_decision_required round (SA/SD/RD could not agree): "
+        "ask-user (default) requires ChatGPT to present the question and SA's "
+        "recommendation to the real human user and wait for their actual reply before "
+        "calling resolve_clarification; auto-pm lets ChatGPT decide immediately as PM. "
+        "Example: ccc-mcp config meeting-mode on --min-rounds 1 --max-rounds 3 --escalation ask-user",
     ),
 )
 def config_meeting_mode(
@@ -609,8 +616,8 @@ def config_meeting_mode(
         typer.Option(
             "--min-rounds",
             help=t(
-                "顯示用途；從不阻止 SD/RD 直接回報沒有阻斷性問題",
-                "Display-only; never blocks SD/RD from reporting no blocking question",
+                "最少澄清輪數；未達標前 SD/RD 必須提問（仍拒絕時會標示未達標，不卡流程）",
+                "Minimum rounds; SD/RD must ask until met (if it still declines, min_rounds_unmet is reported, not blocked)",
             ),
         ),
     ] = None,
@@ -620,12 +627,28 @@ def config_meeting_mode(
             "--max-rounds", help=t("系統硬上限 5", "Hard system cap of 5")
         ),
     ] = None,
+    escalation: Annotated[
+        str | None,
+        typer.Option(
+            "--escalation",
+            help=t(
+                "ask-user（預設）或 auto-pm；省略時維持現有設定",
+                "ask-user (default) or auto-pm; omit to keep the current setting",
+            ),
+        ),
+    ] = None,
 ):
     if enabled not in {"on", "off"}:
         raise BridgeError(t("請輸入 on 或 off", "Enter on or off"))
+    if escalation is not None and escalation not in {"ask-user", "auto-pm"}:
+        raise BridgeError(t("--escalation 請輸入 ask-user 或 auto-pm", "--escalation must be ask-user or auto-pm"))
     output(
         bridge(ctx).configure_meeting_mode(
-            project_id(ctx), enabled == "on", min_rounds, max_rounds
+            project_id(ctx),
+            enabled == "on",
+            min_rounds,
+            max_rounds,
+            escalation.replace("-", "_") if escalation else None,
         )
     )
 
@@ -1146,6 +1169,20 @@ def task_usage(ctx: typer.Context, task_id: Annotated[str | None, typer.Argument
 def task_handoff(ctx: typer.Context, task_id: Annotated[str | None, typer.Argument()] = None):
     service, project = bridge(ctx), project_id(ctx)
     output(service.task_handoff(project, task_id))
+
+
+@task_app.command(
+    "meeting",
+    help=t(
+        "唯讀：印出這個任務 Meeting Mode 的完整 SA／SD 對話紀錄（不截斷），"
+        "包含動工前檢查結果、每輪問題、SA 回覆與 PM 決策。不依賴 ChatGPT 轉述。",
+        "Read-only: print the task's full, unclipped Meeting Mode record — the "
+        "pre-implementation check, each round's question, SA's answer and any PM decision. "
+        "Does not depend on ChatGPT relaying it.",
+    ),
+)
+def task_meeting(ctx: typer.Context, task_id: Annotated[str | None, typer.Argument()] = None):
+    typer.echo(bridge(ctx).meeting_transcript(project_id(ctx), task_id)["markdown"])
 
 
 @task_app.command(

@@ -136,14 +136,14 @@ def test_clarification_response_rejects_blank_content():
 
 def test_meeting_mode_defaults_off(bridge):
     assert bridge.get_project_settings("demo")["meeting_mode"] == {
-        "enabled": False, "min_rounds": 0, "max_rounds": 5,
+        "enabled": False, "min_rounds": 0, "max_rounds": 5, "escalation": "ask_user",
     }
 
 
 def test_configure_meeting_mode_validates_bounds(bridge):
     bridge.configure_meeting_mode("demo", True, 1, 3)
     assert bridge.get_project_settings("demo")["meeting_mode"] == {
-        "enabled": True, "min_rounds": 1, "max_rounds": 3,
+        "enabled": True, "min_rounds": 1, "max_rounds": 3, "escalation": "ask_user",
     }
     with pytest.raises(BridgeError, match="min_rounds <= max_rounds"):
         bridge.configure_meeting_mode("demo", True, 3, 1)
@@ -157,8 +157,18 @@ def test_configure_meeting_mode_partial_update_keeps_existing_rounds(bridge):
     bridge.configure_meeting_mode("demo", True, 2, 4)
     bridge.configure_meeting_mode("demo", False)
     assert bridge.get_project_settings("demo")["meeting_mode"] == {
-        "enabled": False, "min_rounds": 2, "max_rounds": 4,
+        "enabled": False, "min_rounds": 2, "max_rounds": 4, "escalation": "ask_user",
     }
+
+
+def test_configure_meeting_mode_escalation_validates_and_is_preserved(bridge):
+    bridge.configure_meeting_mode("demo", True, escalation="auto_pm")
+    assert bridge.get_project_settings("demo")["meeting_mode"]["escalation"] == "auto_pm"
+    # Omitting escalation on a later call keeps the previously configured value.
+    bridge.configure_meeting_mode("demo", True, min_rounds=1)
+    assert bridge.get_project_settings("demo")["meeting_mode"]["escalation"] == "auto_pm"
+    with pytest.raises(BridgeError, match="escalation"):
+        bridge.configure_meeting_mode("demo", True, escalation="auto_decide")
 
 
 # --- Meeting Mode off: zero behavior change ----------------------------------
@@ -175,6 +185,8 @@ def test_meeting_mode_off_dispatches_real_implementation_immediately(bridge, hum
     brief = bridge.get_task_status("demo", task_id)["brief"]
     assert brief["clarification"]["enabled"] is False
     assert brief["clarification"]["rounds_used"] == 0
+    assert brief["clarification"]["triggered"] is False
+    assert brief["clarification"]["gate"] is None
 
 
 # --- no_blocking_question: proceeds straight to implementation --------------
@@ -191,6 +203,16 @@ def test_no_blocking_question_skips_straight_to_implementation(bridge, human):
     brief = bridge.get_task_status("demo", task_id)["brief"]
     assert brief["clarification"]["rounds_used"] == 0
     assert brief["clarification"]["current_question"] is None
+    # no_blocking_question never inserts a meeting_clarifications row, so the gate
+    # never "actually fired" even though Meeting Mode is enabled for the project.
+    assert brief["clarification"]["triggered"] is False
+    # ...but the check itself visibly ran and found nothing to ask, so "checked, no
+    # question" is distinguishable from "Meeting Mode never ran".
+    gate = brief["clarification"]["gate"]
+    assert gate["status"] == "SUCCEEDED"
+    assert gate["outcome"] == "no_blocking_question"
+    assert gate["rationale"]
+    assert bridge.task_handoff("demo", task_id)["clarification"]["gate"] == gate
 
     # A successful no-question gate is durable. Re-deriving the next SD/RD dispatch
     # must now choose the writable AgentReport path rather than endlessly asking the
@@ -214,6 +236,11 @@ def test_blocking_question_answered_directly_resolves_the_round(bridge, human, r
     row = clarification_row(bridge, task_id)
     assert row["status"] == "AWAITING_SA"
     assert row["question"]
+    # A real blocking question was asked: the gate has already "actually fired," even
+    # before SA answers it.
+    assert bridge.get_task_status("demo", task_id)["brief"]["clarification"]["triggered"] is True
+    gate = bridge.get_task_status("demo", task_id)["brief"]["clarification"]["gate"]
+    assert gate["outcome"] == "question_asked"
 
     dispatch_and_run(
         bridge, task_id, "SA", report_schema="clarification_response", fake_scenario=response_type
@@ -226,6 +253,7 @@ def test_blocking_question_answered_directly_resolves_the_round(bridge, human, r
     brief = bridge.get_task_status("demo", task_id)["brief"]
     assert brief["clarification"]["rounds_used"] == 1
     assert brief["clarification"]["current_question"] is None
+    assert brief["clarification"]["triggered"] is True
     assert brief["waiting_on"] not in {"PM_CLARIFICATION_DECISION"}
 
 
@@ -244,8 +272,25 @@ def test_pm_decision_required_escalates_and_blocks(bridge, human):
     assert bridge.task("demo", task_id)["state"] == "AWAITING_PM_DECISION"
     brief = bridge.get_task_status("demo", task_id)["brief"]
     assert brief["waiting_on"] == "PM_CLARIFICATION_DECISION"
+    assert brief["clarification"]["triggered"] is True
     pending = brief["clarification"]["pending_pm_decision"]
     assert pending["sa_recommendation"] == "Needs PM input."
+
+    # task_handoff (what wait_for_task/the main ChatGPT loop actually sees) carries
+    # the exact same clarification block get_task_status's brief does.
+    handoff = bridge.task_handoff("demo", task_id)
+    assert handoff["clarification"] == brief["clarification"]
+    # Default escalation ("ask_user"): this is a genuine stop requiring the real
+    # human's decision, and the next_action must say so, never silently decide for them.
+    assert "ask-user" in handoff["next_action"]
+    assert "不可由你自行判斷" in handoff["next_action"]
+
+    bridge.configure_meeting_mode("demo", True, escalation="auto_pm")
+    auto_handoff = bridge.task_handoff("demo", task_id)
+    assert auto_handoff["clarification"]["escalation"] == "auto_pm"
+    assert "auto-pm" in auto_handoff["next_action"]
+    assert "可直接依自己的判斷決定" in auto_handoff["next_action"]
+    assert auto_handoff["next_action"] != handoff["next_action"]
 
     with pytest.raises(BridgeError, match="Decision content is required"):
         bridge.resolve_clarification("demo", task_id, "")
@@ -285,7 +330,7 @@ def test_max_rounds_forces_implementation_without_asking_again(bridge, human):
     assert report_schema_of(bridge, next_execution["execution_id"]) == "agent_report"
 
 
-# --- min_rounds is advisory only: never blocks NO_BLOCKING_QUESTION ---------
+# --- min_rounds never deadlocks: a declined check still proceeds --------------
 
 
 def test_min_rounds_never_blocks_no_blocking_question(bridge, human):
@@ -356,3 +401,129 @@ def test_gate_never_retriggers_after_a_review_requested_revision(bridge, human):
     revise_patch = pending_patch(bridge, review_execution)
     result = bridge.advance_project("demo", revise_patch, adapter="fake", fake_scenario="success")
     assert report_schema_of(bridge, result["next_execution"]["execution_id"]) == "agent_report"
+
+
+# --- meeting_mode_notice: a ready-to-quote line inside every handoff/wait result ---
+
+
+def test_notice_is_absent_when_meeting_mode_is_off(bridge, human):
+    task_id, _ = start_task(bridge)
+    assert bridge.task_handoff("demo", task_id)["meeting_mode_notice"] is None
+    assert bridge.wait_for_task("demo", task_id, 0)["meeting_mode_notice"] is None
+
+
+def test_notice_says_enabled_before_the_gate_has_run(bridge, human):
+    bridge.configure_meeting_mode("demo", True, 1, 3)
+    task_id, _ = start_task(bridge)
+    notice = bridge.task_handoff("demo", task_id)["meeting_mode_notice"]
+    assert "Meeting Mode 已啟用" in notice["text"]
+    assert "你決定" in notice["text"]
+    assert "first line" in notice["rule"]
+
+
+def test_notice_reports_a_no_question_check_with_rationale(bridge, human):
+    bridge.configure_meeting_mode("demo", True, 1, 3)
+    task_id, sa = start_task(bridge)
+    advance_after_sa(bridge, task_id, sa, fake_scenario="no_blocking_question")
+    waited = bridge.wait_for_task("demo", task_id, 0)
+    text = waited["meeting_mode_notice"]["text"]
+    assert "沒有要問的" in text
+    assert "\n" not in text and len(text) < 200  # one short line
+    assert waited["handoff"]["meeting_mode_notice"]["text"] == text
+
+
+def test_notice_summarizes_the_sa_sd_exchange_once_triggered(bridge, human):
+    bridge.configure_meeting_mode("demo", True, 0, 5)
+    task_id, sa = start_task(bridge)
+    advance_after_sa(bridge, task_id, sa, fake_scenario="ask_question")
+    dispatch_and_run(
+        bridge, task_id, "SA", report_schema="clarification_response",
+        fake_scenario="pm_decision_required", clarification_text="Needs PM input.",
+    )
+    text = bridge.task_handoff("demo", task_id)["meeting_mode_notice"]["text"]
+    assert "Meeting Mode 已觸發" in text
+    assert "SD/RD 問" in text
+    assert "Needs PM input." in text
+
+
+# --- min_rounds is enforced: SD/RD owes rounds until it has asked that many ---
+
+
+def test_min_rounds_requires_another_round_until_met(bridge, human):
+    bridge.configure_meeting_mode("demo", True, 2, 5)
+    task_id, sa = start_task(bridge)
+    first = advance_after_sa(bridge, task_id, sa, fake_scenario="ask_question")
+    instruction = bridge.store.one(
+        "SELECT instruction FROM agent_executions WHERE id=?", (first,)
+    )["instruction"]
+    assert "MUST raise exactly one question" in instruction
+    dispatch_and_run(
+        bridge, task_id, "SA", report_schema="clarification_response", fake_scenario="confirmed"
+    )
+
+    # 1 of 2 required rounds done: the next SD/RD dispatch is another read-only ask.
+    second = bridge._start_implementation_or_clarification("demo", task_id, "fake", "ask_question")
+    assert report_schema_of(bridge, second["execution_id"]) == "clarification_request"
+    run_execution(bridge, second["execution_id"])
+    dispatch_and_run(
+        bridge, task_id, "SA", report_schema="clarification_response", fake_scenario="confirmed"
+    )
+
+    # 2 of 2 done: now (and only now) the writable implementation follows.
+    third = bridge._start_implementation_or_clarification("demo", task_id, "fake", "success")
+    assert report_schema_of(bridge, third["execution_id"]) == "agent_report"
+    assert bridge.get_task_status("demo", task_id)["brief"]["clarification"]["rounds_used"] == 2
+
+
+def test_min_rounds_unmet_is_reported_when_sd_rd_still_declines(bridge, human):
+    bridge.configure_meeting_mode("demo", True, 2, 5)
+    task_id, sa = start_task(bridge)
+    advance_after_sa(bridge, task_id, sa, fake_scenario="no_blocking_question")
+    clarification = bridge.get_task_status("demo", task_id)["brief"]["clarification"]
+    assert clarification["gate"]["min_rounds_unmet"] is True
+    assert "min_rounds" in bridge.task_handoff("demo", task_id)["meeting_mode_notice"]["text"]
+    # A declined check is final: the workflow proceeds to real implementation.
+    nxt = bridge._start_implementation_or_clarification("demo", task_id, "fake", "success")
+    assert report_schema_of(bridge, nxt["execution_id"]) == "agent_report"
+
+
+def test_meeting_transcript_is_complete_and_unclipped(bridge, human):
+    bridge.configure_meeting_mode("demo", True, 0, 5)
+    task_id, sa = start_task(bridge)
+    advance_after_sa(bridge, task_id, sa, fake_scenario="ask_question")
+    dispatch_and_run(
+        bridge, task_id, "SA", report_schema="clarification_response",
+        fake_scenario="recommendation", clarification_text="X" * 500,
+    )
+    transcript = bridge.meeting_transcript("demo", task_id)
+    assert "X" * 500 in transcript["markdown"]  # never clipped, unlike the notice
+    assert "SD/RD →" in transcript["markdown"] and "SA (recommendation) →" in transcript["markdown"]
+    assert "get_meeting_transcript" in bridge.task_handoff("demo", task_id)["meeting_mode_notice"]["text"]
+
+
+# --- a direct dispatch_agent for SD/RD cannot skip the gate ------------------
+
+
+def test_direct_dispatch_agent_for_sd_rd_runs_the_owed_gate_first(bridge, human):
+    bridge.configure_meeting_mode("demo", True, 2, 3)
+    task_id, sa = start_task(bridge)
+    advance_after_sa(bridge, task_id, sa, fake_scenario="ask_question")
+    dispatch_and_run(
+        bridge, task_id, "SA", report_schema="clarification_response", fake_scenario="confirmed"
+    )
+    # 1 of 2 required rounds is done. A PM that bypasses advance_project and calls
+    # dispatch_agent for SD/RD directly must still get the owed check, not real code.
+    result = bridge.dispatch_agent(
+        "demo", task_id, "auto", "SD/RD", bridge.latest("demo")["version"], "Implement it",
+        adapter="fake", fake_scenario="success",
+    )
+    assert result["meeting_mode_redirect"]
+    assert report_schema_of(bridge, result["execution_id"]) == "clarification_request"
+
+
+def test_direct_dispatch_agent_is_untouched_when_meeting_mode_is_off(bridge, human):
+    task_id, sa = start_task(bridge)
+    advance_after_sa(bridge, task_id, sa, fake_scenario="success")
+    # Normal path: no redirect key, plain implementation dispatch semantics unchanged.
+    task = bridge.task("demo", task_id)
+    assert task["state"] in {"AWAITING_PM_REVIEW", "IMPLEMENTING"}

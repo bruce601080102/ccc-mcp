@@ -325,6 +325,29 @@ def test_config_profile_cli_round_trip(bridge, monkeypatch):
     assert bridge.public_project_settings("demo")["profile"] == "best-model"
 
 
+def test_config_meeting_mode_cli_escalation_round_trip(bridge):
+    runner = CliRunner()
+    prefix = ["--home", str(bridge.home), "--project", "demo"]
+    result = runner.invoke(
+        app,
+        prefix + [
+            "config", "meeting-mode", "on",
+            "--min-rounds", "1", "--max-rounds", "3", "--escalation", "auto-pm",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["meeting_mode"] == {
+        "enabled": True, "min_rounds": 1, "max_rounds": 3, "escalation": "auto_pm",
+    }
+    assert bridge.get_project_settings("demo")["meeting_mode"]["escalation"] == "auto_pm"
+
+    rejected = runner.invoke(
+        app, prefix + ["config", "meeting-mode", "on", "--escalation", "auto_pm"]
+    )
+    assert rejected.exit_code != 0
+
+
 def test_create_project_with_profile_applies_it_in_one_step(bridge, tmp_path):
     created = bridge.create_project("fresh", tmp_path / "fresh", profile="chatgpt-only")
     assert created["profile"] == "chatgpt-only"

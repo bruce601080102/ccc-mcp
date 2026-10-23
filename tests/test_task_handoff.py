@@ -63,6 +63,24 @@ def test_handoff_for_sa_includes_a_paste_ready_readonly_prompt(bridge, human):
     assert handoff["next_action"]
 
 
+def test_handoff_always_reports_meeting_mode_clarification_state(bridge, human):
+    """The main ChatGPT loop drives off task_handoff/wait_for_task, never a second
+    get_task_status call — so Meeting Mode's state (whether it is even configured,
+    and whether it has actually triggered a real question for this task) must be
+    visible here too, matching get_task_status's brief.clarification exactly, even
+    when Meeting Mode is off."""
+    task_id, sa_execution = chatgpt_only_task(bridge)
+
+    handoff = bridge.task_handoff("demo", task_id)
+    brief = bridge.get_task_status("demo", task_id)["brief"]
+
+    assert handoff["clarification"] == brief["clarification"]
+    assert handoff["clarification"]["enabled"] is False
+    assert handoff["clarification"]["triggered"] is False
+    assert handoff["clarification"]["escalation"] == "ask_user"
+    assert handoff["clarification"]["history"] == []
+
+
 def test_handoff_for_sd_rd_includes_write_task_file_step(bridge, human):
     task_id, sa_execution = chatgpt_only_task(bridge)
     bridge.submit_agent_report("demo", sa_execution, report(context_updates=["SA analysis"]))

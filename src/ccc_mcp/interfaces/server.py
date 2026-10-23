@@ -127,6 +127,29 @@ def create_server(
         "continue. Stop only at COMPLETED, a genuine failure/blocker, or a clarification/approval that "
         "requires information or authority from the user. Status-only user requests are the exception: "
         "report the requested snapshot without advancing it. "
+        "MEETING MODE NOTICE (mandatory): whenever a start_project_request/create_task/advance_project/"
+        "dispatch_agent/wait_for_task result has a non-null meeting_mode_notice, the very first line of "
+        "your reply to the user — including the final completion report — must be meeting_mode_notice.text "
+        "verbatim, before any other content. "
+        "MEETING MODE VISIBILITY: every wait/dispatch result's workflow.handoff.clarification reports "
+        "Meeting Mode's state. When clarification.enabled is true, the user must always be able to see "
+        "that it ran: clarification.gate is SD/RD's read-only pre-implementation check — the first "
+        "time it is non-null, tell the user Meeting Mode is active and what the check found, even when "
+        "gate.outcome is no_blocking_question (state that SD/RD had nothing to ask and quote the "
+        "gate.rationale in one sentence); never skip this just because no question was raised. "
+        "clarification.triggered is true only once SD/RD actually asked a real blocking question — "
+        "then also give a short, plain-language summary of the question and SA's answer from "
+        "clarification.history before continuing. Your final report for any task with "
+        "clarification.enabled must include one Meeting Mode line (checked / question asked / "
+        "not yet run). If waiting_on is PM_CLARIFICATION_DECISION, "
+        "check clarification.escalation first: \"ask_user\" is a hard, explicit exception to \"stop only "
+        "at...information or authority from the user\" above — even though you also act as PM elsewhere "
+        "in this loop, you must not decide this yourself; present clarification.pending_pm_decision's "
+        "question and SA's recommendation to the real user in chat and wait for their actual reply "
+        "before calling resolve_clarification (workflow.must_continue_in_this_turn is false for this "
+        "case, confirming it is a genuine stop). \"auto_pm\" is the opposite: decide immediately using "
+        "your own judgement as PM, call resolve_clarification in this same turn "
+        "(must_continue_in_this_turn is true), and then tell the user what you decided and why. "
         "When project_access.mode=read-write, that durable project authorization also authorizes plans "
         "and successful reviewed rounds; never ask for per-plan approve or task accept. "
         "Do not report completion unless the implementation execution succeeded and context_sync has no pending reports. "
@@ -211,9 +234,20 @@ def create_server(
         """Wait for background Agent work to settle. If timed_out or
         must_continue_in_this_turn is true, do not end the chat turn: wait again or
         perform the returned PM/ChatGPT handoff. Returns early for terminal states,
-        failures, and decisions that genuinely require user input."""
+        failures, and decisions that genuinely require user input.
+            If the result has a non-null meeting_mode_notice, your reply to the user MUST
+            begin with meeting_mode_notice.text verbatim as its first line."""
         resolved = task_id or await call(bridge.project_workstream_task, project_id)
         return await call(bridge.wait_for_task, project_id, resolved, timeout_seconds)
+
+    @server.tool(annotations=readonly)
+    async def get_meeting_transcript(
+        project_id: str, task_id: str | None = None
+    ) -> dict[str, Any]:
+        """Full, unclipped Meeting Mode record (pre-implementation check, each round's
+        SD/RD question, SA answer, PM decision). Call this and show `markdown` to the
+        user whenever they ask what SA and SD/RD discussed."""
+        return await call(bridge.meeting_transcript, project_id, task_id)
 
     @server.tool(annotations=readonly)
     async def get_task_result(project_id: str, task_id: str | None = None) -> list[dict[str, Any]]:
@@ -313,12 +347,15 @@ def create_server(
             """Begin a NEW authorized project change, dispatch SA, and wait for progress.
             Never use this to continue, retry, recover, or inspect an existing task;
             doing so starts a new round and invalidates its prior plan approval. The
-            caller must continue in this turn whenever workflow says so."""
+            caller must continue in this turn whenever workflow says so.
+            If the result has a non-null meeting_mode_notice, your reply to the user MUST
+            begin with meeting_mode_notice.text verbatim as its first line."""
             result = await call(bridge.start_project_request, project_id, requirement, acceptance)
             task_id = result["workstream"]["id"]
             result["workflow"] = await call(
                 bridge.wait_for_task, project_id, task_id, wait_seconds
             )
+            result["meeting_mode_notice"] = result["workflow"]["meeting_mode_notice"]
             return result
 
         @server.tool(annotations=mutation)
@@ -330,7 +367,9 @@ def create_server(
             wait_seconds: int = 50,
         ) -> dict[str, Any]:
             """Compatibility alias: start the project request, dispatch SA, and wait.
-            Do not call dispatch_agent again; continue according to workflow."""
+            Do not call dispatch_agent again; continue according to workflow.
+            If the result has a non-null meeting_mode_notice, your reply to the user MUST
+            begin with meeting_mode_notice.text verbatim as its first line."""
             result = await call(bridge.start_project_request, project_id, requirement, acceptance)
             result["id"] = result["workstream"]["id"]
             result["task_id"] = result["workstream"]["id"]
@@ -343,6 +382,7 @@ def create_server(
             result["workflow"] = await call(
                 bridge.wait_for_task, project_id, result["task_id"], wait_seconds
             )
+            result["meeting_mode_notice"] = result["workflow"]["meeting_mode_notice"]
             return result
 
         @server.tool(annotations=mutation)
@@ -353,7 +393,9 @@ def create_server(
             wait_seconds: int = 50,
         ) -> dict[str, Any]:
             """PM refines one completed Agent result; backend starts the next role and
-            waits for progress. Continue this turn whenever workflow says so."""
+            waits for progress. Continue this turn whenever workflow says so.
+            If the result has a non-null meeting_mode_notice, your reply to the user MUST
+            begin with meeting_mode_notice.text verbatim as its first line."""
             result = await call(
                 bridge.advance_project, project_id, patch.model_dump(), plan_content
             )
@@ -365,6 +407,7 @@ def create_server(
             result["workflow"] = await call(
                 bridge.wait_for_task, project_id, task_id, wait_seconds
             )
+            result["meeting_mode_notice"] = result["workflow"]["meeting_mode_notice"]
             return result
 
         @server.tool(annotations=mutation)
@@ -377,7 +420,9 @@ def create_server(
             wait_seconds: int = 50,
         ) -> dict[str, Any]:
             """Dispatch the configured provider with real execution and wait for
-            progress; no simulated Agent option."""
+            progress; no simulated Agent option.
+            If the result has a non-null meeting_mode_notice, your reply to the user MUST
+            begin with meeting_mode_notice.text verbatim as its first line."""
             result = await call(
                 bridge.dispatch_agent,
                 project_id,
@@ -390,6 +435,7 @@ def create_server(
             result["workflow"] = await call(
                 bridge.wait_for_task, project_id, task_id, wait_seconds
             )
+            result["meeting_mode_notice"] = result["workflow"]["meeting_mode_notice"]
             return result
 
         @server.tool(annotations=mutation)
@@ -464,8 +510,12 @@ def create_server(
             """PM resolves a Meeting Mode clarification SA escalated with
             pm_decision_required (get_task_status.brief.waiting_on == PM_CLARIFICATION_DECISION;
             brief.clarification.pending_pm_decision has the question and SA's recommendation).
-            Dispatches the next clarification round or the real implementation automatically;
-            never call dispatch_agent or advance_project for this instead."""
+            Check brief.clarification.escalation first: "ask_user" means the real human
+            user must decide — present the question and SA's recommendation in chat and
+            wait for their actual reply before calling this; "auto_pm" means the PM
+            (you) may decide immediately using your own judgement. Dispatches the next
+            clarification round or the real implementation automatically; never call
+            dispatch_agent or advance_project for this instead."""
             return await call(bridge.resolve_clarification, project_id, task_id, decision)
 
     return server

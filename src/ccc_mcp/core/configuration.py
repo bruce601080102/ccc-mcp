@@ -27,7 +27,19 @@ PROFILE_NAMES = ("chatgpt-only", "best-model")
 # how many rounds one task's single pre-implementation gate can ever use, independent
 # of what an operator configures as max_rounds.
 MEETING_MODE_HARD_CAP = 5
-DEFAULT_MEETING_MODE = {"enabled": False, "min_rounds": 0, "max_rounds": MEETING_MODE_HARD_CAP}
+# Who decides when SA escalates a clarification round with pm_decision_required:
+# "ask_user" (default) means ChatGPT must put the question and SA's recommendation in
+# front of the real end user and wait for their actual reply before resolving it;
+# "auto_pm" lets ChatGPT decide immediately using its own judgement as PM. This is
+# advisory (see server.py's instructions) — ccc-mcp has no way to verify from the
+# backend which one actually happened.
+MEETING_MODE_ESCALATIONS = {"ask_user", "auto_pm"}
+DEFAULT_MEETING_MODE = {
+    "enabled": False,
+    "min_rounds": 0,
+    "max_rounds": MEETING_MODE_HARD_CAP,
+    "escalation": "ask_user",
+}
 
 
 def _detect_available_native_providers():
@@ -147,15 +159,19 @@ class ConfigurationHub:
 
     @staticmethod
     def _validated_meeting_mode(value):
-        """{"enabled": bool, "min_rounds": int, "max_rounds": int}. min_rounds is
-        display-only (see docs/en/4-workflow.md) — the system never refuses
-        NO_BLOCKING_QUESTION because of it; only the 0 <= min <= max <= 5 shape is
-        enforced here. 5 is the hard system cap, never configurable past that."""
+        """{"enabled": bool, "min_rounds": int, "max_rounds": int, "escalation": str}.
+        min_rounds is enforced through SD/RD's prompt (see docs/en/4-workflow.md): until
+        that many rounds are done SD/RD is told it MUST ask. If it still declines, the
+        workflow proceeds and the gate reports min_rounds_unmet; only the 0 <= min <=
+        max <= 5 shape is validated here. 5 is the hard system cap, never configurable past that.
+        escalation picks who decides a pm_decision_required round: "ask_user" (default)
+        or "auto_pm"; see MEETING_MODE_ESCALATIONS."""
         if not isinstance(value, dict):
             raise BridgeError("meeting_mode must be an object")
         enabled = value.get("enabled", False)
         min_rounds = value.get("min_rounds", 0)
         max_rounds = value.get("max_rounds", MEETING_MODE_HARD_CAP)
+        escalation = value.get("escalation", "ask_user")
         if not isinstance(enabled, bool):
             raise BridgeError("meeting_mode.enabled must be a boolean")
         for name, number in (("min_rounds", min_rounds), ("max_rounds", max_rounds)):
@@ -165,7 +181,16 @@ class ConfigurationHub:
             raise BridgeError(
                 f"meeting_mode requires 0 <= min_rounds <= max_rounds <= {MEETING_MODE_HARD_CAP}"
             )
-        return {"enabled": enabled, "min_rounds": min_rounds, "max_rounds": max_rounds}
+        if escalation not in MEETING_MODE_ESCALATIONS:
+            raise BridgeError(
+                f"meeting_mode.escalation must be one of {sorted(MEETING_MODE_ESCALATIONS)}"
+            )
+        return {
+            "enabled": enabled,
+            "min_rounds": min_rounds,
+            "max_rounds": max_rounds,
+            "escalation": escalation,
+        }
 
     @staticmethod
     def _validated_test_command(command):
@@ -326,7 +351,9 @@ class ConfigurationHub:
             "worktree_dir": settings.get("worktree_dir", str(self.home / "worktrees")),
             "test_command": settings.get("test_command"),
             "context_token_budget": settings.get("context_token_budget"),
-            "meeting_mode": settings.get("meeting_mode", DEFAULT_MEETING_MODE),
+            # Merge (not replace) so a project saved before `escalation` existed still
+            # reads a complete dict instead of KeyError-ing downstream.
+            "meeting_mode": {**DEFAULT_MEETING_MODE, **settings.get("meeting_mode", {})},
         }
 
     def _save_settings(self, project_id, settings):
@@ -588,11 +615,13 @@ class ConfigurationHub:
             settings["context_token_budget"] = validated
             return self._save_settings(project_id, settings)
 
-    def configure_meeting_mode(self, project_id, enabled, min_rounds=None, max_rounds=None):
+    def configure_meeting_mode(
+        self, project_id, enabled, min_rounds=None, max_rounds=None, escalation=None
+    ):
         """Default off, preserving today's behavior unless explicitly enabled. Omitted
-        min_rounds/max_rounds keep whatever is already configured (or the defaults) —
-        only enabled is required so `config meeting-mode off` never has to also repeat
-        the round bounds."""
+        min_rounds/max_rounds/escalation keep whatever is already configured (or the
+        defaults) — only enabled is required so `config meeting-mode off` never has to
+        also repeat the round bounds or escalation policy."""
         with self.lock(project_id):
             settings = self.get_project_settings(project_id)
             current = settings.get("meeting_mode", DEFAULT_MEETING_MODE)
@@ -600,6 +629,9 @@ class ConfigurationHub:
                 "enabled": enabled,
                 "min_rounds": current["min_rounds"] if min_rounds is None else min_rounds,
                 "max_rounds": current["max_rounds"] if max_rounds is None else max_rounds,
+                "escalation": (
+                    current.get("escalation", "ask_user") if escalation is None else escalation
+                ),
             }
             settings["meeting_mode"] = self._validated_meeting_mode(updated)
             return self._save_settings(project_id, settings)

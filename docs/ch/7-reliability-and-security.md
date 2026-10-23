@@ -200,9 +200,11 @@ ccc-mcp project delete demo-app   # 互動確認，需輸入 DELETE demo-app
 
 - **結構性唯讀，不是口頭約定。** SD/RD 的「先問清楚」其實是獨立的一次派工（role 仍是 `SD/RD`，但要求的是 `ClarificationRequest` 而不是 `AgentReport`）——CLI adapter 本身的 sandbox 旗標（`codex --sandbox read-only`／Claude 的 `plan` 權限模式）就是從這個訊號單獨決定的，worker 也不會替它準備 worktree。跟 SA／REVIEW 一直以來的唯讀保證走同一條路，不是靠提示詞拜託 Agent 不要寫檔。
 - **`rounds_used` 不可能被重置。** 它從來不是一個獨立保存的計數器，永遠是對不可變的 `meeting_clarifications` 表做 `COUNT(*)`（只算 `RESOLVED` 的輪次）——跟這份 schema 裡其他地方（Context 版本、專案授權模式）都是從自己的 append-only 表即時算出來的做法完全一致。不管中途怎麼 crash 或 retry，都不可能因此多拿到超過設定的 `max_rounds`（系統硬上限 5）的輪次。
-- **`min_rounds` 純粹是顯示用途。** 從不會因為還沒達到 `min_rounds` 就擋住 SD/RD 回報 `no_blocking_question` 直接進入實作；它只會出現在 `task status`／`task show` 裡，讓操作者知道自己原本設定的期待值。
+- **`min_rounds` 靠提示詞強制，不會讓任務失敗。** 輪數達標前，SD/RD 的檢查指令會要求「必須提問」；若它仍回報 `no_blocking_question`，流程會繼續（不會卡死），並由 `clarification.gate.min_rounds_unmet` 與 Meeting Mode 通知標示。
 
 這個關卡每個任務只會觸發一次，就在 SD/RD 第一次真正動工派工之前；一旦真正開始實作過，之後即使 REVIEW 要求修訂、重新派工 SD/RD，也不會再觸發。升級給 PM 決策（`pm_decision_required`）沿用跟一般 `advance_project` 完全相同的 `pending_dispatch` 原子性與恢復機制——`resolve_clarification` 的決策內容跟它接下來要派工的指標會寫在同一個交易裡，萬一在那之後立刻 crash，`resume_pending_dispatch` 會跟處理其他任何被中斷的派工一樣正確恢復它。
+
+`meeting_mode.escalation`（預設 `ask_user`，或 `auto_pm`）決定 `pm_decision_required` 這一輪該由誰決定；`clarification.triggered` 則告訴操作者這個關卡是否真的問出過一個問題。但跟上面三個保證不同，這兩個都不是程式碼強制執行的——ccc-mcp 沒有辦法從後端驗證已連線的 ChatGPT 對話是否真的詢問了真人並等待其回覆，還是自己直接決定了；`escalation` 只會改變 `task_handoff` 回傳文字與 MCP 伺服器給 ChatGPT 的指令內容（見 `interfaces/server.py`）。請把它當作一個強力的操作慣例，而不是像結構性唯讀或 `rounds_used` 那樣 ccc-mcp 能夠強制執行的邊界。
 
 ## 測試涵蓋
 
@@ -213,7 +215,7 @@ ccc-mcp project delete demo-app   # 互動確認，需輸入 DELETE demo-app
 - [tests/test_test_evidence.py](../tests/test_test_evidence.py)：`project authorize` 預設自動跑 `pytest -q`、`no_tests_collected` 的正確回報。
 - [tests/test_project_root_recovery.py](../tests/test_project_root_recovery.py)：根目錄被手動刪除後自動重建並重新 `git init`、修復是可重複呼叫且不重複記錄、既有設定（例如 chatgpt-only profile）在修復後保持不變、CLI `config show` 的真實重現、符號連結竄改仍會被拒絕而不是被修復。
 - [tests/test_project_deletion.py](../tests/test_project_deletion.py)：`project delete` 需要互動確認、註銷後從 `project list` 消失且所有操作一律拒絕、ID 永久不能重新註冊（`project create`／`project add` 兩條路徑都擋）、`read-write` 授權與執行中任務分別擋下註銷、`project_deletions` 本身的 append-only 保證、CLI 端到端重現。
-- [tests/test_meeting_mode.py](../tests/test_meeting_mode.py)：設定驗證（`0<=min_rounds<=max_rounds<=5`）、關閉時行為完全不變、`no_blocking_question` 直接進入實作且輪次不增加、`confirmed`／`recommendation` 兩種直接回覆都正確結束一輪、`pm_decision_required` 升級並由 `resolve_clarification` 接手、`max_rounds` 用盡後強制走實作、`min_rounds` 設定但仍可直接 `no_blocking_question`（證明純顯示用途）、澄清派工從不建立 worktree（結構性唯讀）、ChatGPT 角色目前會被明確拒絕、REVIEW 要求修訂後的重新派工不會再觸發澄清關卡。
+- [tests/test_meeting_mode.py](../tests/test_meeting_mode.py)：設定驗證（`0<=min_rounds<=max_rounds<=5`）、關閉時行為完全不變、`no_blocking_question` 直接進入實作且輪次不增加、`confirmed`／`recommendation` 兩種直接回覆都正確結束一輪、`pm_decision_required` 升級並由 `resolve_clarification` 接手、`max_rounds` 用盡後強制走實作、`min_rounds` 未達標前必須再問一輪、SD/RD 仍拒絕時回報 `min_rounds_unmet` 但不卡流程、澄清派工從不建立 worktree（結構性唯讀）、ChatGPT 角色目前會被明確拒絕、REVIEW 要求修訂後的重新派工不會再觸發澄清關卡。
 - [tests/test_verification_evidence.py](../tests/test_verification_evidence.py)：`brief.verification` 的五種可分辨狀態（尚無報告／Agent 自稱完成／自稱需修訂、主機已驗證通過／失敗／沒收集到測試／尚未執行、REVIEW 因主機證據被退回跟 REVIEW 自己要求修訂是兩種不同旗標）、CLI `task show`／`task status` 的呈現。
 - [tests/test_task_handoff.py](../tests/test_task_handoff.py)：SA／SD-RD／REVIEW 三種角色的互動式提示詞內容、resume/PM 整理/背景執行等狀態重用既有欄位、CLI `task handoff` 的真實重現。
 - [tests/test_task_preflight.py](../tests/test_task_preflight.py)：分級 `checks[]`／`summary` 輸出與原始三項環境檢查並存、授權 blocker、五個角色 provider 是否可用且只有 `next_role` 缺失才算 blocker（其餘只到 warning，並隨任務進度換成下一個角色）、`next_role` 隨 SA→SD/RD→REVIEW 推進、任務完成後 `next_role` 為 null 且不再出現角色檢查、ChatGPT 角色缺 Tunnel 依是否為 next_role 分別是 blocker／warning、Tunnel 已安裝但無法確認連線仍只到 warning、`profile` 欄位對照 chatgpt-only／custom、worktree 模式下 `test_command.cwd` 一定是這個 task 自己的 worktree（即使還沒建立也不會被偷換成 project root）、只有 worktree 不存在時才會跟用來預覽依賴套件的 `inspection_path`（project root）不同、project 模式下兩者都是 project root、worktree 建立後兩者相同、執行中/中斷派工/PM 整理/本機核准四種工作流狀態、Skills 可讀性、Context 預算超額（重用 `build_handoff` 本身的計算）、`summary` 與 `checks` 數量一致，全程確認從不實際安裝、跑測試或動 Git。

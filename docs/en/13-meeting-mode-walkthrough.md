@@ -4,13 +4,17 @@ A reproducible procedure for verifying Meeting Mode's SD/RD<->SA clarification r
 
 **Scope limitation:** Meeting Mode's clarification exchange does not yet support the interactive ChatGPT role (see [reliability and security](7-reliability-and-security.md#meeting-mode)) — `dispatch_agent` refuses it outright with a clear error. This walkthrough therefore configures `SA` and `SD/RD` to a native CLI provider (Codex and/or Claude Code), not `chatgpt`; only PM stays ChatGPT, exactly as in the default best-model workflow. A future version may lift this limitation.
 
+## See a real run first
+
+A real ChatGPT conversation that ran this procedure against the `meeting-test` project: [shared conversation](https://chatgpt.com/share/6adb059b-3eb8-83e8-96f2-84965ea20c56). Use it to see what the connected ChatGPT shows while Meeting Mode runs before you try it yourself. What ChatGPT relays in chat can be incomplete, so read the full SA/SD exchange locally with `ccc-mcp --project <id> task meeting` (see [step 6](#6-read-the-full-clarification-record)).
+
 ## What counts as success
 
-- `config show` reports `meeting_mode.enabled: true` with the `min_rounds`/`max_rounds` you configured.
-- SD/RD's first dispatch for the task is a read-only clarification check — `task status`'s `brief.clarification.current_question` is populated and the task state is `AWAITING_SA_CLARIFICATION`, with no worktree/file write having happened yet.
+- `config show` reports `meeting_mode.enabled: true` with the `min_rounds`/`max_rounds`/`escalation` you configured.
+- SD/RD's first dispatch for the task is a read-only clarification check — `task status`'s `brief.clarification.current_question` is populated and the task state is `AWAITING_SA_CLARIFICATION`, with no worktree/file write having happened yet. `brief.clarification.triggered` flips to `true` at this point too — this is the one field that tells you the gate actually fired, as opposed to `enabled: true` just meaning it's configured.
 - SA answers the question (`confirmed`, `recommendation`, or escalates with `pm_decision_required`); `brief.clarification.rounds_used` increments only once the round is actually resolved.
 - The real, writable SD/RD implementation only ever runs after that round resolves (or after `no_blocking_question`/`max_rounds` skips straight to it).
-- `task status`/`task show` show the full `clarification.history` for the task.
+- `task status`/`task show` show the full `clarification.history` for the task; the same block is also in `task handoff`'s output, which is what the connected ChatGPT conversation's `wait_for_task` loop actually sees on every iteration.
 
 ## 1. Create a project with Meeting Mode enabled
 
@@ -20,11 +24,11 @@ ccc-mcp project authorize meeting-mode-demo
 ccc-mcp --project meeting-mode-demo config role SA codex
 ccc-mcp --project meeting-mode-demo config role SD/RD claude
 ccc-mcp --project meeting-mode-demo config role REVIEW codex
-ccc-mcp --project meeting-mode-demo config meeting-mode on --min-rounds 1 --max-rounds 3
+ccc-mcp --project meeting-mode-demo config meeting-mode on --min-rounds 1 --max-rounds 3 --escalation ask-user
 ccc-mcp --project meeting-mode-demo config show
 ```
 
-Confirm `config show`'s `meeting_mode` reports `{"enabled": true, "min_rounds": 1, "max_rounds": 3}`.
+Confirm `config show`'s `meeting_mode` reports `{"enabled": true, "min_rounds": 1, "max_rounds": 3, "escalation": "ask_user"}`.
 
 ## 2. Connect ChatGPT and submit a deliberately underspecified request
 
@@ -49,13 +53,15 @@ Once SA's plan is approved and Meeting Mode's gate fires, `task status`'s `brief
     "enabled": true,
     "min_rounds": 1,
     "max_rounds": 3,
+    "escalation": "ask_user",
+    "triggered": true,
     "rounds_used": 0,
     "current_question": "..."
   }
 }
 ```
 
-If SD/RD instead reported `no_blocking_question`, `state` stays `IMPLEMENTING` and the real implementation dispatch has already started — `clarification.rounds_used` stays `0` and `current_question` is `null`; that is also a valid, successful run (min_rounds never blocks it).
+`clarification.triggered: true` is the signal that the gate actually fired this time — it is only ever `true` once a real blocking question exists, never merely because `enabled` is `true`. If SD/RD instead reported `no_blocking_question`, `state` stays `IMPLEMENTING`, the real implementation dispatch has already started, and `clarification.triggered` stays `false` (along with `rounds_used: 0` and `current_question: null`) — with `min_rounds` set that is flagged as `gate.min_rounds_unmet: true` rather than blocked.
 
 ## 4. SA answers; implementation proceeds automatically
 
@@ -69,11 +75,14 @@ until `brief.clarification.rounds_used` reflects a resolved round and `brief.rol
 
 ### If SA escalates with `pm_decision_required`
 
-`task status`'s `brief.waiting_on` becomes `PM_CLARIFICATION_DECISION`, and `brief.clarification.pending_pm_decision` carries the question and SA's recommendation. This is the one case that needs a PM action — ask the connected ChatGPT conversation to call `resolve_clarification` with a decision:
+`task status`'s `brief.waiting_on` becomes `PM_CLARIFICATION_DECISION`, and `brief.clarification.pending_pm_decision` carries the question and SA's recommendation. Who decides depends on `brief.clarification.escalation`:
 
-> Use ccc-mcp's resolve_clarification tool on this task with your decision, citing SA's recommendation above.
+- **`ask_user` (default).** This is a genuine stop requiring the real operator's decision — `task handoff`'s `next_action` says so explicitly, and `wait_for_task`'s `must_continue_in_this_turn` is `false` here, confirming ChatGPT should not decide this on its own. Ask the connected ChatGPT conversation to put the question and SA's recommendation in front of you and wait for your actual reply:
 
-`resolve_clarification` immediately dispatches the next round or the real implementation; no separate `advance_project` call is needed for this step.
+  > Use ccc-mcp's resolve_clarification tool on this task with your decision, citing SA's recommendation above.
+- **`auto_pm`.** ChatGPT may decide immediately using its own judgement as PM and call `resolve_clarification` in the same turn (`must_continue_in_this_turn` is `true`); it should still tell you what it decided and why afterward.
+
+Either way, `resolve_clarification` immediately dispatches the next round or the real implementation; no separate `advance_project` call is needed for this step.
 
 ## 5. Let REVIEW and host testing complete the task
 
@@ -82,6 +91,7 @@ From here the task proceeds exactly like any other: `task handoff`/`task status`
 ## 6. Read the full clarification record
 
 ```bash
+ccc-mcp --project meeting-mode-demo task meeting      # readable, unclipped SA/SD transcript
 ccc-mcp --project meeting-mode-demo task status
 ccc-mcp --project meeting-mode-demo task show
 ```

@@ -123,10 +123,14 @@ ccc-mcp context export --out session-handoff.txt
 ## 5a. Meeting Mode：SD/RD 動工前先問一輪（預設關閉）
 
 ```powershell
-ccc-mcp --project my-project config meeting-mode on --min-rounds 1 --max-rounds 3
+ccc-mcp --project my-project config meeting-mode on --min-rounds 1 --max-rounds 3 --escalation ask-user
 ```
 
-開啟後，PLAN-A 核准、SD/RD 第一次真正動工前會插入一輪最多 5 次來回的澄清對話：SD/RD 可以先提出剛好一個阻斷性問題（這個階段完全唯讀，不能寫檔），由 SA 以 `confirmed`、`recommendation` 或 `pm_decision_required` 回覆；只有 `pm_decision_required` 需要 PM 呼叫 `resolve_clarification` 做決策，其餘都自動接回 SD/RD。SD/RD 也可以直接回報 `no_blocking_question`，立即進入真正可寫檔的實作派工——`min_rounds` 只會出現在 `task status` 裡供參考，從不會因為沒達到就擋住這個直接實作的選項。輪次計數在重試、handoff、resume 之間永遠不會被重置，且這個澄清關卡每個任務只會觸發一次：之後若 REVIEW 要求修訂、重新派工 SD/RD，不會再問一次。詳見[可靠性與安全邊界](7-reliability-and-security.md)。
+開啟後，PLAN-A 核准、SD/RD 第一次真正動工前會插入一輪最多 5 次來回的澄清對話：SD/RD 可以先提出剛好一個阻斷性問題（這個階段完全唯讀，不能寫檔），由 SA 以 `confirmed`、`recommendation` 或 `pm_decision_required` 回覆。SD/RD 也可以直接回報 `no_blocking_question`，立即進入真正可寫檔的實作派工——但若設定了 `min_rounds`，在輪數達標前 SD/RD 會被要求「必須提問」，並接續下一輪；若 SD/RD 仍拒絕提問，流程不會卡死，`clarification.gate.min_rounds_unmet` 會標示未達標。輪次計數在重試、handoff、resume 之間永遠不會被重置，且這個澄清關卡每個任務只會觸發一次：之後若 REVIEW 要求修訂、重新派工 SD/RD，不會再問一次。
+
+`task status`/`task handoff` 的 `clarification.gate` 用來證明關卡有跑過：SD/RD 的唯讀實作前檢查派工之前是 `null`，之後會顯示 `status`、`outcome`（`question_asked` 或 `no_blocking_question`）與 SD/RD 自己的 `rationale`——所以「檢查過、沒有問題要問」和「Meeting Mode 根本沒跑」可以區分。`clarification.triggered` 只有在 SD/RD 真的問出一個阻斷性問題後才會是 `true`——光是 `meeting_mode.enabled` 為 `true` 並不算。每一次 `wait_for_task`/`start_project_request`/`advance_project`/`dispatch_agent` 的回應（`workflow.handoff.clarification`）都帶著這個欄位，所以已連線的 ChatGPT 對話應該在關卡真正觸發時主動告知操作者，並從 `clarification.history` 摘要 SA/SD 的來回內容，而不是等任務完成才提一句。
+
+`--escalation` 決定 SA/SD 討論未果（`pm_decision_required`）時由誰決定：`ask_user`（預設）要求 ChatGPT 把問題與 SA 的建議呈現給真人操作者，等待其在對話中的實際回覆後才能呼叫 `resolve_clarification`——此時 `workflow.must_continue_in_this_turn` 會是 `false`，確認這是真正需要停下來的情況。`auto_pm` 則允許 ChatGPT 在同一輪以 PM 身分立即自行判斷決定（`must_continue_in_this_turn` 為 `true`），之後仍應把決定內容與理由告知操作者。這項設定是透過指令引導、而非程式碼強制執行——ccc-mcp 無法從後端驗證「是否真的詢問了真人」——詳見[可靠性與安全邊界](7-reliability-and-security.md#meeting-mode)的完整保證範圍。
 
 ## 6. 全新 Session
 
