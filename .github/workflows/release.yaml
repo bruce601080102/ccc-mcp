@@ -1,18 +1,19 @@
 name: Release
 
 on:
-  push:
-    branches: [main]
-    tags: ["v*"]
-  pull_request:
   workflow_dispatch:
+    inputs:
+      version:
+        description: Release version without the v prefix (for example 0.1.1)
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
-  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+  group: release-${{ inputs.version }}
+  cancel-in-progress: false
 
 jobs:
   lint:
@@ -52,19 +53,24 @@ jobs:
     name: build sdist + wheel
     needs: [lint, test]
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - name: Tag must match the package version
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+      - name: Version must match the package
+        id: version
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
         run: |
           version=$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' src/ccc_mcp/__init__.py)
-          if [ "refs/tags/v${version}" != "${GITHUB_REF}" ]; then
-            echo "Tag ${GITHUB_REF#refs/tags/} does not match src/ccc_mcp/__init__.py version ${version}" >&2
+          if [ "${RELEASE_VERSION}" != "${version}" ]; then
+            echo "Requested version ${RELEASE_VERSION} does not match package version ${version}" >&2
             exit 1
           fi
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
       - run: python -m pip install build twine
       - run: python -m build
       - run: python -m twine check --strict dist/*
@@ -106,7 +112,6 @@ jobs:
   github-release:
     name: attach build to GitHub Release
     needs: [build, smoke-install]
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -118,12 +123,12 @@ jobs:
       - name: Create release with the sdist and wheel
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${GITHUB_REF_NAME}" dist/* --repo "${GITHUB_REPOSITORY}" --title "${GITHUB_REF_NAME}" --generate-notes
+          RELEASE_VERSION: ${{ needs.build.outputs.version }}
+        run: gh release create "v${RELEASE_VERSION}" dist/* --repo "${GITHUB_REPOSITORY}" --target "${GITHUB_SHA}" --title "v${RELEASE_VERSION}" --generate-notes
 
   publish:
     name: publish
-    needs: [build, smoke-install]
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [build, smoke-install, github-release]
     runs-on: ubuntu-latest
     environment:
       name: pypi
