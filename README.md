@@ -25,6 +25,7 @@ It is designed for people who use more than one AI coding tool and do not want a
 - Uses Codex and Claude Code through their native CLIs, or assigns every role to ChatGPT for a ChatGPT-only workflow.
 - Falls back only for recognised quota exhaustion, never for a normal install, login, or execution error.
 - Shares operator-installed `SKILL.md` guidance across all roles.
+- Ships a local web console (`ccc-mcp ui`) for managing projects, watching task progress, and editing settings without the CLI.
 
 ## Choose your mode
 
@@ -42,9 +43,12 @@ pip install ccc-mcp
 # Run this only when using Codex and/or Claude Code:
 ccc-mcp setup all
 
-ccc-mcp project create hello-demo
-ccc-mcp project authorize hello-demo
+ccc-mcp project create hello-demo --write
 ```
+
+`--write` creates the project and grants it continuous write authorization in the same step, with one local confirmation describing exactly what that means (ccc-mcp can write files under `hello-demo` and run its configured test command automatically before each review round). Omit `--write` to register a read-only project and grant write later with `ccc-mcp project authorize hello-demo` — that two-step form still works and is not going away, it is just no longer the only path. The same `--write` flag is available on `ccc-mcp project add <existing-folder>` for registering a folder you already have.
+
+Prefer a browser to a terminal? `ccc-mcp ui` starts a local web console (binds `127.0.0.1` only) with the same add/create/authorize/revoke/delete flow, a read-only task dashboard, and a settings editor — see [Web console](#web-console) below.
 
 For a ChatGPT-only workflow, omit `ccc-mcp setup all`, then apply the `chatgpt-only` profile after creating the project:
 
@@ -86,6 +90,20 @@ ccc-mcp --project hello-demo config show
 
 For the complete role and workflow model, see [the workflow guide](docs/en/4-workflow.md) or the [Traditional Chinese guide](docs/ch/4-workflow.md).
 
+## Web console
+
+```bash
+ccc-mcp ui
+```
+
+Starts a local web console in the same process that already serves the CLI and MCP server — no separate frontend to clone, build, or run, and no Node.js required even if you build from source (the UI ships as plain HTML/CSS/JS bundled into the `ccc-mcp` wheel). It binds `127.0.0.1` only, prints its URL, and opens your browser; pass `--port` to pin a port (ccc-mcp reports clearly if that port is taken) or leave it out to pick a free one automatically, and `--no-browser` to skip the auto-open. Press Ctrl+C to stop it. It reads the same `--home` database the CLI and MCP server use, so projects and tasks are always in sync across all three.
+
+The console covers: listing, adding and creating projects with the combined write-authorization step described above, revoking and deleting projects, a task dashboard (stage, agent, waiting reason, execution history, usage/CLI invocation evidence, raw results), a settings editor (provider/role, profile, report language, test command, Meeting Mode), Context and Skills views, and a **Connect** page for the ChatGPT Tunnel — equivalent to `ccc-mcp connect`, with live connection status and logs. In **Skills & MCP**, you can discover local stdio servers, inspect their tools, choose which tools to allow for one project, invoke enabled tools with JSON arguments, remove that project's installation, and view recent MCP calls. Global installations are shown but must be removed through the CLI because they affect every project. The sidebar switches the interface between English and Traditional Chinese; that browser preference is separate from each project's report language. The Connect page can optionally remember a runtime API key on this device (saved to `~/.ccc-mcp/tunnel/credentials.json`, permissions restricted to your OS account — the CLI's `connect --remember`/`--forget` offer the same). Every destructive action (enable write, clear history, delete) requires typing back the same confirmation text the CLI's terminal prompt uses — see [reliability and security](docs/en/7-reliability-and-security.md#web-console) for the trust model (a per-launch session token, never written to disk or logged, replaces the terminal's TTY check).
+
+The console's **Documentation** page includes the English and Traditional Chinese guides in the installed package. Changing the interface language updates the open guide and its links immediately; task reports, Context, and project data remain in their original language.
+
+On **Projects**, create named groups, move cards with the dropdown or drag-and-drop, and reorder groups. This only changes local console organization (`<home>/ui/project_groups.json`), not project paths or settings. **Connect** can save multiple named profiles, including different keys for the same Tunnel ID; select a saved profile and click Connect to use it. One Tunnel connection runs at a time. Saved keys are never returned to the browser after storage.
+
 ## Documentation
 
 Read the numbered documents in order for a full setup. The two language trees use the same filenames and sequence.
@@ -106,7 +124,7 @@ Read the numbered documents in order for a full setup. The two language trees us
 
 ## Important boundary
 
-`project authorize` permits ccc-mcp to modify that project and run its configured test command. Dependency installation can execute package scripts, so review dependency changes as part of the diff. Codex runs in its configured sandbox. Claude Code has a restricted tool policy, but does **not** yet have an equivalent OS-enforced sandbox; use a least-privileged OS account for it.
+Continuous write authorization — granted via `project authorize`, `project add --write`/`project create --write`, or the web console's "Enable write" — permits ccc-mcp to modify that project and run its configured test command. Dependency installation can execute package scripts, so review dependency changes as part of the diff. Codex runs in its configured sandbox. Claude Code has a restricted tool policy, but does **not** yet have an equivalent OS-enforced sandbox; use a least-privileged OS account for it.
 
 Done with a project? `ccc-mcp project revoke <id>` (if still authorized) then `ccc-mcp project delete <id>` permanently removes it from `project list` and blocks the ID from ever being used or re-registered again. It never deletes files on disk or any historical Context/task/evidence — delete the project directory yourself once you've confirmed its path. See [reliability and security](docs/en/7-reliability-and-security.md) for the full guarantee.
 

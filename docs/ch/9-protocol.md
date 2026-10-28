@@ -1,6 +1,6 @@
 # 9. 輸出協議
 
-給未來要讀 ccc-mcp 狀態的外部消費者（例如規劃中的 `ccc-mcp-ui`）看的穩定介面說明。這份文件只是**描述現有輸出**，不是新發明一套格式——ccc-mcp 現有的 MCP 工具與 CLI 輸出本來就已經是結構化 JSON。
+給要讀 ccc-mcp 狀態的外部消費者看的穩定介面說明——`ccc-mcp ui`（[7-reliability-and-security.md#10-web-控制台](7-reliability-and-security.md#10-web-控制台)）正是這樣一個消費者，透過 `interfaces/web.py` 直接呼叫同一個 `CCCMCP` bridge，而不是另外定義一套格式。這份文件只是**描述現有輸出**，不是新發明一套格式——ccc-mcp 現有的 MCP 工具與 CLI 輸出本來就已經是結構化 JSON。
 
 ## 哪些東西算協議、哪些不算
 

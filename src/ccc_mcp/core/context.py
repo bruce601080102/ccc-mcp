@@ -37,6 +37,16 @@ TASK_DOCUMENTS = [
 ]
 
 
+def _clear_history_description(project_id, project):
+    return (
+        f"清除 ccc-mcp 專案工作歷史：{project_id}\n{project['root']}\n\n"
+        "將清除目前資料庫中的 task、Agent execution、PLAN、approval、decision、"
+        "Meeting Mode、artifact 與 Context 版本，然後重建 Context v1。\n"
+        "project ID、專案資料夾、程式碼、設定、讀寫授權與直接寫檔稽核會保留。"
+        "清除前會把完整 SQLite 與 .ccc-mcp／managed worktree 搬到 ~/.ccc-mcp/archives。"
+    )
+
+
 def identifier(value):
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,79}", value):
         raise BridgeError("Identifier must contain only letters, digits, underscore or hyphen")
@@ -46,7 +56,11 @@ def identifier(value):
 # Bounded-history lists a budget trim compresses, in priority order. Never includes
 # invariants, source_document_refs, approved_plan, task or reports — those are the
 # direct evidence for the dispatch at hand, not compressible history.
-_COMPRESSIBLE_HISTORY_KEYS = ("decisions", "technical_decisions", "agent_results_awaiting_refinement")
+_COMPRESSIBLE_HISTORY_KEYS = (
+    "decisions",
+    "technical_decisions",
+    "agent_results_awaiting_refinement",
+)
 
 
 def _trim_skills_to_budget(content, token_budget):
@@ -130,9 +144,7 @@ class ContextHub:
         row = self.store.one("SELECT * FROM projects WHERE id=?", (identifier(project_id),))
         if not row:
             raise BridgeError("Project is not registered; use ccc-mcp project add")
-        if self.store.one(
-            "SELECT 1 FROM project_deletions WHERE project_id=?", (project_id,)
-        ):
+        if self.store.one("SELECT 1 FROM project_deletions WHERE project_id=?", (project_id,)):
             raise BridgeError(
                 "Project was permanently deregistered with `project delete`; "
                 "its ID cannot be accessed or reused"
@@ -171,10 +183,15 @@ class ContextHub:
             git(root, "add", "--", "README.md", ".gitignore")
             git(
                 root,
-                "-c", "user.name=ccc-mcp",
-                "-c", "user.email=ccc-mcp@localhost",
-                "-c", "commit.gpgsign=false",
-                "commit", "-m", "Recreated missing project root",
+                "-c",
+                "user.name=ccc-mcp",
+                "-c",
+                "user.email=ccc-mcp@localhost",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "-m",
+                "Recreated missing project root",
             )
             recreated_git = True
         self._record_missing_root_recovery(project_id, recreated_git)
@@ -186,11 +203,15 @@ class ContextHub:
         latest = self.latest(project_id)
         snapshot = latest["snapshot"]
         language = self.get_project_settings(project_id, import_file=False)["language"]
-        git_note = {
-            "zh-TW": "並重新初始化 Git 儲存庫",
-            "ch": "并重新初始化 Git 仓库",
-            "en": " and reinitialized its Git repository",
-        }[language] if recreated_git else ""
+        git_note = (
+            {
+                "zh-TW": "並重新初始化 Git 儲存庫",
+                "ch": "并重新初始化 Git 仓库",
+                "en": " and reinitialized its Git repository",
+            }[language]
+            if recreated_git
+            else ""
+        )
         snapshot["status"] = {
             "zh-TW": f"偵測到專案根目錄遺失，ccc-mcp 已自動重建空目錄{git_note}；"
             "原始檔案與歷史無法復原，Context／任務／決策仍完整保留。",
@@ -252,20 +273,36 @@ class ContextHub:
         """
         from .approval import confirm_local
 
+        return self._clear_project_history(project_id, confirm_local)
+
+    def clear_project_history_web(self, project_id, typed_confirmation):
+        """Same archive-then-reset operation as `clear_project_history_local`, confirmed
+        through the local Web UI session instead of a TTY — see `authorize_project_web`."""
+        from .approval import confirm_web
+
+        def confirm(description, challenge):
+            return confirm_web(challenge, typed_confirmation)
+
+        return self._clear_project_history(project_id, confirm)
+
+    def clear_history_preview(self, project_id):
+        """Read-only: the description and typed-challenge text `clear-history` /
+        `clear_project_history_web` will ask the operator to confirm."""
+        project = self.project(project_id)
+        return {
+            "description": _clear_history_description(project_id, project),
+            "challenge": f"CLEAR HISTORY {project_id}",
+        }
+
+    def _clear_project_history(self, project_id, confirm):
         project = self.project(project_id)
         if self.store.one(
-            "SELECT 1 FROM agent_executions WHERE project_id=? "
-            "AND status IN ('QUEUED','RUNNING')",
+            "SELECT 1 FROM agent_executions WHERE project_id=? AND status IN ('QUEUED','RUNNING')",
             (project_id,),
         ):
             raise BridgeError("Wait for or cancel the active execution before clearing history")
-        identity = confirm_local(
-            f"清除 ccc-mcp 專案工作歷史：{project_id}\n{project['root']}\n\n"
-            "將清除目前資料庫中的 task、Agent execution、PLAN、approval、decision、"
-            "Meeting Mode、artifact 與 Context 版本，然後重建 Context v1。\n"
-            "project ID、專案資料夾、程式碼、設定、讀寫授權與直接寫檔稽核會保留。"
-            "清除前會把完整 SQLite 與 .ccc-mcp／managed worktree 搬到 ~/.ccc-mcp/archives。",
-            f"CLEAR HISTORY {project_id}",
+        identity = confirm(
+            _clear_history_description(project_id, project), f"CLEAR HISTORY {project_id}"
         )
 
         with self.lock(project_id):
@@ -302,7 +339,9 @@ class ContextHub:
                     continue
                 expected = self.task_worktree(project_id, row["task_id"])
                 if worktree_path.resolve() != expected.resolve():
-                    raise BridgeError(f"Refusing to archive unexpected worktree path: {worktree_path}")
+                    raise BridgeError(
+                        f"Refusing to archive unexpected worktree path: {worktree_path}"
+                    )
                 worktrees_to_archive.append((row["task_id"], worktree_path))
 
             metadata = root / metadata_name(root)
@@ -452,9 +491,7 @@ class ContextHub:
             or re.sub(r"[^A-Za-z0-9_-]", "-", root.name).strip("-")
             or f"project-{uuid.uuid4().hex[:8]}"
         )
-        if self.store.one(
-            "SELECT 1 FROM project_deletions WHERE project_id=?", (project_id,)
-        ):
+        if self.store.one("SELECT 1 FROM project_deletions WHERE project_id=?", (project_id,)):
             raise BridgeError(
                 f"'{project_id}' was permanently deregistered with `project delete`; "
                 "that ID cannot be reused. Pass a different --id."
@@ -565,13 +602,12 @@ class ContextHub:
             return
         snapshot = latest["snapshot"]
         changes = snapshot["workspace_changes"]
-        changes.append(
-            {"edit_id": edit["id"], "path": edit["path"], "sha256": edit["sha256"]}
-        )
+        changes.append({"edit_id": edit["id"], "path": edit["path"], "sha256": edit["sha256"]})
         # Full receipts stay in SQLite. Working Context carries only a bounded recent window.
         snapshot["workspace_changes"] = changes[-20:]
         stale_facts = [
-            fact for fact in snapshot["architecture"]
+            fact
+            for fact in snapshot["architecture"]
             if any(ref["path"] == edit["path"] for ref in fact["source_document_refs"])
         ]
         if stale_facts:
@@ -597,7 +633,9 @@ class ContextHub:
             "base_context_version": latest["version"],
             "new_context_version": version,
             "changed_sections": [
-                "workspace_changes", "status", "next_action",
+                "workspace_changes",
+                "status",
+                "next_action",
                 *(["architecture", "source_document_refs"] if stale_facts else []),
             ],
             "source_edit_id": edit["id"],

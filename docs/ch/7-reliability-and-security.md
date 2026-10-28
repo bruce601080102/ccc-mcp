@@ -191,8 +191,8 @@ ccc-mcp project delete demo-app   # 互動確認，需輸入 DELETE demo-app
 
 - 若專案目前是 `read-write` 持續授權狀態，會先擋下來要求 `project revoke`。
 - 若有 `QUEUED`／`RUNNING` 的執行中任務，也會擋下來，避免留下孤兒執行。
-- 跟 `authorize`／`revoke` 一樣，需要互動式本機終端機確認，且要求輸入 `DELETE <id>` 這個明確字串才算確認（比一般確認多一層,呼應它不可復原的風險)。
-- 只透過 CLI 提供，**沒有對應的 MCP 工具**——跟 `authorize`／`revoke` 一致，因為這個確認儀式本來就需要互動式終端機，ChatGPT 無法代為執行。
+- 跟 `authorize`／`revoke` 一樣，需要互動式本機終端機確認（或 Web 控制台自己的確認對話框，見第 10 節），且要求輸入 `DELETE <id>` 這個明確字串才算確認（比一般確認多一層,呼應它不可復原的風險)。
+- 只透過 CLI 與 Web 控制台提供，**沒有對應的 MCP 工具**——因為這個確認儀式本來就需要本機操作者，ChatGPT 無法代為執行。
 
 ## 9. Meeting Mode：SD/RD 動工前的澄清對話，三個保證
 
@@ -207,6 +207,21 @@ ccc-mcp project delete demo-app   # 互動確認，需輸入 DELETE demo-app
 當 ChatGPT 自己擔任 SA 和／或 SD/RD 時，同樣的對話會以互動式交接進行（`submit_clarification_request`／`submit_clarification_response`）；SD/RD 的檢查仍然是結構性唯讀（不建立 worktree、`write_task_file` 會被拒絕），輪次、`min_rounds` 與升級規則全部相同。此時是同一個 ChatGPT 對話在扮演雙方，請把紀錄視為結構化的自我檢查，而不是兩個獨立的意見。
 
 `meeting_mode.escalation`（預設 `ask_user`，或 `auto_pm`）決定 `pm_decision_required` 這一輪該由誰決定；`clarification.triggered` 則告訴操作者這個關卡是否真的問出過一個問題。但跟上面三個保證不同，這兩個都不是程式碼強制執行的——ccc-mcp 沒有辦法從後端驗證已連線的 ChatGPT 對話是否真的詢問了真人並等待其回覆，還是自己直接決定了；`escalation` 只會改變 `task_handoff` 回傳文字與 MCP 伺服器給 ChatGPT 的指令內容（見 `interfaces/server.py`）。請把它當作一個強力的操作慣例，而不是像結構性唯讀或 `rounds_used` 那樣 ccc-mcp 能夠強制執行的邊界。
+
+## 10. Web 控制台
+
+`authorize_project_local`／`deregister_project_local`／`clear_project_history_local`（也就是 `project authorize`、`project delete`、`clear-history` 背後的函式）一直都要求互動式本機終端機（`sys.stdin.isatty()`），而且從未暴露給 MCP 伺服器——不論是遠端呼叫還是 ChatGPT 都無法觸發。`ccc-mcp ui` 是跟 CLI、MCP 伺服器並列的第四個本機呼叫端（同一個 `CCCMCP` bridge、同一套 core 邏輯，見 [9-protocol.md](9-protocol.md)）；因為它沒有終端機可以檢查，於是用另一種方式建立同樣「必須是這台機器前的真人主動做出的選擇」的保證：
+
+- 控制台永遠只綁 `127.0.0.1`——不論傳什麼 `--port`，都不會聽區網或公開位址。
+- 每次啟動 `ccc-mcp ui` 都會產生一個全新、隨機、只存在於該行程記憶體中的 session token，透過 URL fragment（`#token=...`）交給瀏覽器一次——fragment 的性質決定它不會被送上網路，也不會進伺服器的任何 log；頁面收到後存進該分頁自己的 `sessionStorage`，之後每個 API 請求都帶上 `X-CCC-UI-Token` header。這個 token 不落地、不寫 log，每次重啟 `ccc-mcp ui` 都會換一個新的。
+- 控制台的每個 API 請求都必須帶上完全相符的 token，否則在碰到任何專案資料之前就直接拒絕（401）——這是 Web 版本的 `isatty()` 檢查：證明呼叫者就是這個本機剛啟動的控制台本身，而不是任意一個 HTTP client。
+- `authorize`、`delete`、`clear-history` 額外要求在瀏覽器的確認對話框裡輸入跟終端機提示完全相同的確認字串（project id、`DELETE <id>`、或 `CLEAR HISTORY <id>`），而且伺服器端會再驗證一次——跟 CLI 的「TTY 檢查 + 輸入確認字串」是同一種雙重強度。
+- 啟用寫入永遠是一個獨立、明確的動作，而且會先完整揭露後果（會寫入檔案、會自動執行測試命令、依賴安裝可能跑 package script）——不論是替已註冊的唯讀專案按下「啟用寫入」，還是在「加入／建立」流程裡一併勾選。既有的唯讀專案不會因為被打開瀏覽、被查看設定而被悄悄升級。
+- `revoke` 在兩種介面都不需要確認（恢復成唯讀永遠被視為安全操作），而且是冪等的。
+
+控制台其他功能——列出專案、任務狀態、設定讀取、不涉及派工的設定修改——全部重用 `cli.py`／`interfaces/server.py` 呼叫的同一套 bridge 方法，因此自動繼承上面提到的路徑驗證、symlink 防護與 append-only 稽核紀錄，不存在另一條會漂移的程式碼路徑。
+
+**Connect 與記住的 runtime 金鑰。** 控制台的 Connect 頁面走的是跟 `ccc-mcp connect` 相同的流程（`admin tunnels get` → profile `init`／修復 → `doctor --explain` → `tunnel-client run`，共用 `adapters/tunnel_client.prepare_tunnel_connection`），但以背景 subprocess 監督，讓頁面能顯示即時狀態與 log。勾選「記住這台裝置上的金鑰」、明確儲存具名稱的連線設定，或使用 CLI 的 `connect --remember`，會把 runtime Secret Key 寫進 `<home>/tunnel/credentials.json`，POSIX 上 `chmod 600`；只有本機 OS 帳號可讀，並非另行加密的金鑰庫。可儲存多筆名稱與金鑰，同一 Tunnel ID 也可有不同金鑰，但同時間只執行一組連線。網頁輸入的金鑰會送到受 session token 保護的 localhost API，之後僅供 `tunnel-client` 的 `CONTROL_PLANE_API_KEY` 環境變數使用。存檔後不會回傳給瀏覽器；忘記設定只刪除對應紀錄，舊版 CLI 紀錄仍可讀取。
 
 ## 給 agent 使用的 MCP 伺服器
 
@@ -225,5 +240,8 @@ ccc-mcp project delete demo-app   # 互動確認，需輸入 DELETE demo-app
 - [tests/test_verification_evidence.py](../tests/test_verification_evidence.py)：`brief.verification` 的五種可分辨狀態（尚無報告／Agent 自稱完成／自稱需修訂、主機已驗證通過／失敗／沒收集到測試／尚未執行、REVIEW 因主機證據被退回跟 REVIEW 自己要求修訂是兩種不同旗標）、CLI `task show`／`task status` 的呈現。
 - [tests/test_task_handoff.py](../tests/test_task_handoff.py)：SA／SD-RD／REVIEW 三種角色的互動式提示詞內容、resume/PM 整理/背景執行等狀態重用既有欄位、CLI `task handoff` 的真實重現。
 - [tests/test_task_preflight.py](../tests/test_task_preflight.py)：分級 `checks[]`／`summary` 輸出與原始三項環境檢查並存、授權 blocker、五個角色 provider 是否可用且只有 `next_role` 缺失才算 blocker（其餘只到 warning，並隨任務進度換成下一個角色）、`next_role` 隨 SA→SD/RD→REVIEW 推進、任務完成後 `next_role` 為 null 且不再出現角色檢查、ChatGPT 角色缺 Tunnel 依是否為 next_role 分別是 blocker／warning、Tunnel 已安裝但無法確認連線仍只到 warning、`profile` 欄位對照 chatgpt-only／custom、worktree 模式下 `test_command.cwd` 一定是這個 task 自己的 worktree（即使還沒建立也不會被偷換成 project root）、只有 worktree 不存在時才會跟用來預覽依賴套件的 `inspection_path`（project root）不同、project 模式下兩者都是 project root、worktree 建立後兩者相同、執行中/中斷派工/PM 整理/本機核准四種工作流狀態、Skills 可讀性、Context 預算超額（重用 `build_handoff` 本身的計算）、`summary` 與 `checks` 數量一致，全程確認從不實際安裝、跑測試或動 Git。
+
+- [tests/test_web_ui.py](../tests/test_web_ui.py)：第 10 節 Web 控制台的信任邊界——沒帶 token／帶錯 token 一律 401、靜態頁面不需要 token、每次啟動產生不同的隨機 token、加入／建立專案時合併啟用寫入需要輸入正確的確認字串、既有唯讀專案不會被查看動作悄悄升級、revoke 不需確認且冪等、`clear-history`／`delete` 都要求跟終端機一致的確認字串且確認錯誤時不會真的執行、`delete` 從不動磁碟上的檔案、資料夾瀏覽只回傳目錄名稱不回傳檔案內容且拒絕相對路徑。
+- [tests/test_cli_consolidation.py](../tests/test_cli_consolidation.py)：`project add --write`／`project create --write` 合併註冊與授權成一步、不加 `--write` 維持唯讀、非互動情境下 `--write` 仍然要求確認、`init`／`project authorize` 的棄用提示只印到 stderr、stdout 仍是純 JSON、`clear-history` 與 `clear history` 兩種寫法皆可用。
 
 以上全部跑在 `FakeAgentAdapter`，不需要真的安裝 Codex／Claude。真實 CLI 的整合驗收腳本（`tests/test_real_agents.py`，`-m real_agents`）目前涵蓋正常接力與測試證據，**尚未涵蓋本頁描述的中斷／恢復與 fallback 分類場景**——這部分仍只在 Fake 測試中驗證過，真實 CLI 環境下的行為未另外實測。

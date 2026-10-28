@@ -7,9 +7,10 @@ Use `ccc-mcp --help` for the installed version's complete command list. Set `CCC
 ```bash
 ccc-mcp setup all
 ccc-mcp connect tunnel_...
-ccc-mcp project create <id> [--path <path>] [--profile chatgpt-only|best-model]
-ccc-mcp project add <path> --id <id>
-ccc-mcp project authorize <id>
+ccc-mcp project create <id> [--path <path>] [--profile chatgpt-only|best-model] [--write]
+ccc-mcp project add <path> --id <id> [--write]
+ccc-mcp project authorize <id>   # deprecated; prefer --write above
+ccc-mcp ui [--port <n>] [--no-browser]
 ccc-mcp --project <id> task --oneline
 ccc-mcp --project <id> task TASK-0001 --oneline
 ccc-mcp --project <id> task TASK-0001 --oneline id=8f0bc17
@@ -22,6 +23,10 @@ ccc-mcp --project <id> context show
 ccc-mcp --project <id> verify
 ccc-mcp --project <id> clear history
 ```
+
+`project add`/`project create` both take `--write`, which grants continuous write authorization in the same step as registration — one interactive confirmation instead of a separate `project authorize` call afterward. It is the same underlying grant either way (same event, same audit row); `--write` is purely a combined entry point. `project authorize` keeps working standalone and prints a one-line deprecation hint to stderr (never mixed into the JSON on stdout) pointing at `--write`. An existing read-only project is never silently upgraded — `--write` only applies at the moment of `add`/`create`; authorizing it later is always its own explicit `project authorize` call (or the web console's "Enable write").
+
+`ccc-mcp ui` starts a local web console in the same process (binds `127.0.0.1` only, no separate frontend to build or run). See the [README](../../README.md#web-console) to start it and [7-reliability-and-security.md](7-reliability-and-security.md#web-console) for how it replaces the terminal's TTY confirmation for `authorize`/`delete`/`clear-history`.
 
 Use `config show`, `config providers`, and `config prompt <ROLE>` before changing roles. Role values include `SA`, `SD`, `RD`, `SD/RD`, and `REVIEW`; automatic workflow advancement uses `SD/RD`.
 

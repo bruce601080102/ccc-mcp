@@ -16,7 +16,14 @@ from typer.core import TyperGroup
 from ..adapters.agent_setup import setup_provider
 from ..adapters.agents.base import native_executable
 from ..adapters.skills import install_skill, list_skills, remove_skill
-from ..adapters.tunnel_client import ensure_tunnel_client, tunnel_client_path
+from ..adapters.tunnel_client import (
+    ensure_tunnel_client,
+    forget_tunnel_key,
+    load_tunnel_key,
+    remembered_tunnels,
+    save_tunnel_key,
+    tunnel_client_path,
+)
 from ..core.models import (
     AgentReport,
     ClarificationRequest,
@@ -112,9 +119,9 @@ config_app = typer.Typer(
 schema_app = typer.Typer(
     no_args_is_help=True,
     help=t(
-        "發布給外部消費者（例如未來的 ccc-mcp-ui）的協議 JSON Schema",
-        "Protocol JSON Schema published for external consumers (e.g. a future ccc-mcp-ui)",
-        "发布给外部消费者（例如未来的 ccc-mcp-ui）的协议 JSON Schema",
+        "發布給外部消費者（例如 ccc-mcp ui）的協議 JSON Schema",
+        "Protocol JSON Schema published for external consumers (e.g. ccc-mcp ui)",
+        "发布给外部消费者（例如 ccc-mcp ui）的协议 JSON Schema",
     ),
 )
 skill_app = typer.Typer(
@@ -177,6 +184,17 @@ def project_id(ctx):
 
 def output(value):
     typer.echo(json.dumps(value, ensure_ascii=False, indent=2))
+
+
+def deprecated(replacement: str):
+    typer.echo(
+        t(
+            f"[已棄用] 建議改用：{replacement}",
+            f"[deprecated] Prefer: {replacement}",
+            f"[已弃用] 建议改用：{replacement}",
+        ),
+        err=True,
+    )
 
 
 def _host_test_state(tests):
@@ -283,9 +301,7 @@ def _task_flow_detail(service, project, task_id, selector):
     prefix = normalized[5:] if normalized.startswith("EXEC-") else normalized
     if len(prefix) >= 4 and all(character in "0123456789ABCDEF" for character in prefix):
         matches = [
-            row
-            for row in executions
-            if row["id"].upper().removeprefix("EXEC-").startswith(prefix)
+            row for row in executions if row["id"].upper().removeprefix("EXEC-").startswith(prefix)
         ]
         if len(matches) == 1:
             return matches[0]
@@ -385,6 +401,7 @@ def init(
     purpose: str | None = None,
     language: str = "zh-TW",
 ):
+    deprecated("ccc-mcp project add")
     output(bridge(ctx).register_project(path, id, purpose, language))
 
 
@@ -416,9 +433,13 @@ def clear_history_alias(ctx: typer.Context):
     "add",
     help=t(
         "把一個已存在、尚未註冊的資料夾登記為專案（不會建立新目錄）。"
-        "例如：ccc-mcp project add ./my-folder --id my-project",
+        "加 --write 在同一步啟用持續寫入授權（仍需在終端機內互動確認），不需事後再跑 "
+        "project authorize。例如：ccc-mcp project add ./my-folder --id my-project --write",
         "Register an existing, not-yet-registered folder as a project (never creates a "
-        "new directory). Example: ccc-mcp project add ./my-folder --id my-project",
+        "new directory). Pass --write to also grant continuous write authorization in "
+        "the same step (still asks for an interactive terminal confirmation) instead of "
+        "a separate project authorize afterwards. "
+        "Example: ccc-mcp project add ./my-folder --id my-project --write",
     ),
 )
 def project_add(
@@ -427,8 +448,22 @@ def project_add(
     id: str | None = None,
     purpose: str | None = None,
     language: str = "zh-TW",
+    write: Annotated[
+        bool,
+        typer.Option(
+            "--write/--no-write",
+            help=t(
+                "註冊後立即在同一步要求啟用持續寫入授權",
+                "Immediately ask to grant continuous write authorization in the same step",
+            ),
+        ),
+    ] = False,
 ):
-    output(bridge(ctx).register_project(path, id, purpose, language))
+    registered = bridge(ctx).register_project(path, id, purpose, language)
+    if not write:
+        output(registered)
+        return
+    output(bridge(ctx).authorize_project_local(registered["id"]))
 
 
 @project_app.command(
@@ -445,17 +480,24 @@ def project_list(ctx: typer.Context):
 @project_app.command(
     "authorize",
     help=t(
-        "持續授權指定專案；後端自動承接 Agent 工作串與計畫。",
-        "Grant continuous authorization to a project; the backend then auto-drives the Agent workstream and plans.",
+        "[已棄用，仍可用] 持續授權指定專案；後端自動承接 Agent 工作串與計畫。"
+        "新專案建議改用 `project add --write` 或 `project create --write` 一步完成。",
+        "[deprecated, still works] Grant continuous authorization to a project; the "
+        "backend then auto-drives the Agent workstream and plans. For a new project, "
+        "prefer `project add --write` / `project create --write` in one step.",
     ),
 )
 def project_authorize(ctx: typer.Context, id: str):
+    deprecated("ccc-mcp project add --write (or project create --write)")
     output(bridge(ctx).authorize_project_local(id))
 
 
 @project_app.command(
     "revoke",
-    help=t("撤銷專案直接寫入授權，恢復唯讀。", "Revoke a project's direct-write authorization, back to read-only."),
+    help=t(
+        "撤銷專案直接寫入授權，恢復唯讀。",
+        "Revoke a project's direct-write authorization, back to read-only.",
+    ),
 )
 def project_revoke(ctx: typer.Context, id: str):
     output(bridge(ctx).revoke_project_local(id))
@@ -501,8 +543,22 @@ def project_create(
             )
         ),
     ] = None,
+    write: Annotated[
+        bool,
+        typer.Option(
+            "--write/--no-write",
+            help=t(
+                "建立後立即在同一步要求啟用持續寫入授權",
+                "Immediately ask to grant continuous write authorization in the same step",
+            ),
+        ),
+    ] = False,
 ):
-    output(bridge(ctx).create_project(id, path, language, profile))
+    created = bridge(ctx).create_project(id, path, language, profile)
+    if not write:
+        output(created)
+        return
+    output(bridge(ctx).authorize_project_local(created["id"]))
 
 
 @config_app.command(
@@ -593,7 +649,12 @@ def config_context_budget(
         output(bridge(ctx).configure_context_token_budget(project_id(ctx), None))
         return
     if budget is None:
-        raise BridgeError(t("請提供預算數字，或加 --clear 清除現有設定", "Provide a budget number, or pass --clear to remove the current setting"))
+        raise BridgeError(
+            t(
+                "請提供預算數字，或加 --clear 清除現有設定",
+                "Provide a budget number, or pass --clear to remove the current setting",
+            )
+        )
     output(bridge(ctx).configure_context_token_budget(project_id(ctx), budget))
 
 
@@ -631,9 +692,7 @@ def config_meeting_mode(
     ] = None,
     max_rounds: Annotated[
         int | None,
-        typer.Option(
-            "--max-rounds", help=t("系統硬上限 5", "Hard system cap of 5")
-        ),
+        typer.Option("--max-rounds", help=t("系統硬上限 5", "Hard system cap of 5")),
     ] = None,
     escalation: Annotated[
         str | None,
@@ -649,7 +708,9 @@ def config_meeting_mode(
     if enabled not in {"on", "off"}:
         raise BridgeError(t("請輸入 on 或 off", "Enter on or off"))
     if escalation is not None and escalation not in {"ask-user", "auto-pm"}:
-        raise BridgeError(t("--escalation 請輸入 ask-user 或 auto-pm", "--escalation must be ask-user or auto-pm"))
+        raise BridgeError(
+            t("--escalation 請輸入 ask-user 或 auto-pm", "--escalation must be ask-user or auto-pm")
+        )
     output(
         bridge(ctx).configure_meeting_mode(
             project_id(ctx),
@@ -731,7 +792,8 @@ def config_read_root(
         ),
     ],
     path: Annotated[
-        Path, typer.Argument(help=t("要開放讀取的本機目錄", "The local directory to expose read-only"))
+        Path,
+        typer.Argument(help=t("要開放讀取的本機目錄", "The local directory to expose read-only")),
     ],
 ):
     output(bridge(ctx).configure_read_root(project_id(ctx), name, path))
@@ -775,7 +837,12 @@ def config_test_command(
         output(bridge(ctx).configure_test_command(project_id(ctx), None))
         return
     if not command:
-        raise BridgeError(t("請提供測試命令字串，或加 --clear 清除現有設定", "Provide a test command string, or pass --clear to remove the current setting"))
+        raise BridgeError(
+            t(
+                "請提供測試命令字串，或加 --clear 清除現有設定",
+                "Provide a test command string, or pass --clear to remove the current setting",
+            )
+        )
     output(bridge(ctx).configure_test_command(project_id(ctx), shlex.split(command)))
 
 
@@ -1098,7 +1165,12 @@ def task_show(ctx: typer.Context, task_id: Annotated[str | None, typer.Argument(
             )
         task_id = tasks[0]["id"]
     task = service.task(project, task_id)
-    typer.echo(t(f"專案：{project}　任務：{task_id}　狀態：{task['state']}", f"Project: {project}  Task: {task_id}  State: {task['state']}"))
+    typer.echo(
+        t(
+            f"專案：{project}　任務：{task_id}　狀態：{task['state']}",
+            f"Project: {project}  Task: {task_id}  State: {task['state']}",
+        )
+    )
     rows = service.get_task_result(project, task_id)
     if not rows:
         typer.echo(t("尚無 Agent 執行紀錄。", "No Agent execution recorded yet."))
@@ -1131,7 +1203,9 @@ def task_show(ctx: typer.Context, task_id: Annotated[str | None, typer.Argument(
         if models:
             typer.echo(t("CLI 回報模型：", "CLI-reported models: ") + ", ".join(models))
         if usage.get("available"):
-            typer.echo(t("Token：", "Tokens: ") + json.dumps(usage.get("tokens", {}), ensure_ascii=False))
+            typer.echo(
+                t("Token：", "Tokens: ") + json.dumps(usage.get("tokens", {}), ensure_ascii=False)
+            )
         else:
             typer.echo(t("Token：未提供，無法確認", "Tokens: not provided, cannot confirm"))
     verification = service.get_task_status(project, task_id)["brief"]["verification"]
@@ -1339,7 +1413,11 @@ def task_recover(ctx: typer.Context):
 )
 def task_resume(ctx: typer.Context, task_id: Annotated[str | None, typer.Argument()] = None):
     service, project = bridge(ctx), project_id(ctx)
-    output(service.resume_pending_dispatch(project, task_id or service.project_workstream_task(project)))
+    output(
+        service.resume_pending_dispatch(
+            project, task_id or service.project_workstream_task(project)
+        )
+    )
 
 
 @task_app.command(
@@ -1441,9 +1519,7 @@ def doctor(ctx: typer.Context):
     for executable in ["git", "codex", "claude"]:
         try:
             path = (
-                shutil.which(executable)
-                if executable == "git"
-                else native_executable(executable)
+                shutil.which(executable) if executable == "git" else native_executable(executable)
             )
         except BridgeError:
             path = None
@@ -1486,6 +1562,7 @@ def doctor(ctx: typer.Context):
                 "connect ChatGPT)",
             )
         ),
+        "remembered_tunnels": remembered_tunnels(bridge(ctx).home),
     }
     checks["workflows"] = {
         "chatgpt_only": t(
@@ -1560,27 +1637,45 @@ def schema_export(out_dir: Path):
 def skill_install(
     ctx: typer.Context,
     source: str,
-    name: Annotated[str | None, typer.Argument(help=t("MCP 名稱（搭配 mcp）", "MCP name (with `mcp`)"))] = None,
+    name: Annotated[
+        str | None, typer.Argument(help=t("MCP 名稱（搭配 mcp）", "MCP name (with `mcp`)"))
+    ] = None,
     command: Annotated[
         str | None,
-        typer.Option("--command", help=t("MCP 伺服器的完整指令路徑", "Full path of the MCP server command")),
+        typer.Option(
+            "--command", help=t("MCP 伺服器的完整指令路徑", "Full path of the MCP server command")
+        ),
     ] = None,
     arg: Annotated[
         list[str] | None,
-        typer.Option("--arg", help=t("傳給 MCP 指令的參數（可重複）", "Argument for the MCP command (repeatable)")),
+        typer.Option(
+            "--arg",
+            help=t("傳給 MCP 指令的參數（可重複）", "Argument for the MCP command (repeatable)"),
+        ),
     ] = None,
     tools: Annotated[
         str | None,
-        typer.Option("--tools", help=t("只啟用這些工具，逗號分隔（預設全部）", "Enable only these tools, comma-separated (default: all)")),
+        typer.Option(
+            "--tools",
+            help=t(
+                "只啟用這些工具，逗號分隔（預設全部）",
+                "Enable only these tools, comma-separated (default: all)",
+            ),
+        ),
     ] = None,
     cbm: Annotated[
         str | None,
-        typer.Option("--cbm", help=t("codebase-memory-mcp 執行檔路徑", "Path to the codebase-memory-mcp binary")),
+        typer.Option(
+            "--cbm",
+            help=t("codebase-memory-mcp 執行檔路徑", "Path to the codebase-memory-mcp binary"),
+        ),
     ] = None,
 ):
     if source == "mcp":
         if not name:
-            raise BridgeError(t("用法：skill install mcp <名稱>", "Usage: skill install mcp <name>"))
+            raise BridgeError(
+                t("用法：skill install mcp <名稱>", "Usage: skill install mcp <name>")
+            )
         scope = ctx.obj["project"]  # only an explicit --project narrows it; none = global
         result = bridge(ctx).install_mcp_server(
             scope, name, command, arg, tools.split(",") if tools else None
@@ -1611,7 +1706,7 @@ def skill_install(
         output(install_skill(bridge(ctx).home, source))
         return
     repo_root = None
-    if not source[len("codebase-memory:"):].strip():
+    if not source[len("codebase-memory:") :].strip():
         repo_root = bridge(ctx).project(project_id(ctx))["root"]
     output(install_skill(bridge(ctx).home, source, repo_root=repo_root, cbm=cbm))
 
@@ -1648,12 +1743,20 @@ def mcp_list(
 )
 def mcp_calls(
     ctx: typer.Context,
-    limit: Annotated[int, typer.Option("--limit", help=t("顯示最近幾筆", "How many recent calls"))] = 20,
+    limit: Annotated[
+        int, typer.Option("--limit", help=t("顯示最近幾筆", "How many recent calls"))
+    ] = 20,
 ):
     output(bridge(ctx).mcp_call_log(limit))
 
 
-@mcp_app.command("remove", help=t("移除 MCP 伺服器：有 --project 移除該專案自己的；沒有則移除全域安裝。", "Remove an MCP server: with --project this project's own install, without it the global one."))
+@mcp_app.command(
+    "remove",
+    help=t(
+        "移除 MCP 伺服器：有 --project 移除該專案自己的；沒有則移除全域安裝。",
+        "Remove an MCP server: with --project this project's own install, without it the global one.",
+    ),
+)
 def mcp_remove(ctx: typer.Context, name: str):
     output(bridge(ctx).remove_mcp_server(ctx.obj["project"], name))
 
@@ -1722,6 +1825,83 @@ def serve(
     from .server import serve as run_server
 
     run_server(bridge(ctx).home, transport, host, port, enable_writes)
+
+
+@app.command(
+    "ui",
+    help=t(
+        "啟動本機 Web 控制台：同一個行程同時提供 API 與介面，只綁定 127.0.0.1，"
+        "啟動後印出網址並自動開啟瀏覽器。按 Ctrl+C 停止。",
+        "Start the local Web console: one process serves both the API and the UI, "
+        "binds 127.0.0.1 only, prints the URL and opens a browser. Press Ctrl+C to stop.",
+    ),
+)
+def ui(
+    ctx: typer.Context,
+    port: Annotated[
+        int | None,
+        typer.Option(
+            help=t(
+                "指定 port；省略則自動找一個可用的",
+                "Pick a port; omit to find a free one automatically",
+            )
+        ),
+    ] = None,
+    no_browser: Annotated[
+        bool,
+        typer.Option(
+            "--no-browser", help=t("不要自動開啟瀏覽器", "Do not open a browser automatically")
+        ),
+    ] = False,
+):
+    import secrets
+    import socket
+    import webbrowser
+
+    import uvicorn
+
+    from .web import create_app
+
+    host = "127.0.0.1"
+
+    def port_is_free(candidate: int) -> bool:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                probe.bind((host, candidate))
+                return True
+            except OSError:
+                return False
+
+    if port is None:
+        chosen = 8787
+        while not port_is_free(chosen):
+            chosen += 1
+    elif port_is_free(port):
+        chosen = port
+    else:
+        raise BridgeError(
+            t(
+                f"Port {port} 已被占用，請改用 --port 指定其他數字（或省略 --port 自動挑選）。",
+                f"Port {port} is already in use; pass --port with a different number "
+                "(or omit --port to pick one automatically).",
+            )
+        )
+
+    token = secrets.token_urlsafe(32)
+    web_app = create_app(bridge(ctx).home, token=token)
+    url = f"http://{host}:{chosen}/#token={token}"
+    typer.echo(
+        t(
+            f"ccc-mcp 控制台：{url}\n（網址帶有一次性本機 session token，不會寫入磁碟或紀錄；"
+            "請勿分享這個連結）\n按 Ctrl+C 停止。",
+            f"ccc-mcp console: {url}\n(The URL carries a one-time local session token that is "
+            "never written to disk or any log; do not share this link.)\nPress Ctrl+C to stop.",
+        )
+    )
+    if not no_browser:
+        webbrowser.open(url)
+    uvicorn.run(web_app, host=host, port=chosen, log_level="warning")
 
 
 def _profile_mcp_interpreter(profile_path: Path) -> str | None:
@@ -1868,13 +2048,39 @@ def connect(
             ),
         ),
     ] = False,
+    remember: Annotated[
+        bool,
+        typer.Option(
+            "--remember",
+            help=t(
+                "把這次輸入的金鑰存在本機（~/.ccc-mcp/tunnel/credentials.json，權限僅限本機帳號），"
+                "之後對同一個 tunnel 再次 connect 不用重新輸入。",
+                "Save the key entered this time locally (~/.ccc-mcp/tunnel/credentials.json, "
+                "permissions restricted to this OS account), so a later connect to the same "
+                "tunnel does not ask again.",
+            ),
+        ),
+    ] = False,
+    forget: Annotated[
+        bool,
+        typer.Option(
+            "--forget",
+            help=t(
+                "刪除本機存的這個 tunnel 金鑰並結束，不會嘗試連線。",
+                "Delete the locally saved key for this tunnel and exit, without connecting.",
+            ),
+        ),
+    ] = False,
 ):
     if not re.fullmatch(r"tunnel_[a-z0-9]{32}", tunnel_id):
         raise BridgeError("Usage: ccc-mcp connect tunnel_YOUR_ID")
     home = bridge(ctx).home
+    if forget:
+        output({"tunnel_id": tunnel_id, "forgotten": forget_tunnel_key(home, tunnel_id)})
+        return
     client = ensure_tunnel_client(home)
 
-    key = os.environ.get("CONTROL_PLANE_API_KEY")
+    key = os.environ.get("CONTROL_PLANE_API_KEY") or load_tunnel_key(home, tunnel_id)
     if not key:
         typer.echo("Enter the OpenAI runtime API key locally (hidden; do not paste into chat):")
         key = getpass.getpass("")
@@ -1885,6 +2091,9 @@ def connect(
             "Invalid key input: enter only the runtime Secret Key, "
             "without spaces/newlines or a tunnel ID"
         )
+    if remember:
+        save_tunnel_key(home, tunnel_id, key)
+        typer.echo(f"Saved the runtime key for {tunnel_id} locally; future `connect` reuses it.")
 
     for executable, status_args, login_hint in [
         ("codex", ["login", "status"], "codex login"),
@@ -1893,7 +2102,9 @@ def connect(
         try:
             path = native_executable(executable)
         except BridgeError:
-            typer.echo(f"{executable} unavailable. Install it, or configure roles to use another provider.")
+            typer.echo(
+                f"{executable} unavailable. Install it, or configure roles to use another provider."
+            )
             continue
         result = subprocess.run(
             [path, *status_args],
@@ -1949,11 +2160,22 @@ def connect(
     if not any(path.is_file() for path in profile_paths):
         initialized = subprocess.run(
             [
-                str(client), "init", "--sample", "sample_mcp_stdio_local",
-                "--profile", profile, "--profile-dir", str(profile_dir),
-                "--tunnel-id", tunnel_id, "--mcp-command", mcp_command,
-                "--control-plane-api-key-ref", "env:CONTROL_PLANE_API_KEY",
-                "--health-listen-addr", "127.0.0.1:0",
+                str(client),
+                "init",
+                "--sample",
+                "sample_mcp_stdio_local",
+                "--profile",
+                profile,
+                "--profile-dir",
+                str(profile_dir),
+                "--tunnel-id",
+                tunnel_id,
+                "--mcp-command",
+                mcp_command,
+                "--control-plane-api-key-ref",
+                "env:CONTROL_PLANE_API_KEY",
+                "--health-listen-addr",
+                "127.0.0.1:0",
             ],
             env=full_env,
             shell=False,
@@ -1968,7 +2190,15 @@ def connect(
             raise BridgeError("tunnel-client init returned success but no profile file was created")
 
     diagnosed = subprocess.run(
-        [str(client), "doctor", "--profile", profile, "--profile-dir", str(profile_dir), "--explain"],
+        [
+            str(client),
+            "doctor",
+            "--profile",
+            profile,
+            "--profile-dir",
+            str(profile_dir),
+            "--explain",
+        ],
         env=full_env,
         shell=False,
         check=False,
@@ -2022,7 +2252,9 @@ def update(
         )
     else:
         result = subprocess.run(
-            [sys.executable, "-m", "pip", "install", "--upgrade", "ccc-mcp"], shell=False, check=False
+            [sys.executable, "-m", "pip", "install", "--upgrade", "ccc-mcp"],
+            shell=False,
+            check=False,
         )
     if result.returncode != 0:
         raise BridgeError("pip install failed; see output above")

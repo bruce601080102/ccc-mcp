@@ -5,24 +5,24 @@
 ## 1. 建立並授權
 
 ```bash
-ccc-mcp project create hello-demo
-ccc-mcp project authorize hello-demo
+ccc-mcp project create hello-demo --write
 ```
+
+`--write` 會在建立專案的同一步授予持續寫入授權：這是本機明確動作，過程中會有一次互動確認，說明它允許 ccc-mcp 修改**這個專案**並在實作後執行設定的測試命令，不會授權專案以外的路徑。只想先註冊、晚點再授權？省略 `--write`，之後再單獨執行 `ccc-mcp project authorize hello-demo`（這個兩步驟用法仍然可用）。
 
 `project create` 預設建立在使用者目錄的 `ccc-mcpProjects/hello-demo`。想將單一專案放到其他位置：
 
 ```bash
-ccc-mcp project create hello-demo --path "/Users/你的帳號/Code/hello-demo"
+ccc-mcp project create hello-demo --path "/Users/你的帳號/Code/hello-demo" --write
 ```
 
 已存在的專案不要重建，改為註冊：
 
 ```bash
-ccc-mcp project add "/Users/你的帳號/Code/hello-demo" --id hello-demo
-ccc-mcp project authorize hello-demo
+ccc-mcp project add "/Users/你的帳號/Code/hello-demo" --id hello-demo --write
 ```
 
-授權是本機明確動作：它允許 ccc-mcp 修改**這個專案**，並在實作後執行設定的測試命令；不會授權專案以外的路徑。
+`project add` 一樣支援 `--write`。不想這時候就授權，直接拿掉 `--write` 即可——在明確要求之前（不論是之後的 `project authorize`、`project add --write`，還是 Web 控制台的「啟用寫入」），ccc-mcp 不會授予任何寫入權限。
 
 ## 2. 提出第一個需求
 
@@ -53,8 +53,7 @@ ccc-mcp --project hello-demo context show
 不想裝 Codex 或 Claude Code CLI、只想先用 ChatGPT 把整條流程走一遍。開始前可先執行 `ccc-mcp doctor`：它會列出目前是否已裝 Git／Codex／Claude，以及 ChatGPT-only 與最佳模型兩種工作流各自需要什麼（`workflows.chatgpt_only`／`workflows.best_model`），確認「不需要 Codex／Claude Code CLI」這件事不是只靠猜的。
 
 ```bash
-ccc-mcp project create hello-demo-chatgpt --profile chatgpt-only
-ccc-mcp project authorize hello-demo-chatgpt
+ccc-mcp project create hello-demo-chatgpt --profile chatgpt-only --write
 ```
 
 `--profile chatgpt-only` 會在建立專案的同一步把 `SA`、`SD`、`RD`、`SD/RD`、`REVIEW` 全部設為 ChatGPT（已存在的專案改用 `ccc-mcp --project hello-demo-chatgpt config profile chatgpt-only`，效果相同）。用下列指令確認設定確實生效，再往下走：
@@ -84,3 +83,7 @@ ccc-mcp --project hello-demo-chatgpt context show
 - `context show`：確認每一輪的 Context 版本、下一步動作與是否已整理完成。
 
 最後確認主機真的執行過測試命令並通過（見`task status` 的 `brief.tests`，或 `ccc-mcp --project hello-demo-chatgpt task test` 手動補跑一次）；ChatGPT 在對話裡自稱「測試通過」不能取代這個紀錄。
+
+## Web 控制台
+
+比起終端機更想用瀏覽器完成以上步驟？`ccc-mcp ui` 會啟動本機 Web 控制台，可以加入既有資料夾或建立新專案，同樣只需要一個明確的「啟用寫入」步驟（完整揭露後再輸入確認文字），取代 CLI 的 `--write` 旗標——啟動方式見 [README](../../README.md#web-控制台)，信任模型細節見 [7-reliability-and-security.md](7-reliability-and-security.md#web-控制台)。

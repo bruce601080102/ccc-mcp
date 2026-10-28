@@ -146,7 +146,9 @@ def test_cli_has_no_user_selectable_modes(bridge, human, monkeypatch):
     args = ["--home", str(bridge.home)]
     granted = runner.invoke(app, args + ["project", "authorize", "demo"])
     assert granted.exit_code == 0, granted.output
-    assert json.loads(granted.output)["mode"] == "read-write"
+    # `.stdout` only: `project authorize` is deprecated in favor of `project add
+    # --write`/`project create --write` and prints a one-line hint to stderr.
+    assert json.loads(granted.stdout)["mode"] == "read-write"
     shown = runner.invoke(app, args + ["--project", "demo", "config", "show"])
     assert shown.exit_code == 0, shown.output
     assert "workflow_mode" not in json.loads(shown.output)

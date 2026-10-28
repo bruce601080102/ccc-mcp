@@ -4,7 +4,15 @@
 
 ## 角色與參數
 
-先在本機授權一次專案：
+先在本機授權一次專案——`project add`／`project create` 都支援 `--write`，在註冊／建立的同一步完成授權：
+
+```text
+ccc-mcp project create 專案ID --write
+# 或對已存在的資料夾：
+ccc-mcp project add 路徑 --id 專案ID --write
+```
+
+只想先註冊、晚點再授權也可以，拿掉 `--write` 即可，之後再單獨執行（這個指令仍然可用，只是會在 stderr 印一行棄用提示，建議改用上面的 `--write`）：
 
 ```text
 ccc-mcp project authorize 專案ID
@@ -109,6 +117,14 @@ ccc-mcp --project demo-app clear-history
 指令會要求輸入 `CLEAR HISTORY demo-app` 確認，且有 Agent 正在 `QUEUED`／`RUNNING` 時會拒絕執行。成功後會清除該專案的 Task、Agent execution、PLAN、approval、decision、Meeting Mode、artifact 與舊 Context，重建 `Context v1`；下一個 Task 會重新從 `TASK-0001` 開始。
 
 這不是刪除原始碼或 Git reset。專案資料夾、project ID、角色／Meeting Mode／測試設定、專案授權與直接寫檔稽核都會保留。清除前的完整 SQLite、`.ccc-mcp` metadata 和受管理 task worktree 會移到回傳的 `archive` 路徑（預設位於 `~/.ccc-mcp/archives/`），因此仍可稽核或人工復原。
+
+## 用瀏覽器操作：`ccc-mcp ui`
+
+```bash
+ccc-mcp ui [--port 埠號] [--no-browser]
+```
+
+跟 CLI、MCP 伺服器同一個行程，啟動本機 Web 控制台，不需另外建置或啟動前端。只綁 `127.0.0.1`，涵蓋上面提到的加入／建立／授權／撤銷／刪除／清除歷史這些流程，破壞性操作一樣要求輸入跟終端機相同的確認字串。詳見 [README](../../README_ZH.md#web-控制台) 與[可靠性與安全邊界](7-reliability-and-security.md#10-web-控制台)。
 
 ## 派工前先檢查環境
 

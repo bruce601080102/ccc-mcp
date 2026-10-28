@@ -207,8 +207,8 @@ Codex 依角色使用 `read-only` 或 `workspace-write` sandbox 與 JSON Schema�
 
 ## 交付範圍
 
-已實作：Context Hub、版本歷史與衝突、Session 恢復、角色交接、PM Patch、來源漂移檢查、獨立 Worker、狀態機、Fake/CLI Adapter、人工核准、決策稽核、Worktree、註解檢查、CLI、MCP 兩種傳輸、JWT 資源伺服器與測試。驗證紀錄見 [VALIDATION.md](../../VALIDATION.md)。
+已實作：Context Hub、版本歷史與衝突、Session 恢復、角色交接、PM Patch、來源漂移檢查、獨立 Worker、狀態機、Fake/CLI Adapter、人工核准、決策稽核、Worktree、註解檢查、CLI、MCP 兩種傳輸、JWT 資源伺服器、本機 Web 控制台（`ccc-mcp ui`，見第 7 章第 10 節）與測試。驗證紀錄見 [VALIDATION.md](../../VALIDATION.md)。
 
-各次真實 Codex/Claude 與 Tunnel 驗證見 [VALIDATION.md](../../VALIDATION.md)；其他環境仍需確認帳戶權限、OAuth 部署、隔離執行環境與非 Python 註解的人工審閱。沒有 Web UI、Redis、Kubernetes 或分散式排程。
+各次真實 Codex/Claude 與 Tunnel 驗證見 [VALIDATION.md](../../VALIDATION.md)；其他環境仍需確認帳戶權限、OAuth 部署、隔離執行環境與非 Python 註解的人工審閱。沒有 Redis、Kubernetes 或分散式排程。
 
-原始碼依功能放在 `context.py`、`tasks.py`、`storage.py`、`agents/`、`worker.py`、`git.py`、`security.py`、`server.py` 與 `cli.py`，讓 CLI、MCP 與 Worker 共用相同規則。
+原始碼依功能放在 `context.py`、`tasks.py`、`storage.py`、`agents/`、`worker.py`、`git.py`、`security.py`、`server.py`、`web.py` 與 `cli.py`，讓 CLI、MCP、Web 控制台與 Worker 共用相同規則。

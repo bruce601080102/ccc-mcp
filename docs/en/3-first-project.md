@@ -3,18 +3,18 @@
 After [installation](1-install-and-sign-in.md), create a small project that can be verified locally.
 
 ```bash
-ccc-mcp project create hello-demo
-ccc-mcp project authorize hello-demo
+ccc-mcp project create hello-demo --write
 ```
+
+`--write` creates the project and grants it continuous write authorization in the same step. It is a local, explicit grant to modify that one project and run its configured test command — it does not grant access outside the project — confirmed once, interactively, with the full consequences spelled out before you type `hello-demo` back. Prefer the two-step form, or already have the project registered read-only? `ccc-mcp project authorize hello-demo` still works on its own.
 
 Projects are created under `~/ccc-mcpProjects/` by default. Use `--path` for one project in another directory, or register an existing directory instead:
 
 ```bash
-ccc-mcp project add "/path/to/existing-project" --id hello-demo
-ccc-mcp project authorize hello-demo
+ccc-mcp project add "/path/to/existing-project" --id hello-demo --write
 ```
 
-Authorization is a local, explicit grant to modify that one project and run its configured test command. It does not grant access outside the project.
+`project add` takes the same `--write` flag. Omit it to register the project read-only and decide about write access later — nothing is granted until you explicitly ask for it, whether that is a later `project authorize` call, `project add --write`, or the web console's "Enable write" button (see [Web console](#web-console) below).
 
 With the ccc-mcp ChatGPT connection selected, ask for a small task such as:
 
@@ -37,8 +37,7 @@ Continue with [Run and resume the workflow](4-workflow.md).
 To try the whole loop with ChatGPT alone, without installing Codex or Claude Code. Before starting, `ccc-mcp doctor` lists whether Git/Codex/Claude are currently installed and exactly what each workflow needs (`workflows.chatgpt_only`/`workflows.best_model`), so "no Codex/Claude Code CLI needed" isn't just taken on faith.
 
 ```bash
-ccc-mcp project create hello-demo-chatgpt --profile chatgpt-only
-ccc-mcp project authorize hello-demo-chatgpt
+ccc-mcp project create hello-demo-chatgpt --profile chatgpt-only --write
 ```
 
 `--profile chatgpt-only` sets `SA`, `SD`, `RD`, `SD/RD`, and `REVIEW` all to ChatGPT in the same step as creation (for an existing project, use `ccc-mcp --project hello-demo-chatgpt config profile chatgpt-only` instead — same effect). Confirm it actually took before going further:
@@ -68,3 +67,7 @@ ccc-mcp --project hello-demo-chatgpt context show
 - `context show`: the current Context version, next action, and whether this round has been refined yet.
 
 Finally, confirm the host actually ran the test command and it passed (see `brief.tests` from `task status`, or run `ccc-mcp --project hello-demo-chatgpt task test` manually). ChatGPT claiming "tests passed" in chat never substitutes for this record.
+
+## Web console
+
+Prefer a browser over the terminal for the steps above? `ccc-mcp ui` starts a local web console that can add an existing folder or create a new project, with the same single explicit "enable write" step (fully disclosed, typed-confirmation) instead of CLI's `--write` flag — see the [README](../../README.md#web-console) for how to start it, and [7-reliability-and-security.md](7-reliability-and-security.md#web-console) for exactly what replaces the terminal's TTY check.

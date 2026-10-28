@@ -8,6 +8,28 @@ from ..infra.errors import BridgeError, PermissionDenied, VersionConflict
 from ..infra.security import digest
 
 
+def _authorize_description(project_id, project):
+    return (
+        f"授權 ccc-mcp 的 Agent 工作串讀寫整個專案：{project_id}\n{project['root']}\n\n"
+        "授權後由設定的 SA／實作／審查 Agent 持續處理需求，不需逐檔核准；"
+        "工作串與 PLAN 由 ccc-mcp 內部管理，不需逐次 approve 或 accept。\n"
+        "修改會核對 SHA256 並保存原始內容及紀錄；憑證、管理資料與外部路徑仍不開放。\n"
+        "此授權同時代表同意：若有設定 test_command（ccc-mcp config test-command），"
+        "每輪實作完成、REVIEW 派工前會自動在本機執行該命令並存證；未設定則不會自動執行任何命令。\n"
+        "授權持續有效，直到執行 project revoke。"
+    )
+
+
+def _deregister_description(project_id, project):
+    return (
+        f"永久註銷專案：{project_id}\n{project['root']}\n\n"
+        "此操作無法復原：之後 `ccc-mcp project list` 不再顯示它，任何指令對這個 "
+        "project ID 都會拒絕執行。歷史 Context、task、決策與驗收證據仍完整保留在 "
+        "ccc-mcp 的資料庫中以供追溯，但不會再被存取；這個 ID 之後也不能重新註冊。\n"
+        "此操作不會刪除或搬移磁碟上的檔案，請自行用 Finder／檔案管理器處理。"
+    )
+
+
 class ProjectAccessHub:
     def get_project_access(self, project_id):
         project = self.project(project_id)
@@ -33,6 +55,30 @@ class ProjectAccessHub:
     def authorize_project_local(self, project_id):
         from .approval import confirm_local
 
+        return self._authorize_project(project_id, confirm_local)
+
+    def authorize_project_web(self, project_id, typed_confirmation):
+        """Same state transition and audit event as `authorize_project_local`, but the
+        human confirmation comes from a request already verified (by interfaces/web.py)
+        to carry this process's own local Web UI session token, instead of a TTY.
+        The operator must still type back the project id in the browser dialog, the
+        same confirmation strength the terminal flow requires.
+        """
+        from .approval import confirm_web
+
+        def confirm(description, challenge):
+            return confirm_web(challenge, typed_confirmation)
+
+        return self._authorize_project(project_id, confirm)
+
+    def authorize_preview(self, project_id):
+        """Read-only: the exact description and typed-challenge text an authorize call
+        will ask the operator to confirm, so a UI can show it before the operator
+        commits to typing the challenge back (CLI prints the same text itself)."""
+        project = self.project(project_id)
+        return {"description": _authorize_description(project_id, project), "challenge": project_id}
+
+    def _authorize_project(self, project_id, confirm):
         access = self.get_project_access(project_id)
         if access["mode"] == "read-write":
             with self.lock(project_id):
@@ -41,16 +87,7 @@ class ProjectAccessHub:
             self.compact_consumed_context(project_id)
             return self.get_project_settings(project_id)["project_access"]
         project = self.project(project_id)
-        identity = confirm_local(
-            f"授權 ccc-mcp 的 Agent 工作串讀寫整個專案：{project_id}\n{project['root']}\n\n"
-            "授權後由設定的 SA／實作／審查 Agent 持續處理需求，不需逐檔核准；"
-            "工作串與 PLAN 由 ccc-mcp 內部管理，不需逐次 approve 或 accept。\n"
-            "修改會核對 SHA256 並保存原始內容及紀錄；憑證、管理資料與外部路徑仍不開放。\n"
-            "此授權同時代表同意：若有設定 test_command（ccc-mcp config test-command），"
-            "每輪實作完成、REVIEW 派工前會自動在本機執行該命令並存證；未設定則不會自動執行任何命令。\n"
-            "授權持續有效，直到執行 project revoke。",
-            project_id,
-        )
+        identity = confirm(_authorize_description(project_id, project), project_id)
         with self.lock(project_id):
             if self.project(project_id)["root"] != project["root"]:
                 raise VersionConflict("Project root changed during authorization")
@@ -96,6 +133,28 @@ class ProjectAccessHub:
         """
         from .approval import confirm_local
 
+        return self._deregister_project(project_id, confirm_local)
+
+    def deregister_project_web(self, project_id, typed_confirmation):
+        """Same irreversible state transition as `deregister_project_local`, confirmed
+        through the local Web UI session instead of a TTY — see `authorize_project_web`."""
+        from .approval import confirm_web
+
+        def confirm(description, challenge):
+            return confirm_web(challenge, typed_confirmation)
+
+        return self._deregister_project(project_id, confirm)
+
+    def deregister_preview(self, project_id):
+        """Read-only: the description and typed-challenge text `project delete` /
+        `deregister_project_web` will ask the operator to confirm."""
+        project = self.project(project_id)
+        return {
+            "description": _deregister_description(project_id, project),
+            "challenge": f"DELETE {project_id}",
+        }
+
+    def _deregister_project(self, project_id, confirm):
         project = self.project(project_id)
         if self.get_project_access(project_id)["mode"] == "read-write":
             raise PermissionDenied(
@@ -106,14 +165,7 @@ class ProjectAccessHub:
             (project_id,),
         ):
             raise BridgeError("Wait for or cancel the active execution before deregistering")
-        identity = confirm_local(
-            f"永久註銷專案：{project_id}\n{project['root']}\n\n"
-            "此操作無法復原：之後 `ccc-mcp project list` 不再顯示它，任何指令對這個 "
-            "project ID 都會拒絕執行。歷史 Context、task、決策與驗收證據仍完整保留在 "
-            "ccc-mcp 的資料庫中以供追溯，但不會再被存取；這個 ID 之後也不能重新註冊。\n"
-            "此操作不會刪除或搬移磁碟上的檔案，請自行用 Finder／檔案管理器處理。",
-            f"DELETE {project_id}",
-        )
+        identity = confirm(_deregister_description(project_id, project), f"DELETE {project_id}")
         with self.lock(project_id):
             if self.get_project_access(project_id)["mode"] == "read-write":
                 raise PermissionDenied(

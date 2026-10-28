@@ -938,7 +938,7 @@ PM 可將任務重新指派 Claude Code 修改。
 - Windows 使用說明
 - ChatGPT MCP 連線文件
 
-先完成核心功能，不要提前做 Web UI、Redis、Kubernetes 或分散式微服務。
+先完成核心功能，不要提前做 Redis、Kubernetes 或分散式微服務。本機 Web 控制台（`ccc-mcp ui`，見 [7-reliability-and-security.md#10-web-控制台](7-reliability-and-security.md#10-web-控制台)）是在核心功能穩定、且有明確需求後才加入的例外：它是 `interfaces/` 底下跟 CLI、MCP 伺服器並列的第三個薄介面，只呼叫既有的 `CCCMCP` bridge，沒有另外的任務／專案資料庫，也沒有常駐服務——跟這條原則的精神一致，不是違反它。
 
 ---
 

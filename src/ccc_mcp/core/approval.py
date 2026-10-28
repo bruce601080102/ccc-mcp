@@ -31,3 +31,16 @@ def confirm_local(description, challenge):
     if typed != challenge:
         raise PermissionDenied("Local approval cancelled")
     return identity
+
+
+def confirm_web(challenge, typed):
+    """Confirmation for a request already authenticated as this process's own local
+    Web UI session (loopback-bound, per-launch session token). The web layer
+    (interfaces/web.py) is responsible for verifying that token before ever calling
+    anything that uses this as its approval — this function only re-checks, server
+    side, that the operator typed back the exact challenge shown in the browser,
+    the same confirmation strength `confirm_local` gets from a terminal.
+    """
+    if typed != challenge:
+        raise PermissionDenied("Local approval cancelled")
+    return local_identity()

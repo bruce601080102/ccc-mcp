@@ -25,6 +25,7 @@ ccc-mcp 是給軟體專案使用的本機 MCP 工作流程。ChatGPT 管理需�
 - 透過原生 CLI 使用 Codex 和 Claude Code，也可將所有角色指定給 ChatGPT，走 ChatGPT-only workflow。
 - 只在辨識為額度耗盡時才啟用 fallback，不會把安裝、登入或一般執行錯誤誤當成額度問題。
 - 讓操作者安裝的 `SKILL.md` 指引可供所有角色使用。
+- 內建本機 Web 控制台（`ccc-mcp ui`），不用 CLI 也能管理專案、追蹤任務進度、編輯設定。
 
 ## 選擇模式
 
@@ -42,9 +43,12 @@ pip install ccc-mcp
 # 只有要使用 Codex 和／或 Claude Code 時才執行：
 ccc-mcp setup all
 
-ccc-mcp project create hello-demo
-ccc-mcp project authorize hello-demo
+ccc-mcp project create hello-demo --write
 ```
+
+`--write`會在同一步驟建立專案並授予持續寫入授權，過程中會有一次本機確認，清楚說明這代表什麼（ccc-mcp 可以在 `hello-demo` 底下寫入檔案，並在每輪 REVIEW 前自動執行你設定的測試命令）。省略 `--write`則只會註冊唯讀專案，之後再用 `ccc-mcp project authorize hello-demo` 授權——這個兩步驟的舊用法仍然可用，只是不再是唯一路徑。`ccc-mcp project add <既有資料夾>`也支援同樣的 `--write` 旗標。
+
+比起終端機更想用瀏覽器？`ccc-mcp ui` 會啟動本機 Web 控制台（只綁定 `127.0.0.1`），提供同樣的加入／建立／授權／撤銷／刪除流程、唯讀任務儀表板與設定編輯器——詳見下方[Web 控制台](#web-控制台)。
 
 若要全程使用 ChatGPT，略過 `ccc-mcp setup all`，建立專案後套用 `chatgpt-only` profile：
 
@@ -86,6 +90,20 @@ ccc-mcp --project hello-demo config show
 
 完整說明請看[協作工作流程](docs/ch/4-workflow.md)。
 
+## Web 控制台
+
+```bash
+ccc-mcp ui
+```
+
+在同一個供應 CLI 與 MCP server 的程序裡啟動本機 Web 控制台——不需要另外 clone、建置或啟動前端，即使從原始碼建置也不需要 Node.js（介面是打包進 `ccc-mcp` wheel 的純 HTML/CSS/JS）。只綁定 `127.0.0.1`，啟動後會印出網址並自動開啟瀏覽器；可用 `--port` 指定埠號（若被占用會清楚回報），省略則自動挑一個可用的；`--no-browser` 可停用自動開啟瀏覽器。按 Ctrl+C 即可停止。它讀取與 CLI、MCP server 相同的 `--home` 資料庫，三者的專案與任務資料永遠同步。
+
+控制台涵蓋：列出／加入／建立專案（含上述合併寫入授權流程）、撤銷與刪除專案、任務儀表板（階段、Agent、等待原因、執行紀錄、usage／CLI 呼叫證據、原始結果）、設定編輯器（provider／角色、profile、報告語言、測試命令、Meeting Mode）、Context、Skills，以及 ChatGPT Tunnel 的 **Connect** 頁面。在 **Skills 與 MCP** 頁面，可探索本機 stdio MCP server、檢查其工具、勾選允許此專案使用的工具、以 JSON 參數呼叫已授權工具、移除專案安裝，並查看最近的 MCP 呼叫紀錄。全域安裝會顯示於頁面，但須用 CLI 移除，因為會影響所有專案。側邊欄可切換繁體中文與英文介面；這項瀏覽器偏好與專案的 Agent／報告語言設定分開。Connect 頁面有即時連線狀態與 log，並可選擇「記住這台裝置上的金鑰」（存在 `~/.ccc-mcp/tunnel/credentials.json`，權限僅限本機帳號；CLI 的 `connect --remember`／`--forget` 也提供同樣能力）。每個破壞性操作（啟用寫入、清除歷史、刪除）都需要輸入與終端機提示相同的確認文字——信任模型（以本機一次性 session token 取代終端機的 TTY 檢查，不落地、不寫入紀錄）詳見[可靠性與安全邊界](docs/ch/7-reliability-and-security.md#web-控制台)。
+
+控制台的 **文件**頁內含隨套件安裝的繁中與英文指南。切換介面語言時，目前開啟的指南與連結會立即切換；任務報告、Context 與專案資料仍保留原始語言。
+
+**專案**頁可建立自訂群組，透過下拉選單或拖放移動專案卡片，並調整群組順序；分類只儲存在本機 `<home>/ui/project_groups.json`，不更動專案路徑或設定。**連線**頁可儲存多筆具名稱的設定，同一 Tunnel ID 也能存不同金鑰；選取設定後按「連線」即可切換，但同時間只執行一組 Tunnel 連線。金鑰儲存後不會再回傳給瀏覽器。
+
 ## 文件
 
 完整設定建議依序閱讀編號文件；英文與繁中的檔名和順序一致。
@@ -107,7 +125,7 @@ ccc-mcp --project hello-demo config show
 
 ## 重要邊界
 
-`project authorize` 允許 ccc-mcp 修改該專案並執行設定的測試命令。相依套件安裝可能執行 package script，因此相依變更也必須納入 diff 審閱。Codex 依設定的 sandbox 執行；Claude Code 雖有限制工具政策，但尚未有同等的 OS 強制 sandbox，應以最低權限的 OS 帳戶執行。
+持續寫入授權——不論是透過 `project authorize`、`project add --write`／`project create --write`，或 Web 控制台的「啟用寫入」——都允許 ccc-mcp 修改該專案並執行設定的測試命令。相依套件安裝可能執行 package script，因此相依變更也必須納入 diff 審閱。Codex 依設定的 sandbox 執行；Claude Code 雖有限制工具政策，但尚未有同等的 OS 強制 sandbox，應以最低權限的 OS 帳戶執行。
 
 不想再用某個專案了？先 `ccc-mcp project revoke <id>`（若目前仍是持續授權狀態），再執行 `ccc-mcp project delete <id>` 永久從 `project list` 移除，之後這個 ID 不能再被使用或重新註冊。它不會刪除磁碟上的檔案，也不會刪除任何歷史 Context／task／證據——確認路徑後請自行刪除專案目錄。完整說明見[可靠性與安全邊界](docs/ch/7-reliability-and-security.md)。
 
