@@ -7,6 +7,43 @@ ccc-mcp --project hello-demo config show
 ccc-mcp --project hello-demo config providers
 ```
 
+## Project language and runtime version
+
+Open a project's **Settings → Project runtime** to select its programming language,
+runtime version, and optional local executable. **Check local version** previews the
+installed version and executable without saving. **Save runtime** persists the same
+selection used by the UI, CLI, `.ccc-mcp/settings.json`, and subsequent agent handoffs.
+
+```bash
+ccc-mcp --project hello-demo config runtime --language python --version 3.9
+ccc-mcp --project hello-demo config runtime --check
+ccc-mcp --project hello-demo config runtime --language python --version 3.9 --executable "C:/Python39/python.exe"
+ccc-mcp --project hello-demo config runtime --language javascript --version 22
+ccc-mcp --project hello-demo config test-command "npm test"
+ccc-mcp --project hello-demo config runtime --clear
+```
+
+Supported languages are Python, JavaScript, TypeScript, Go, Java, C# (.NET SDK), Rust,
+PHP, and Ruby. JavaScript/TypeScript versions mean Node.js versions. Versions match
+numeric components: `3.9` accepts `3.9.x`, whereas `3.9.13` requires that patch.
+An empty version accepts any installed version. Executables must be command names
+or absolute paths, without arguments; an existing venv's Python is also accepted.
+
+Install the runtime locally first. This setting never downloads a language runtime
+or changes ccc-mcp's own Python. Python discovery tries the Windows `py` launcher
+for the requested version, then versioned Python names and PATH. Other languages
+use the selected executable or PATH; specify an absolute path for installations
+managed by a version manager. Missing or mismatched runtimes stop tests with saved
+evidence instead of silently switching versions.
+
+Python creates a dedicated test venv for each selection under
+`<home>/venvs/<project>-<settings-hash>/`; dependency installation and host tests use
+that environment, leaving the previous default venv available. Other languages need
+an explicit test command. Node.js projects run npm installation with the selected
+runtime; other toolchains manage their build/dependencies through the test command.
+Agents receive the same language/version requirement. UI/CLI runtime changes are
+blocked while an agent execution is active.
+
 ## Roles and fallback
 
 ```bash

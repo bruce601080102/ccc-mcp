@@ -7,6 +7,7 @@ from ..adapters import mcp_servers as mcp_registry
 from ..adapters.agents import ADAPTERS, CodexAdapter
 from ..adapters.agents.base import native_executable, operator_policy
 from ..adapters.git import git
+from ..adapters.runtime import RUNTIMES, resolve_runtime, validate_runtime
 from ..infra.config import cli_language, metadata_name
 from ..infra.errors import BridgeError, PermissionDenied
 from ..infra.security import atomic_write, canonical, redact, reject_secrets, safe_path
@@ -255,6 +256,8 @@ class ConfigurationHub:
             )
         if "meeting_mode" in document:
             updated["meeting_mode"] = self._validated_meeting_mode(document["meeting_mode"])
+        if "runtime" in document:
+            updated["runtime"] = validate_runtime(document["runtime"])
         return updated
 
     def resolve_agent_settings(self, project_id, role, agent="auto", model=None, effort=None):
@@ -353,6 +356,7 @@ class ConfigurationHub:
             ),
             "worktree_dir": settings.get("worktree_dir", str(self.home / "worktrees")),
             "test_command": settings.get("test_command"),
+            "runtime": validate_runtime(settings.get("runtime")),
             "context_token_budget": settings.get("context_token_budget"),
             # Installed only through the local CLI (install_mcp_server): settings.json is
             # deliberately not an import source for this key, because it holds commands
@@ -506,6 +510,7 @@ class ConfigurationHub:
                 "roles": settings["roles"],
                 "language": settings["language"],
                 "test_command": settings["test_command"],
+                "runtime": settings["runtime"],
                 "context_token_budget": settings["context_token_budget"],
                 "meeting_mode": settings["meeting_mode"],
             },
@@ -515,6 +520,7 @@ class ConfigurationHub:
             "available_providers": {
                 provider: sorted(EFFORTS.get(provider, set())) for provider in sorted(PROVIDERS)
             },
+            "available_runtimes": {key: value[0] for key, value in RUNTIMES.items()},
             "notes": [
                 "新增一個 provider：寫一個 adapters/agents/<name>.py 繼承 BaseAgentAdapter，"
                 "在 ADAPTERS 註冊一行即可在這裡看到；只有支援 effort 分級時才需要補 EFFORTS。",
@@ -602,6 +608,24 @@ class ConfigurationHub:
             saved = self._save_settings(project_id, settings)
             self.sync_documents(project_id)
             return saved
+
+    def configure_runtime(self, project_id, runtime):
+        validated = validate_runtime(runtime)
+        reject_secrets(validated)
+        with self.lock(project_id):
+            if self.store.one(
+                "SELECT id FROM agent_executions WHERE project_id=? AND status IN ('QUEUED','RUNNING')",
+                (project_id,),
+            ):
+                raise BridgeError("Wait for the active agent before changing the runtime")
+            settings = self.get_project_settings(project_id)
+            settings["runtime"] = validated
+            return self._save_settings(project_id, settings)
+
+    def check_project_runtime(self, project_id, runtime=None):
+        # The explicit UI/CLI check also previews an unsaved selection.
+        settings = self.get_project_settings(project_id)
+        return resolve_runtime(settings["runtime"] if runtime is None else runtime)
 
     def configure_test_command(self, project_id, command):
         """The fixed host-run test command; project authorize also consents to running it

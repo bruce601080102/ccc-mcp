@@ -15,7 +15,7 @@ from ..adapters.agents.base import native_executable
 from ..adapters.storage import artifact, decode, event, now
 from ..infra.config import metadata_name, setting_env
 from ..infra.errors import BridgeError, PermissionDenied, VersionConflict
-from ..infra.security import canonical, digest, reject_secrets, safe_path
+from ..infra.security import canonical, digest, reject_secrets
 from .context import identifier
 from .models import (
     AgentReport,
@@ -783,6 +783,9 @@ class TaskHub:
                 "so the configured test command passes.",
             )
         if self._host_tests_unverified(project_id, task_id):
+            evidence = self._latest_test_result(project_id, task_id) or {}
+            if evidence.get("runtime_blocked"):
+                return "revise", "Host verification is blocked by the project runtime: " + evidence["reason"]
             return (
                 "revise",
                 "The host-executed test command collected zero tests, so nothing about this "
@@ -2126,6 +2129,7 @@ class TaskHub:
         from ..adapters.test_runner import (
             DEFAULT_TEST_COMMAND,
             detect_dependency_setup,
+            project_venv_dir,
             venv_python_path,
         )
         from ..adapters.tunnel_client import tunnel_client_path
@@ -2424,6 +2428,13 @@ class TaskHub:
             "inspection_path": str(inspection_path),
             "reason": None if resolved else f'"{command[0]}" was not found on PATH or as a file',
         }
+        runtime = settings.get("runtime")
+        if runtime and runtime["language"] != "python" and not settings.get("test_command"):
+            resolved = None
+            test_command.update({
+                "command": None, "resolvable": False, "resolved_path": None,
+                "reason": "Configure a test command for the selected language",
+            })
         checks.append(
             {
                 "id": "test_command",
@@ -2453,7 +2464,9 @@ class TaskHub:
         detected = detect_dependency_setup(inspection_path)
         venv_ready = None
         if detected and detected[0] in {"requirements.txt", "pyproject.toml"}:
-            venv_dir = safe_path(self.home / "venvs", project_id)
+            venv_dir = project_venv_dir(
+                self.home, project_id, runtime if runtime and runtime["language"] == "python" else None
+            )
             venv_ready = venv_python_path(venv_dir).is_file()
         dependencies = {
             "workspace_exists": workspace_exists,
@@ -2514,6 +2527,7 @@ class TaskHub:
         return {
             "task_id": task_id,
             "ready": summary["blocker"] == 0,
+            "runtime": runtime,
             "next_role": next_role,
             "profile": detect_profile(settings["roles"]),
             "summary": summary,
@@ -2579,13 +2593,15 @@ class TaskHub:
         return bool(result and result.get("executed_by_host") and result.get("passed") is False)
 
     def _host_tests_unverified(self, project_id, task_id):
-        """True when the host ran the test command but it collected zero tests
-        (pytest exit 5) — distinct from a real pass and from "never executed at all".
+        """True when tests collected nothing or the configured runtime blocked testing.
         Per the original requirement ("測試失敗或未驗證時，不可對外宣稱完整驗收成功"),
         nothing was actually verified here, so — like a host test failure — this must
         not silently let REVIEW auto-complete the task."""
         result = self._latest_test_result(project_id, task_id)
-        return bool(result and result.get("executed_by_host") and result.get("no_tests_collected"))
+        return bool(result and (
+            result.get("runtime_blocked")
+            or (result.get("executed_by_host") and result.get("no_tests_collected"))
+        ))
 
     def get_task_result(self, project_id, task_id):
         with self.lock(project_id):

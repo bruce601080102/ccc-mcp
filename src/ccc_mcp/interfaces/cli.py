@@ -813,6 +813,32 @@ def config_worktree_dir(ctx: typer.Context, path: Path):
 
 
 @config_app.command(
+    "runtime",
+    help=t("設定專案程式語言、執行版本與本機執行檔。", "Set the project's language, runtime version and local executable."),
+)
+def config_runtime(
+    ctx: typer.Context,
+    language: str | None = None,
+    version: str | None = None,
+    executable: str | None = None,
+    clear: bool = False,
+    check: bool = False,
+):
+    service, project = bridge(ctx), project_id(ctx)
+    if clear:
+        output(service.configure_runtime(project, None))
+    elif language:
+        runtime = {"language": language, "version": version, "executable": executable}
+        output(service.check_project_runtime(project, runtime) if check else service.configure_runtime(project, runtime))
+    elif check:
+        output(service.check_project_runtime(project))
+    elif version or executable:
+        raise BridgeError("--language is required when setting --version or --executable")
+    else:
+        output(service.get_project_settings(project)["runtime"])
+
+
+@config_app.command(
     "test-command",
     help=t(
         "設定 `project authorize` 後、每輪 REVIEW 前自動執行的固定測試命令（本機實際執行，非 Agent）。",

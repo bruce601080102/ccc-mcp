@@ -1,4 +1,6 @@
+import hashlib
 import os
+import re
 import subprocess
 import sys
 import uuid
@@ -8,6 +10,12 @@ from ..infra.errors import AgentProcessError, BridgeError
 from ..infra.security import canonical, redact, safe_path
 from .agents.base import run_process
 from .git import revision
+from .runtime import (
+    require_runtime,
+    resolve_runtime_command,
+    runtime_environment,
+    validate_runtime,
+)
 
 DEFAULT_TEST_COMMAND = [sys.executable, "-m", "pytest", "-q"]
 
@@ -35,7 +43,15 @@ def venv_python_path(venv_dir):
     )
 
 
-def ensure_project_venv(home, project_id, timeout=300):
+def project_venv_dir(home, project_id, runtime=None):
+    root = safe_path(Path(home) / "venvs", project_id)
+    if runtime:
+        digest = hashlib.sha256(canonical(validate_runtime(runtime)).encode()).hexdigest()[:12]
+        return safe_path(root.parent, root.name + "-" + digest)
+    return root
+
+
+def ensure_project_venv(home, project_id, timeout=300, runtime=None):
     """Lazily create (and on later calls, reuse) a ccc-mcp-managed virtual environment
     for this project's host test execution — separate from any venv the operator
     already has for their own local dev workflow, so `project authorize` never has to
@@ -45,13 +61,17 @@ def ensure_project_venv(home, project_id, timeout=300):
     interpreter: Agent-authored dependencies land in an isolated, per-project
     environment instead of polluting (or being polluted by) the service process.
     """
-    venv_dir = safe_path(Path(home) / "venvs", project_id)
+    selected = require_runtime(runtime) if runtime else None
+    venv_dir = project_venv_dir(home, project_id, runtime)
     python = venv_python_path(venv_dir)
     if python.is_file():
+        if selected:
+            require_runtime({"language": "python", "version": selected["actual_version"],
+                             "executable": str(python)})
         return python
     venv_dir.parent.mkdir(parents=True, exist_ok=True)
     result = subprocess.run(
-        [sys.executable, "-m", "venv", str(venv_dir)],
+        [selected["executable"] if selected else sys.executable, "-m", "venv", str(venv_dir)],
         capture_output=True,
         stdin=subprocess.DEVNULL,
         timeout=timeout,
@@ -87,7 +107,7 @@ def detect_dependency_setup(cwd, python_executable=None):
     return None
 
 
-def install_dependencies(cwd, home=None, project_id=None, timeout=600):
+def install_dependencies(cwd, home=None, project_id=None, timeout=600, runtime=None):
     """Best-effort, auto-detected dependency install before running the configured test
     command — the Agent writes/edits requirements.txt, pyproject.toml or package.json as
     part of implementing a feature; nothing previously installed those for the host test
@@ -107,9 +127,14 @@ def install_dependencies(cwd, home=None, project_id=None, timeout=600):
     is_python_project = (Path(cwd) / "requirements.txt").is_file() or (
         Path(cwd) / "pyproject.toml"
     ).is_file()
-    if home is not None and project_id is not None and is_python_project:
+    selected = require_runtime(runtime) if runtime else None
+    wants_python = runtime and runtime["language"] == "python"
+    if home is not None and project_id is not None and (wants_python or (is_python_project and not runtime)):
         try:
-            venv_python = ensure_project_venv(home, project_id)
+            venv_python = (
+                ensure_project_venv(home, project_id, runtime=runtime)
+                if runtime else ensure_project_venv(home, project_id)
+            )
         except BridgeError as exc:
             manifest = "requirements.txt" if (Path(cwd) / "requirements.txt").is_file() else "pyproject.toml"
             return {
@@ -123,17 +148,33 @@ def install_dependencies(cwd, home=None, project_id=None, timeout=600):
         python_executable = str(venv_python)
         venv_scripts_dir = str(venv_python.parent)
     detected = detect_dependency_setup(cwd, python_executable)
+    if runtime and detected:
+        # A multi-language repository's first manifest may belong to another runtime.
+        if runtime["language"] in {"javascript", "typescript"}:
+            if (Path(cwd) / "package-lock.json").is_file():
+                detected = ("package-lock.json", ["npm", "ci"])
+            elif (Path(cwd) / "package.json").is_file():
+                detected = ("package.json", ["npm", "install"])
+            else:
+                detected = None
+        elif not wants_python or detected[0] not in _PYTHON_MANIFESTS:
+            detected = None
     if not detected:
         return {
             "detected": False,
             "manifest": None,
             "command": None,
             "installed": None,
-            "venv_scripts_dir": None,
+            "venv_scripts_dir": venv_scripts_dir,
             "reason": "No recognized dependency manifest "
             "(requirements.txt/pyproject.toml/package.json) found",
         }
     manifest, command = detected
+    env = runtime_environment(selected) if selected else None
+    if selected and not wants_python:
+        command = resolve_runtime_command(command, selected, env)
+    elif venv_scripts_dir:
+        env = _venv_environment(venv_scripts_dir)
     base = {
         "detected": True,
         "manifest": manifest,
@@ -141,7 +182,7 @@ def install_dependencies(cwd, home=None, project_id=None, timeout=600):
         "venv_scripts_dir": venv_scripts_dir if manifest in _PYTHON_MANIFESTS else None,
     }
     try:
-        stdout, stderr = run_process(command, cwd, "", timeout, lambda: False)
+        stdout, stderr = run_process(command, cwd, "", timeout, lambda: False, env=env)
         return base | {"installed": True, "stdout": redact(stdout), "stderr": stderr}
     except AgentProcessError as exc:
         return base | {
@@ -213,6 +254,8 @@ def _resolve_against_venv(command, venv_scripts_dir):
     if not command:
         return command
     stem = Path(command[0]).stem.lower()
+    if re.fullmatch(r"python(?:\d+(?:\.\d+)?)?", stem):
+        stem = "python"
     candidate = Path(venv_scripts_dir) / (stem + (".exe" if os.name == "nt" else ""))
     if candidate.is_file():
         return [str(candidate), *command[1:]]
@@ -235,13 +278,42 @@ def execute_test_command(bridge, project_id, task_id, command, identity, cwd=Non
     that venv's absolute interpreter path.
     """
     cwd = cwd or _implementation_workspace(bridge, project_id, task_id)
-    dependencies = install_dependencies(cwd, home=bridge.home, project_id=project_id)
+    settings = bridge.get_project_settings(project_id)
+    runtime = settings.get("runtime")
+    selected = None
+    if runtime:
+        if runtime["language"] != "python" and not settings.get("test_command"):
+            return record_test_evidence(bridge, project_id, task_id, {
+                "passed": False, "executed_by_host": False, "runtime": runtime, "runtime_blocked": True,
+                "reason": "Configure a test command for the selected language before running tests",
+            })
+        try:
+            selected = require_runtime(runtime)
+        except BridgeError as exc:
+            return record_test_evidence(bridge, project_id, task_id, {
+                "passed": False, "executed_by_host": False, "runtime": runtime,
+                "runtime_blocked": True, "reason": str(exc),
+            })
+    try:
+        dependencies = (
+            install_dependencies(cwd, home=bridge.home, project_id=project_id, runtime=runtime)
+            if runtime else install_dependencies(cwd, home=bridge.home, project_id=project_id)
+        )
+    except (BridgeError, OSError, subprocess.TimeoutExpired) as exc:
+        return record_test_evidence(bridge, project_id, task_id, {
+            "passed": False, "executed_by_host": False, "runtime": runtime,
+            "runtime_blocked": bool(runtime),
+            "reason": redact(str(exc)),
+        })
     if dependencies["detected"] and dependencies["installed"] is False:
         result = {"passed": False, "reason": dependencies["reason"]}
     else:
         scripts_dir = dependencies.get("venv_scripts_dir")
-        env = _venv_environment(scripts_dir) if scripts_dir else None
-        command = _resolve_against_venv(command, scripts_dir) if scripts_dir else command
+        env = _venv_environment(scripts_dir) if scripts_dir else runtime_environment(selected) if selected else None
+        if scripts_dir:
+            command = _resolve_against_venv(command, scripts_dir)
+        elif selected:
+            command = resolve_runtime_command(command, selected, env)
         try:
             stdout, stderr = run_process(command, cwd, "", 600, lambda: False, env=env)
             result = {"passed": True, "stdout": redact(stdout), "stderr": stderr}
@@ -264,7 +336,7 @@ def execute_test_command(bridge, project_id, task_id, command, identity, cwd=Non
                     "stdout": exc.stdout,
                     "stderr": exc.stderr,
                 }
-        except BridgeError as exc:
+        except (BridgeError, OSError) as exc:
             result = {"passed": False, "error": redact(str(exc))}
     result |= {
         "executed_by_host": True,
@@ -274,6 +346,7 @@ def execute_test_command(bridge, project_id, task_id, command, identity, cwd=Non
         # operator-configured nominal command — evidence should describe reality.
         "command": command,
         "dependencies": dependencies,
+        "runtime": selected,
     }
     return record_test_evidence(bridge, project_id, task_id, result)
 

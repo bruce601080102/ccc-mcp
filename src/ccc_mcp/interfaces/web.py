@@ -393,6 +393,27 @@ async def set_language(request: Request):
 
 
 @endpoint
+async def set_runtime(request: Request):
+    body = await _body(request)
+    if "runtime" not in body:
+        raise BridgeError("runtime is required; use null to clear")
+    result = await run(
+        bridge_of(request).configure_runtime, request.path_params["project_id"], body["runtime"]
+    )
+    return JSONResponse(result)
+
+
+@endpoint
+async def check_runtime(request: Request):
+    body = await _body(request)
+    result = await run(
+        bridge_of(request).check_project_runtime,
+        request.path_params["project_id"], body.get("runtime"),
+    )
+    return JSONResponse(result)
+
+
+@endpoint
 async def set_test_command(request: Request):
     bridge = bridge_of(request)
     body = await _body(request)
@@ -773,6 +794,8 @@ ROUTES = [
     Route("/api/projects/{project_id}/config/profile", set_profile, methods=["POST"]),
     Route("/api/projects/{project_id}/config/language", set_language, methods=["POST"]),
     Route("/api/projects/{project_id}/config/test-command", set_test_command, methods=["POST"]),
+    Route("/api/projects/{project_id}/config/runtime", set_runtime, methods=["POST"]),
+    Route("/api/projects/{project_id}/config/runtime/check", check_runtime, methods=["POST"]),
     Route("/api/projects/{project_id}/config/meeting-mode", set_meeting_mode, methods=["POST"]),
     Route("/api/projects/{project_id}/context", get_context, methods=["GET"]),
     Route("/api/projects/{project_id}/mcp", list_mcp, methods=["GET"]),

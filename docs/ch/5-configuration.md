@@ -17,6 +17,28 @@ ccc-mcp --project my-project config show
 
 CLI 不存在、登入失敗或 Agent 執行失敗時，不會假裝成功或改成 ChatGPT 直接寫檔。可讀 `get_task_status`、`get_task_result`、`get_task_usage` 與 `bootstrap_project.context_sync` 查看真實進度及證據。`QUEUED` 只表示已排入，不表示模型完成；成功報告與原始檔案證據才算執行。
 
+## 程式語言與執行環境版本
+
+在 Web 控制台選擇專案 →「設定」→「專案執行環境」，可指定程式語言、版本，以及本機執行檔。按「檢查本機版本」會顯示實際版本與執行檔路徑；檢查也可預覽尚未儲存的選項。按「儲存執行環境」後，UI、CLI、`.ccc-mcp/settings.json` 與後續各角色的交接資料會使用相同設定。
+
+```bash
+ccc-mcp --project my-project config runtime --language python --version 3.9
+ccc-mcp --project my-project config runtime --check
+# 也能指定本機直譯器或現有 venv 的 Python
+ccc-mcp --project my-project config runtime --language python --version 3.9 --executable "C:/Python39/python.exe"
+# Node.js 範例；JavaScript／TypeScript 的版本代表 Node.js 版本
+ccc-mcp --project my-project config runtime --language javascript --version 22
+ccc-mcp --project my-project config test-command "npm test"
+# 移除指定，恢復預設行為
+ccc-mcp --project my-project config runtime --clear
+```
+
+支援 Python、JavaScript、TypeScript、Go、Java、C#（.NET SDK）、Rust、PHP 與 Ruby。版本採數字前綴：`3.9` 允許任何 `3.9.x`，`3.9.13` 則要求該修補版本；留空只指定語言或執行檔。執行檔欄位接受指令名稱或絕對路徑，不接受附加參數。
+
+請先在本機安裝需要的環境；這項設定不會下載語言版本，也不會變更運行 ccc-mcp 本身的 Python。未指定 Python 執行檔時，Windows 會讀取 `py` 的已安裝清單並檢查實際版本，再檢查 PATH；其他語言使用指定執行檔或 PATH，找不到符合版本時會明確阻擋測試。可透過執行檔路徑指定版本管理工具所安裝的環境。
+
+Python 會用選定直譯器建立依設定區分的專案測試 venv，放在 `<home>/venvs/<project>-<設定雜湊>/`；相依套件與主機測試都在該環境執行，不會沿用舊的預設 venv。其他語言須另設測試指令；Node.js 專案會在指定環境執行 npm 安裝，其他工具鏈由測試指令處理建置與相依套件。版本不符的結果會保存於測試證據，不會改用其他版本繼續。Agent 也會收到語言與版本限制。執行中的 agent 結束後才能透過 UI／CLI 改變環境設定。
+
 ## 角色與模型
 
 可設定 `SA`、`SD`、`RD`、`SD/RD`、`REVIEW`，每個角色可選 `codex`、`claude` 或 `chatgpt`；預設 SA／REVIEW 是 Codex，SD／RD／SD/RD 是 Claude。SA 與 REVIEW 唯讀。可依需要指定模型、思考等級與額度不足時的接手角色：

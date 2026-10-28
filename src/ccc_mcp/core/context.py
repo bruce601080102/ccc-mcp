@@ -1350,7 +1350,8 @@ class ContextHub:
         latest = self.latest(project_id)
         snapshot = latest["snapshot"]
         root = Path(self.project(project_id)["root"])
-        language = self.get_project_settings(project_id)["language"]
+        settings = self.get_project_settings(project_id)
+        language = settings["language"]
         content = {
             "shared_context": snapshot,
             "context_sync": self.context_sync_status(project_id),
@@ -1359,6 +1360,13 @@ class ContextHub:
             "invariants": snapshot["invariants"],
             "next_action": snapshot["next_action"],
             "available_skills": available_skills(self.home),
+            "runtime": settings["runtime"],
+            "runtime_policy": (
+                "Use the configured project language/runtime version for code, dependencies and tests. "
+                "The version is a numeric prefix (3.9 means 3.9.x); JS/TS versions mean Node.js. "
+                "Do not substitute ccc-mcp's Python version or install/change a runtime silently. "
+                "If the required runtime is unavailable, report the blocker."
+            ) if settings["runtime"] else None,
         }
         refs = snapshot["source_document_refs"][:]
         refs += [result["source_document_ref"] for result in snapshot["agent_results"]]

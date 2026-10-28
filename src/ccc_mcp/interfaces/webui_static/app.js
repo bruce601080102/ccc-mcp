@@ -817,6 +817,7 @@
       </div>
     `).join("");
     const mm = overview.editable.meeting_mode || {};
+    const runtime = overview.editable.runtime || {};
     layout(`
       <div class="title-row"><div><h1>Settings</h1><div class="sub">${esc(id)} · ${UI.translate("profile")}: ${esc(overview.profile)}</div></div></div>
       <div class="section">
@@ -853,6 +854,36 @@
               <div class="hint">Space-separated argv, never a shell string.</div>
             </div>
             <button class="btn small" id="save-test-command">Save</button>
+          </div>
+        </div>
+      </div>
+      <div class="section">
+        <div class="section-row">
+          <div class="section-label"><div class="t">Project runtime</div><div class="d">Choose the language and installed runtime used for this project's code and tests.</div></div>
+          <div class="section-panel">
+            <div class="field">
+              <label for="runtime-language">Programming language</label>
+              <select id="runtime-language">
+                <option value="" ${!runtime.language ? "selected" : ""}>Default environment</option>
+                ${Object.entries(overview.available_runtimes || {}).map(([key, label]) => `<option value="${esc(key)}" ${runtime.language === key ? "selected" : ""}>${esc(label)}</option>`).join("")}
+              </select>
+            </div>
+            <div class="field">
+              <label for="runtime-version">Runtime version</label>
+              <input type="text" id="runtime-version" value="${esc(runtime.version)}" placeholder="e.g. 3.9 or 22.14.0" autocomplete="off" />
+              <div class="hint">3.9 accepts any 3.9.x patch. JavaScript and TypeScript use the Node.js version.</div>
+            </div>
+            <div class="field">
+              <label for="runtime-executable">Local executable (optional)</label>
+              <input type="text" id="runtime-executable" value="${esc(runtime.executable)}" placeholder="e.g. C:/Python39/python.exe" autocomplete="off" />
+              <div class="hint">Absolute executable path or command name, without arguments. Leave empty to find an installed runtime.</div>
+            </div>
+            <div class="hint">Python uses a separate virtual environment per selection. Set a test command for other languages. Install the required runtime locally first.</div>
+            <div class="actions" style="margin-top:12px">
+              <button class="btn small" id="save-runtime">Save runtime</button>
+              <button class="btn small" id="check-runtime">Check local version</button>
+            </div>
+            <div id="runtime-status" class="hint" role="status" aria-live="polite"></div>
           </div>
         </div>
       </div>
@@ -905,6 +936,55 @@
         await api(`/projects/${encodeURIComponent(id)}/config/test-command`, { method: "POST", body: { command } });
         toast("Test command saved.");
       } catch (err) { toast(err.message, true); }
+    });
+    function runtimeSelection() {
+      const language = document.getElementById("runtime-language").value;
+      return language ? {
+        language,
+        version: document.getElementById("runtime-version").value.trim() || null,
+        executable: document.getElementById("runtime-executable").value.trim() || null,
+      } : null;
+    }
+    const runtimeStatus = document.getElementById("runtime-status");
+    const runtimeLanguage = document.getElementById("runtime-language");
+    function runtimeFieldsChanged() {
+      const disabled = !runtimeLanguage.value;
+      document.getElementById("runtime-version").disabled = disabled;
+      document.getElementById("runtime-executable").disabled = disabled;
+      runtimeStatus.textContent = "";
+    }
+    runtimeFieldsChanged();
+    runtimeLanguage.addEventListener("change", runtimeFieldsChanged);
+    ["runtime-version", "runtime-executable"].forEach((name) => {
+      document.getElementById(name).addEventListener("input", () => { runtimeStatus.textContent = ""; });
+    });
+    document.getElementById("save-runtime").addEventListener("click", async (event) => {
+      const button = event.currentTarget;
+      button.disabled = true;
+      try {
+        await api(`/projects/${encodeURIComponent(id)}/config/runtime`, { method: "POST", body: { runtime: runtimeSelection() } });
+        if (!stale(gen)) runtimeStatus.textContent = UI.translate("Runtime saved. Check the local version to verify availability.");
+        toast("Runtime saved.");
+      } catch (err) { toast(err.message, true); }
+      finally { button.disabled = false; }
+    });
+    document.getElementById("check-runtime").addEventListener("click", async (event) => {
+      const button = event.currentTarget;
+      button.disabled = true;
+      runtimeStatus.textContent = UI.translate("Checking…");
+      try {
+        const selection = runtimeSelection();
+        if (!selection) {
+          runtimeStatus.textContent = UI.translate("Default environment; no runtime version selected.");
+          return;
+        }
+        const result = await api(`/projects/${encodeURIComponent(id)}/config/runtime/check`, { method: "POST", body: { runtime: selection } });
+        if (stale(gen)) return;
+        runtimeStatus.textContent = result.matches && result.available
+          ? `${UI.translate("Runtime available")}: ${result.actual_version} · ${result.executable}`
+          : `${UI.translate("Runtime unavailable or version mismatch")}: ${result.reason}`;
+      } catch (err) { if (!stale(gen)) runtimeStatus.textContent = err.message; }
+      finally { button.disabled = false; }
     });
     document.getElementById("save-meeting-mode").addEventListener("click", async () => {
       const enabled = document.getElementById("mm-enabled").checked;
