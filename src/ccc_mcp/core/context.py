@@ -154,9 +154,8 @@ class ContextHub:
             # The directory was deleted outside ccc-mcp (e.g. a manual `rm -rf`). SQLite
             # remains authoritative for Context/tasks/decisions — none of that is lost —
             # so recreate an empty, Git-initialized root instead of leaving the
-            # registration permanently unusable (there is no supported way to delete a
-            # registration: project_access_events/context_versions/decisions are
-            # deliberately append-only). Never silent: the recovery is always recorded
+            # registration unusable until the operator explicitly removes it with
+            # `project remove`. Never silent: the recovery is always recorded
             # as a SYSTEM Context update, visible via context show/bootstrap_project.
             self._repair_missing_project_root(project_id, root)
         elif root.resolve() != root:

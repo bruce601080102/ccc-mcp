@@ -126,7 +126,7 @@ Read the numbered documents in order for a full setup. The two language trees us
 
 Continuous write authorization — granted via `project authorize`, `project add --write`/`project create --write`, or the web console's "Enable write" — permits ccc-mcp to modify that project and run its configured test command. Dependency installation can execute package scripts, so review dependency changes as part of the diff. Codex runs in its configured sandbox. Claude Code has a restricted tool policy, but does **not** yet have an equivalent OS-enforced sandbox; use a least-privileged OS account for it.
 
-Done with a project? `ccc-mcp project revoke <id>` (if still authorized) then `ccc-mcp project delete <id>` permanently removes it from `project list` and blocks the ID from ever being used or re-registered again. It never deletes files on disk or any historical Context/task/evidence — delete the project directory yourself once you've confirmed its path. See [reliability and security](docs/en/7-reliability-and-security.md) for the full guarantee.
+To remove a project from `project list` while keeping its folder, use `ccc-mcp project remove <id>` (or the web console's **Remove, keep folder** action). This archives ccc-mcp history and lets you register the same ID again. Add `--delete-files` only when you also want to permanently delete the project's directory; the CLI and web console require a separate typed confirmation. Running executions must finish or be cancelled first. `project delete` is different: it permanently retires the ID and preserves historical records and files. See [reliability and security](docs/en/7-reliability-and-security.md) for the full guarantee.
 
 ## Development
 

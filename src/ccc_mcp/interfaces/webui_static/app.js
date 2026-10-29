@@ -591,11 +591,25 @@
       <div class="section">
         <div class="section-row">
           <div class="section-label">
-            <div class="t">Deregister project</div>
+            <div class="t">Remove from ccc-mcp</div>
+            <div class="d">Removes this project from the list and archives its ccc-mcp history. You can register the ID again. Choose whether to keep or delete the folder.</div>
+          </div>
+          <div class="section-panel">
+            <div class="project-remove-actions">
+              <button class="btn primary" id="btn-remove">Remove, keep folder…</button>
+              <button class="btn danger" id="btn-remove-files">Remove and delete folder…</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="section">
+        <div class="section-row">
+          <div class="section-label">
+            <div class="t">Permanently retire project ID</div>
             <div class="d">Permanently retires this project ID. Never deletes files on disk or historical records. Cannot be undone.</div>
           </div>
           <div class="section-panel">
-            <button class="btn danger" id="btn-delete" ${access.mode === "read-write" ? "disabled" : ""}>Delete project…</button>
+            <button class="btn danger" id="btn-delete" ${access.mode === "read-write" ? "disabled" : ""}>Retire ID…</button>
             ${access.mode === "read-write" ? `<div class="hint">Revoke write access first.</div>` : ""}
           </div>
         </div>
@@ -633,16 +647,43 @@
         },
       });
     });
+    for (const [buttonId, deleteFiles] of [["btn-remove", false], ["btn-remove-files", true]]) {
+      document.getElementById(buttonId).addEventListener("click", async () => {
+        let preview;
+        try {
+          preview = await api(`/projects/${encodeURIComponent(id)}/remove-preview?delete_files=${deleteFiles}`);
+        } catch (err) { toast(err.message, true); return; }
+        confirmTextModal({
+          title: deleteFiles ? "Remove and delete folder" : "Remove, keep folder",
+          description: UI.getLocale() === "en" ? preview.description_en : preview.description,
+          challenge: preview.challenge,
+          confirmLabel: deleteFiles ? "Delete folder and remove" : "Remove from list",
+          onConfirm: async (typed) => {
+            const result = await api(`/projects/${encodeURIComponent(id)}/remove`, {
+              method: "POST", body: { confirm: typed, delete_files: deleteFiles },
+            });
+            if (result.cleanup_error) {
+              toast(`${UI.translate("Project removed, but folder cleanup failed. Remaining path:")} ${result.remaining_path}`, true);
+            } else if (result.directory_was_missing) {
+              toast("Project removed; the folder was already missing.");
+            } else {
+              toast(result.files_deleted ? "Project and folder removed." : "Project removed; folder kept.");
+            }
+            navTo("/");
+          },
+        });
+      });
+    }
     const deleteBtn = document.getElementById("btn-delete");
     if (!deleteBtn.disabled) deleteBtn.addEventListener("click", async () => {
       let preview;
       try { preview = await api(`/projects/${encodeURIComponent(id)}/delete-preview`); }
       catch (err) { toast(err.message, true); return; }
       confirmTextModal({
-        title: "Delete project",
+        title: "Permanently retire project ID",
         description: preview.description,
         challenge: preview.challenge,
-        confirmLabel: "Delete",
+        confirmLabel: "Retire ID",
         onConfirm: async (typed) => {
           await api(`/projects/${encodeURIComponent(id)}/delete`, { method: "POST", body: { confirm: typed } });
           toast("Project deregistered.");

@@ -32,6 +32,45 @@ def mkrepo(tmp_path, name):
     return repo
 
 
+def test_remove_project_keeps_folder_by_default_and_checks_confirmation(tmp_path, client):
+    repo = mkrepo(tmp_path, "removable")
+    assert client.post("/api/projects/add", json={"path": str(repo), "id": "removable"}).status_code == 200
+    preview = client.get("/api/projects/removable/remove-preview").json()
+    assert preview["challenge"] == "REMOVE removable"
+    assert "project folder" in preview["description_en"]
+    denied = client.post("/api/projects/removable/remove", json={"confirm": "wrong"})
+    assert denied.status_code == 400
+    assert client.get("/api/projects").json()
+    result = client.post(
+        "/api/projects/removable/remove",
+        json={"confirm": preview["challenge"]},
+    )
+    assert result.status_code == 200, result.text
+    assert result.json()["files_deleted"] is False
+    assert repo.exists()
+    assert client.get("/api/projects").json() == []
+
+
+def test_remove_project_delete_folder_requires_separate_challenge(tmp_path, client):
+    repo = mkrepo(tmp_path, "removable")
+    client.post("/api/projects/add", json={"path": str(repo), "id": "removable"})
+    preview = client.get("/api/projects/removable/remove-preview?delete_files=true").json()
+    assert preview["challenge"] == "REMOVE FILES removable"
+    denied = client.post(
+        "/api/projects/removable/remove",
+        json={"confirm": "REMOVE removable", "delete_files": True},
+    )
+    assert denied.status_code == 400
+    assert repo.exists()
+    result = client.post(
+        "/api/projects/removable/remove",
+        json={"confirm": preview["challenge"], "delete_files": True},
+    )
+    assert result.status_code == 200, result.text
+    assert result.json()["files_deleted"] is True
+    assert not repo.exists()
+
+
 # --- Trust boundary --------------------------------------------------------
 
 

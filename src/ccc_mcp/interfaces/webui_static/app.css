@@ -531,3 +531,4 @@ tr.clickable:focus-visible { outline: 2px solid var(--accent); outline-offset: -
   .connect-row-actions { width: 100%; }
   .modal { padding: 20px; }
 }
+.project-remove-actions { display: flex; flex-wrap: wrap; gap: 8px; }

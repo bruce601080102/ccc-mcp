@@ -518,6 +518,25 @@ def project_delete(ctx: typer.Context, id: str):
 
 
 @project_app.command(
+    "remove",
+    help=t(
+        "從 ccc-mcp 清單移除專案並封存工作紀錄；預設保留原資料夾。加 --delete-files 才刪除原資料夾。ID 可重新註冊。",
+        "Remove a project from ccc-mcp and archive its history. Keep its folder by default; "
+        "--delete-files removes the folder too. The ID can be registered again.",
+    ),
+)
+def project_remove(
+    ctx: typer.Context,
+    id: str,
+    delete_files: Annotated[
+        bool,
+        typer.Option("--delete-files", help="Also permanently delete the project directory"),
+    ] = False,
+):
+    output(bridge(ctx).remove_project_local(id, delete_files=delete_files))
+
+
+@project_app.command(
     "create",
     help=t(
         "建立新專案與 Git 基準；不搬移或覆寫既有目錄。"

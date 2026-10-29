@@ -127,7 +127,7 @@ ccc-mcp ui
 
 持續寫入授權——不論是透過 `project authorize`、`project add --write`／`project create --write`，或 Web 控制台的「啟用寫入」——都允許 ccc-mcp 修改該專案並執行設定的測試命令。相依套件安裝可能執行 package script，因此相依變更也必須納入 diff 審閱。Codex 依設定的 sandbox 執行；Claude Code 雖有限制工具政策，但尚未有同等的 OS 強制 sandbox，應以最低權限的 OS 帳戶執行。
 
-不想再用某個專案了？先 `ccc-mcp project revoke <id>`（若目前仍是持續授權狀態），再執行 `ccc-mcp project delete <id>` 永久從 `project list` 移除，之後這個 ID 不能再被使用或重新註冊。它不會刪除磁碟上的檔案，也不會刪除任何歷史 Context／task／證據——確認路徑後請自行刪除專案目錄。完整說明見[可靠性與安全邊界](docs/ch/7-reliability-and-security.md)。
+只想從 `project list` 移除專案？執行 `ccc-mcp project remove <id>`，預設保留原資料夾，封存 ccc-mcp 歷史後仍可重用該 ID。確定連原資料夾也要永久刪除時，才加上 `--delete-files`；兩種模式會要求不同的確認文字，執行中的 Agent 任務必須先結束或取消。`project delete` 是另一種操作：永久註銷 ID、保留原資料夾及歷史證據，不可重用。完整說明見[可靠性與安全邊界](docs/ch/7-reliability-and-security.md)。
 
 ## 開發
 

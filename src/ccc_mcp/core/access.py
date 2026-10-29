@@ -1,9 +1,16 @@
 """One local project authorization for the Agent-led project workstream."""
 
+import json
+import os
+import shutil
+import sqlite3
+import stat
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 
 from ..adapters.storage import now
+from ..infra.config import metadata_name
 from ..infra.errors import BridgeError, PermissionDenied, VersionConflict
 from ..infra.security import digest
 
@@ -30,7 +37,220 @@ def _deregister_description(project_id, project):
     )
 
 
+def _remove_description(project_id, project, delete_files):
+    files = (
+        "專案根目錄及其中所有檔案也會從磁碟永久刪除；無法復原。"
+        if delete_files
+        else "原始專案資料夾及程式碼會保留，僅 .ccc-mcp 管理資料會搬入封存。"
+    )
+    return (
+        f"移除 ccc-mcp 專案註冊：{project_id}\n{project['root']}\n\n"
+        "此專案會從 project list 消失；其 ccc-mcp 歷史與設定先備份到 archives，"
+        "之後可使用同一 ID 重新註冊。" + files
+    )
+
+
+def _remove_description_en(project_id, project, delete_files):
+    files = (
+        "The entire project folder and all its contents will be permanently deleted."
+        if delete_files
+        else "The project folder and source files will be kept; only ccc-mcp metadata is archived."
+    )
+    return (
+        f"Remove ccc-mcp registration: {project_id}\n{project['root']}\n\n"
+        "The project will disappear from project list. Its ccc-mcp history and settings "
+        "are backed up under archives, and the same ID can be registered again. " + files
+    )
+
+
+def _retry_readonly_delete(operation, path, exc_info):
+    """Allow Windows read-only Git objects to be removed; never follow symlinks."""
+    error = exc_info[1]
+    if os.name != "nt" or not isinstance(error, PermissionError):
+        raise error
+    os.chmod(path, os.stat(path, follow_symlinks=False).st_mode | stat.S_IWRITE)
+    operation(path)
+
+
 class ProjectAccessHub:
+    def _removable_project(self, project_id):
+        # Do not call project(): its missing-root recovery creates a new folder, which
+        # would violate the default "keep existing files unchanged" removal behavior.
+        row = self.store.one("SELECT * FROM projects WHERE id=?", (project_id,))
+        if not row or self.store.one(
+            "SELECT 1 FROM project_deletions WHERE project_id=?", (project_id,)
+        ):
+            raise BridgeError("Project is not registered")
+        root = Path(row["root"])
+        if root.is_symlink() or (hasattr(root, "is_junction") and root.is_junction()):
+            raise BridgeError("Refusing to remove a project whose root is a symlink or junction")
+        return row
+
+    def remove_project_local(self, project_id, delete_files=False):
+        from .approval import confirm_local
+
+        return self._remove_project(project_id, bool(delete_files), confirm_local)
+
+    def remove_project_web(self, project_id, typed_confirmation, delete_files=False):
+        from .approval import confirm_web
+
+        def confirm(_description, challenge):
+            return confirm_web(challenge, typed_confirmation)
+
+        return self._remove_project(project_id, bool(delete_files), confirm)
+
+    def remove_preview(self, project_id, delete_files=False):
+        project = self._removable_project(project_id)
+        if delete_files and Path(project["root"]).exists():
+            self._check_removable_root(Path(project["root"]))
+        return {
+            "description": _remove_description(project_id, project, delete_files),
+            "description_en": _remove_description_en(project_id, project, delete_files),
+            "challenge": f"REMOVE FILES {project_id}" if delete_files else f"REMOVE {project_id}",
+            "delete_files": bool(delete_files),
+        }
+
+    def _check_removable_root(self, root):
+        if root.is_symlink() or (hasattr(root, "is_junction") and root.is_junction()):
+            raise BridgeError("Refusing to delete a symlink or junction project root")
+        resolved = root.resolve(strict=True)
+        if root.parent == root or Path.home().resolve().is_relative_to(resolved):
+            raise BridgeError("Refusing to delete the home directory or an ancestor")
+        if self.home.resolve().is_relative_to(resolved):
+            raise BridgeError("Refusing to delete the ccc-mcp data directory or an ancestor")
+        if Path.cwd().resolve().is_relative_to(resolved):
+            raise BridgeError("Current working directory is inside this project; run ccc-mcp from outside it before deleting files")
+        for other in self.store.all("SELECT id,root FROM projects"):
+            other_root = Path(other["root"]).resolve()
+            if other_root != resolved and other_root.is_relative_to(resolved):
+                raise BridgeError(f"Another registered project is inside this directory: {other['id']}")
+        return resolved
+
+    def _remove_project(self, project_id, delete_files, confirm):
+        project = self._removable_project(project_id)
+        if delete_files and Path(project["root"]).exists():
+            self._check_removable_root(Path(project["root"]))
+        if self.store.one(
+            "SELECT 1 FROM agent_executions WHERE project_id=? AND status IN ('QUEUED','RUNNING')",
+            (project_id,),
+        ):
+            raise BridgeError("Wait for or cancel the active execution before removing the project")
+        challenge = f"REMOVE FILES {project_id}" if delete_files else f"REMOVE {project_id}"
+        identity = confirm(_remove_description(project_id, project, delete_files), challenge)
+        with self.lock(project_id):
+            current = self._removable_project(project_id)
+            if current["root"] != project["root"]:
+                raise VersionConflict("Project root changed during removal")
+            if self.store.one(
+                "SELECT 1 FROM agent_executions WHERE project_id=? "
+                "AND status IN ('QUEUED','RUNNING')", (project_id,)
+            ):
+                raise BridgeError("Wait for or cancel the active execution before removing the project")
+            root = Path(project["root"])
+            if delete_files and root.exists():
+                self._check_removable_root(root)
+            stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+            archive = self.home / "archives" / f"{project_id}-removed-{stamp}-{uuid.uuid4().hex[:6]}"
+            archive.mkdir(parents=True, mode=0o700)
+            with sqlite3.connect(self.store.path) as source, sqlite3.connect(archive / "bridge.sqlite3") as target:
+                source.backup(target)
+            try:
+                (archive / "bridge.sqlite3").chmod(0o600)
+            except OSError:
+                pass
+            metadata = root / metadata_name(root)
+            moved = []
+            staged_root = None
+            rows = self.store.all(
+                "SELECT DISTINCT task_id,worktree FROM agent_executions "
+                "WHERE project_id=? AND worktree IS NOT NULL", (project_id,)
+            )
+            settings_row = self.store.one(
+                "SELECT content FROM project_settings WHERE project_id=?", (project_id,)
+            )
+            settings = json.loads(settings_row["content"]) if settings_row else {}
+            worktree_dir = Path(settings.get("worktree_dir", str(self.home / "worktrees")))
+            worktrees = []
+            for row in rows:
+                path = Path(row["worktree"])
+                if not path.exists() or path == root or (delete_files and path.is_relative_to(root)):
+                    continue
+                expected = worktree_dir / project_id / row["task_id"]
+                if path.resolve() != expected.resolve():
+                    raise BridgeError(f"Refusing to move unexpected worktree: {path}")
+                worktrees.append((row["task_id"], path))
+            try:
+                if delete_files and root.exists():
+                    staged_root = root.with_name(f".{root.name}.ccc-mcp-removing-{uuid.uuid4().hex[:8]}")
+                    root.rename(staged_root)
+                    moved.append((staged_root, root))
+                # Archive managed worktrees outside a folder scheduled for deletion;
+                # never follow an unexpected execution-supplied path.
+                for task_id, path in worktrees:
+                    target = archive / "worktrees" / task_id
+                    target.parent.mkdir(exist_ok=True)
+                    if not target.exists():
+                        shutil.move(str(path), str(target))
+                        moved.append((target, path))
+                if staged_root is None and (metadata.exists() or metadata.is_symlink()):
+                    target = archive / "project-metadata"
+                    shutil.move(str(metadata), str(target))
+                    moved.append((target, metadata))
+                with self.store.transaction() as conn:
+                    trigger_names = (
+                        "project_access_no_delete", "project_receipt_no_delete",
+                        "workspace_edits_no_delete", "workspace_batches_no_delete",
+                        "context_no_delete", "decisions_no_delete",
+                        "meeting_clarifications_no_delete",
+                    )
+                    trigger_sql = [
+                        row[0] for row in conn.execute(
+                            "SELECT sql FROM sqlite_master WHERE type='trigger' "
+                            f"AND name IN ({','.join('?' for _ in trigger_names)})",
+                            trigger_names,
+                        )
+                    ]
+                    for trigger in trigger_names:
+                        conn.execute(f"DROP TRIGGER {trigger}")
+                    conn.execute(
+                        "DELETE FROM project_write_receipts WHERE edit_id IN "
+                        "(SELECT id FROM workspace_edits WHERE project_id=?)", (project_id,)
+                    )
+                    for table in (
+                        "pending_dispatch", "meeting_clarifications", "approvals", "plans",
+                        "task_events", "agent_executions", "artifacts", "decisions",
+                        "context_patches", "context_versions", "tasks", "workspace_batches",
+                        "workspace_edits", "project_access_events", "project_settings",
+                    ):
+                        conn.execute(f"DELETE FROM {table} WHERE project_id=?", (project_id,))
+                    conn.execute("DELETE FROM projects WHERE id=?", (project_id,))
+                    # Restore every immutable-history trigger before committing.
+                    for sql in trigger_sql:
+                        conn.execute(sql)
+            except BaseException:
+                for source, destination in reversed(moved):
+                    if source.exists() and not destination.exists():
+                        destination.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.move(str(source), str(destination))
+                raise
+            # The original directory path is already gone. A cleanup failure leaves the
+            # staging directory intact and reports its path instead of claiming deletion.
+            cleanup_error = None
+            if staged_root is not None:
+                try:
+                    shutil.rmtree(staged_root, onerror=_retry_readonly_delete)
+                except OSError as exc:
+                    cleanup_error = str(exc)
+            return {
+                "project_id": project_id,
+                "removed": True,
+                "files_deleted": bool(delete_files and cleanup_error is None),
+                "directory_was_missing": not root.exists() and staged_root is None,
+                "archive": str(archive),
+                "identity": identity,
+                **({"cleanup_error": cleanup_error, "remaining_path": str(staged_root)} if cleanup_error else {}),
+            }
+
     def get_project_access(self, project_id):
         project = self.project(project_id)
         event = self.store.one(

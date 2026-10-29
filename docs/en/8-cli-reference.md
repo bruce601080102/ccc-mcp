@@ -40,6 +40,8 @@ Use `config show`, `config providers`, and `config prompt <ROLE>` before changin
 
 To start the workflow over without retiring the project ID, run `ccc-mcp --project <id> clear history` (or the `clear-history` alias) in a local terminal. Do not use `project delete` for this: deletion permanently retires the ID. The clear command requires typing `CLEAR HISTORY <id>`, refuses while an Agent execution is queued or running, archives the full database plus generated project metadata and managed task worktrees, clears workflow records, and recreates Context v1. The project directory and source, ID, settings, authorization, and direct-write audit remain intact; the next task starts again at `TASK-0001`. The command returns the local archive path, normally below `~/.ccc-mcp/archives/`.
 
+To remove a project from the registered list instead, run `ccc-mcp project remove <id>`. It keeps the original folder by default, archives ccc-mcp history and generated metadata, and permits re-registration of the same ID. Use `ccc-mcp project remove <id> --delete-files` only if you also want to permanently delete that folder. Each mode requires a distinct typed confirmation (`REMOVE <id>` or `REMOVE FILES <id>`), and both refuse while an Agent execution is queued or running. Neither mode is the same as `project delete`, which permanently retires the ID.
+
 `task preflight` is a read-only pre-dispatch check — it installs nothing, never runs the test command, never touches Git, never dispatches or commits anything. The output is a leveled `checks[]` list (each `ready`/`warning`/`blocker`, with a `remediation` for anything short of `ready`) plus a `summary` tally; `ready` means there is no `blocker`:
 
 ```jsonc

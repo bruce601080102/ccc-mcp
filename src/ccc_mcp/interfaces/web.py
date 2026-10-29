@@ -301,6 +301,14 @@ async def deregister_preview(request: Request):
 
 
 @endpoint
+async def remove_preview(request: Request):
+    bridge = bridge_of(request)
+    delete_files = request.query_params.get("delete_files") == "true"
+    result = await run(bridge.remove_preview, request.path_params["project_id"], delete_files)
+    return JSONResponse(result)
+
+
+@endpoint
 async def clear_history_preview(request: Request):
     bridge = bridge_of(request)
     result = await run(bridge.clear_history_preview, request.path_params["project_id"])
@@ -330,6 +338,21 @@ async def delete_project(request: Request):
     body = await _body(request)
     result = await run(
         bridge.deregister_project_web, request.path_params["project_id"], body.get("confirm", "")
+    )
+    return JSONResponse(result)
+
+
+@endpoint
+async def remove_project(request: Request):
+    bridge = bridge_of(request)
+    body = await _body(request)
+    if not isinstance(body.get("delete_files", False), bool):
+        raise BridgeError("delete_files must be a boolean")
+    result = await run(
+        bridge.remove_project_web,
+        request.path_params["project_id"],
+        body.get("confirm", ""),
+        body.get("delete_files", False),
     )
     return JSONResponse(result)
 
@@ -783,6 +806,8 @@ ROUTES = [
     Route("/api/projects/{project_id}/revoke", revoke_project, methods=["POST"]),
     Route("/api/projects/{project_id}/delete", delete_project, methods=["POST"]),
     Route("/api/projects/{project_id}/delete-preview", deregister_preview, methods=["GET"]),
+    Route("/api/projects/{project_id}/remove", remove_project, methods=["POST"]),
+    Route("/api/projects/{project_id}/remove-preview", remove_preview, methods=["GET"]),
     Route("/api/projects/{project_id}/clear-history", clear_history, methods=["POST"]),
     Route(
         "/api/projects/{project_id}/clear-history-preview",

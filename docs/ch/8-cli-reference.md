@@ -118,6 +118,8 @@ ccc-mcp --project demo-app clear-history
 
 這不是刪除原始碼或 Git reset。專案資料夾、project ID、角色／Meeting Mode／測試設定、專案授權與直接寫檔稽核都會保留。清除前的完整 SQLite、`.ccc-mcp` metadata 和受管理 task worktree 會移到回傳的 `archive` 路徑（預設位於 `~/.ccc-mcp/archives/`），因此仍可稽核或人工復原。
 
+若要把專案從 `project list` 移除，請用 `ccc-mcp project remove demo-app`；預設保留原資料夾，並先封存 ccc-mcp 歷史與管理資料，之後可以用相同 ID 重新註冊。若連資料夾也要永久刪除，才加 `--delete-files`。兩種模式分別要求輸入 `REMOVE demo-app` 或 `REMOVE FILES demo-app`，且有 Agent 執行中時會拒絕。這與 `project delete` 的「永久註銷 ID」不同。
+
 ## 用瀏覽器操作：`ccc-mcp ui`
 
 ```bash
