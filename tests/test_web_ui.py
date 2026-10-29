@@ -104,6 +104,50 @@ def test_documentation_uses_selected_language_and_requires_token(tmp_path, clien
     assert anonymous.get("/api/docs/en/README").status_code == 401
 
 
+def test_global_skill_install_and_remove_affects_every_project(tmp_path, client, monkeypatch):
+    from ccc_mcp.adapters import skills as skill_registry
+
+    provider_root = tmp_path / "provider-skills"
+    source = provider_root / "shared-guidance"
+    source.mkdir(parents=True)
+    (source / "SKILL.md").write_text(
+        "---\nname: shared-guidance\ndescription: Shared guidance\n---\nFollow this guidance.\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        skill_registry, "_provider_skill_roots", lambda: [("Codex", provider_root)]
+    )
+    for project_id in ("first", "second"):
+        repo = mkrepo(tmp_path, project_id)
+        assert client.post(
+            "/api/projects/add", json={"path": str(repo), "id": project_id}
+        ).status_code == 200
+
+    discovered = client.get("/api/skills/discover").json()
+    selected = next(item for item in discovered if item["id"] == "shared-guidance")
+    assert selected["already_installed"] is False
+    installed = client.post(
+        "/api/skills/install-discovered",
+        json={"id": selected["id"], "path": selected["path"]},
+    )
+    assert installed.status_code == 200, installed.text
+    assert [skill["id"] for skill in client.get("/api/skills").json()] == ["shared-guidance"]
+    for project_id in ("first", "second"):
+        context = client.get(f"/api/projects/{project_id}/context").json()
+        assert any(
+            skill["id"] == "shared-guidance"
+            for skill in context["content"]["available_skills"]
+        )
+
+    path = "/api/skills/shared-guidance/remove"
+    assert client.post(path, json={"confirm": "wrong"}).status_code == 400
+    assert client.get("/api/skills").json()
+    removed = client.post(path, json={"confirm": "REMOVE SKILL shared-guidance"})
+    assert removed.status_code == 200, removed.text
+    assert client.get("/api/skills").json() == []
+    assert (source / "SKILL.md").is_file()
+
+
 def test_each_launch_gets_its_own_random_token(tmp_path):
     first = create_app(tmp_path / "home1")
     second = create_app(tmp_path / "home2")
@@ -491,6 +535,49 @@ def test_mcp_ui_probes_selected_tools_and_installs_only_the_selected_subset(
     removed = client.post("/api/projects/mcp-demo/mcp/example-mcp/remove")
     assert removed.status_code == 200
     assert client.get("/api/projects/mcp-demo/mcp").json()["installed"] == {}
+
+
+def test_mcp_ui_lists_venv_executable_and_installs_after_tool_selection(tmp_path, client, monkeypatch):
+    from ccc_mcp.adapters import mcp_servers
+
+    repo = mkrepo(tmp_path, "mcp-venv-repo")
+    binary = repo / ".venv" / "bin" / "codebase-memory-mcp"
+    binary.parent.mkdir(parents=True)
+    binary.write_text("#!/bin/sh\n")
+    binary.chmod(0o755)
+    client.post("/api/projects/add", json={"path": str(repo), "id": "mcp-venv"})
+    monkeypatch.setattr(mcp_servers, "client_config_files", lambda root=None: [])
+
+    probes = []
+    def probe(command, args):
+        probes.append(command)
+        return [{"name": "search", "description": "Search", "read_only": True}]
+
+    monkeypatch.setattr(
+        mcp_servers, "probe_tools",
+        probe,
+    )
+
+    listed = client.get("/api/projects/mcp-venv/mcp")
+    assert listed.status_code == 200
+    candidate = next(
+        item for item in listed.json()["discovered"]
+        if item["name"] == "codebase-memory-mcp" and item["command"] == str(binary)
+    )
+    assert listed.json()["installed"] == {}
+    assert probes == []
+    selected = {key: candidate[key] for key in ("name", "client", "source_file")}
+    preview = client.post("/api/projects/mcp-venv/mcp/probe", json=selected)
+    assert preview.status_code == 200, preview.text
+    assert preview.json()["tools"][0]["name"] == "search"
+    assert probes == [str(binary)]
+    installed = client.post(
+        "/api/projects/mcp-venv/mcp/install", json={**selected, "tools": ["search"]}
+    )
+    assert installed.status_code == 200, installed.text
+    assert client.get("/api/projects/mcp-venv/mcp").json()["installed"]["codebase-memory-mcp"][
+        "allowed_tools"
+    ] == ["search"]
 
 
 def test_mcp_ui_rejects_unlisted_or_remote_server_and_requires_token(tmp_path, client, monkeypatch):

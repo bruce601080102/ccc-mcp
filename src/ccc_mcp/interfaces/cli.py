@@ -15,7 +15,7 @@ from typer.core import TyperGroup
 
 from ..adapters.agent_setup import setup_provider
 from ..adapters.agents.base import native_executable
-from ..adapters.skills import install_skill, list_skills, remove_skill
+from ..adapters.skills import discover_skills, install_skill, list_skills, remove_skill
 from ..adapters.tunnel_client import (
     ensure_tunnel_client,
     forget_tunnel_key,
@@ -1809,6 +1809,24 @@ def mcp_remove(ctx: typer.Context, name: str):
 @skill_app.command("list", help=t("列出所有已安裝的 Skill。", "List every installed skill."))
 def skill_list(ctx: typer.Context):
     output(list_skills(bridge(ctx).home))
+
+
+@skill_app.command(
+    "discover",
+    help=t(
+        "列出本機 Claude Code（~/.claude/skills）與 Codex（~/.codex/skills）全域目錄中找得到的 "
+        "Skill——例如由 `npx <工具> init --global` 這類第三方安裝器裝的。每筆標示是否可安裝"
+        "（usable：SKILL.md 讀得到且有內容）以及是否已安裝到 ccc-mcp。可安裝的直接用 "
+        "`skill install <path>` 安裝。",
+        "List skills found in Claude Code's (~/.claude/skills) and Codex's (~/.codex/skills) "
+        "global directories on this machine — for example ones a third-party installer put "
+        "there via `npx <tool> init --global`. Each entry marks whether it is usable (a "
+        "readable SKILL.md with content) and whether it is already installed into ccc-mcp. "
+        "Install a usable one with `skill install <path>`.",
+    ),
+)
+def skill_discover(ctx: typer.Context):
+    output(discover_skills(bridge(ctx).home))
 
 
 @skill_app.command("remove", help=t("移除一個已安裝的 Skill。", "Remove an installed skill."))

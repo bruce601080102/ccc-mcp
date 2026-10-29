@@ -13,6 +13,8 @@ ccc-mcp skill remove my-skill
 
 Skill 全域安裝在 `~/.ccc-mcp/skills/<id>/`，所有專案與角色共用。內容會進入 agent prompt；只安裝信任來源。
 
+Web 控制台側邊欄的「全域 Skills」頁可探索 Claude Code／Codex 的本機 Skills，勾選多個後一次安裝給所有專案，也能查看與移除已安裝項目。移除會影響之後所有專案的交接，頁面會要求輸入確認文字；來源資料夾不會刪除。單一專案的「Skills 與 MCP」頁會列出目前共用的 Skills，管理時會帶你前往全域頁。
+
 ## Skill 何時可見
 
 它會出現在 `bootstrap_project`、`get_context` 及每次派工回傳的 `available_skills`。使用與否由當次 agent 自行判斷；它是 guidance，不是強制規則。
@@ -67,15 +69,15 @@ ccc-mcp --project <id> context show                          # available_skills 
 
 ## MCP 伺服器：讓派出的 agent 即時呼叫本機 MCP
 
-預設情況下，ccc-mcp 派出的 agent 不帶任何 MCP（Claude Code 用 `--strict-mcp-config` 加空清單，Codex 用 `--ignore-user-config`）。要讓某個專案的 agent 用本機的 stdio MCP 伺服器（例如 codebase-memory-mcp），請在終端機安裝：
+預設情況下，ccc-mcp 派出的 agent 不帶任何 MCP（Claude Code 用 `--strict-mcp-config` 加空清單，Codex 用 `--ignore-user-config`）。要讓某個專案的 agent 用本機的 stdio MCP 伺服器（例如 codebase-memory-mcp），可從終端機或本機 Web 控制台安裝：
 
 ### 必須事先設定：ChatGPT 自己做不到
 
-這裡沒有任何自動化。在操作者完成下面步驟之前，ChatGPT（以及所有被派出的 agent）都用不到這個 MCP，只會改讀原始碼；ChatGPT 無法自己安裝或建立索引，而且它能呼叫的工具裡也永遠不會有一個獨立的「codebase-memory」工具。
+系統會自動探索候選項目，但安裝仍由操作者決定。在完成下面步驟之前，ChatGPT（以及所有被派出的 agent）都用不到這個 MCP，只會改讀原始碼；ChatGPT 無法自己安裝或建立索引，而且它能呼叫的工具裡也永遠不會有一個獨立的「codebase-memory」工具。
 
 1. **這個工具必須在你的終端機能執行。** 以 codebase-memory-mcp 為例，`codebase-memory-mcp --version` 要能成功（它若在 conda/venv 裡，請先啟用）。
 2. **替專案做好前置準備。** codebase-memory-mcp 只能回答它已索引過的 repo：`codebase-memory-mcp cli index_repository '{"repo_path":"/path/to/project"}'`。
-3. **在同一個終端機安裝到你要的範圍**：`ccc-mcp --project <id> skill install mcp codebase-memory`（單一專案）或不加 `--project`（所有專案）。用 `--tools` 只啟用你能接受的工具。
+3. **安裝到你要的範圍**：可在 Web 控制台「Skills 與 MCP」選取候選項目、驗證並勾選工具，安裝到單一專案；也可在終端執行 `ccc-mcp --project <id> skill install mcp codebase-memory`（單一專案）或不加 `--project`（所有專案）。CLI 可用 `--tools` 只啟用你能接受的工具。
 4. **重新啟動 `ccc-mcp connect`，再到 ChatGPT 重新整理這個連線的工具清單**（或開新連線／新對話）；ChatGPT 會快取工具清單。
 5. **檢查：** 請 ChatGPT 列出它的 ccc-mcp 工具（必須看到 `call_installed_mcp_tool`），再請它使用 MCP，並用 `ccc-mcp mcp calls` 確認。`bootstrap_project` 也會回報 `installed_mcp`，在沒有安裝時會要 ChatGPT 告訴你需要做這些設定。
 
@@ -85,7 +87,7 @@ ccc-mcp --project <id> context show                          # available_skills 
 ccc-mcp skill install mcp codebase-memory                  # 沒有 --project ＝ 全域：所有專案的 agent 都拿得到
 ccc-mcp --project <id> skill install mcp codebase-memory   # 只給這個專案
 ccc-mcp skill install mcp codebase-memory --tools search_graph,get_architecture   # 只啟用部分工具
-ccc-mcp mcp list                                           # 全域安裝與各專案自己的安裝，以及你各個 MCP 客戶端（Claude Code/Desktop、Codex、VS Code、Cursor）定義的伺服器
+ccc-mcp mcp list                                           # 全域與專案安裝、MCP 客戶端設定，以及找到的本機 MCP 執行檔
 ccc-mcp --project <id> mcp list                            # 該專案的 agent 實際拿到的（每個標示 global／project）
 ccc-mcp mcp calls                                          # ChatGPT 經由 ccc-mcp 做過的 MCP 呼叫證據（參數摘要與結果狀態，不含回傳內容）
 ccc-mcp mcp remove codebase-memory                         # 移除全域安裝
@@ -98,10 +100,10 @@ ccc-mcp --project <id> mcp remove codebase-memory          # 移除該專案自�
 
 這會改變什麼、不會改變什麼：
 
-- **三種 provider 都支援。** Claude 以 `--mcp-config` 傳入並只放行啟用的工具（`--allowedTools`）；Codex 以 `-c mcp_servers.<名稱>.*` 覆寫傳入，搭配 `enabled_tools`，再加上 `required=true`（伺服器可能要數秒才啟動，例如 codebase-memory-mcp，否則 Codex 會在沒有工具的情況下開始這一輪）與自動核准（這個流程使用 `-a never`，Codex 會拒絕任何需要核准的 MCP 呼叫）。兩者都已用真實的 codebase-memory-mcp 驗證。ChatGPT（PM 對話以及任何 `chatgpt` 角色）不是 ccc-mcp 啟動的程序，沒辦法交給它一份設定，所以改由 ccc-mcp 的兩個工具轉接：`list_installed_mcp_tools` 與 `call_installed_mcp_tool`。呼叫由 ccc-mcp 自己執行，且只限本機 CLI 啟用過的伺服器＋工具組合；請求內容無法新增伺服器、指令或工具。伺服器在呼叫之間會維持執行（每個專案一個程序，閒置 5 分鐘後關閉），所以只有第一次呼叫要等啟動。回傳內容視為不可信的資料。因為只有一份安裝與一份啟用工具清單，Claude、Codex、ChatGPT 三者用的是同一個 MCP、同一種方式。
+- **三種 provider 都支援。** Claude 以 `--mcp-config` 傳入並只放行啟用的工具（`--allowedTools`）；Codex 以 `-c mcp_servers.<名稱>.*` 覆寫傳入，搭配 `enabled_tools`，再加上 `required=true`（伺服器可能要數秒才啟動，例如 codebase-memory-mcp，否則 Codex 會在沒有工具的情況下開始這一輪）與自動核准（這個流程使用 `-a never`，Codex 會拒絕任何需要核准的 MCP 呼叫）。兩者都已用真實的 codebase-memory-mcp 驗證。ChatGPT（PM 對話以及任何 `chatgpt` 角色）不是 ccc-mcp 啟動的程序，沒辦法交給它一份設定，所以改由 ccc-mcp 的兩個工具轉接：`list_installed_mcp_tools` 與 `call_installed_mcp_tool`。呼叫由 ccc-mcp 自己執行，且只限操作者已啟用的伺服器＋工具組合；請求內容無法新增伺服器、指令或工具。伺服器在呼叫之間會維持執行（每個專案一個程序，閒置 5 分鐘後關閉），所以只有第一次呼叫要等啟動。回傳內容視為不可信的資料。因為只有一份安裝與一份啟用工具清單，Claude、Codex、ChatGPT 三者用的是同一個 MCP、同一種方式。
 - **套用到該專案所有角色（SA、SD/RD、REVIEW，以及 ChatGPT PM）。** 包含唯讀角色：MCP 工具能做什麼取決於該伺服器，與角色的唯讀檔案工具無關。請檢視安裝時列出的工具清單（`read_only: false` 的工具，例如會刪除索引的），並用 `--tools` 只啟用你能接受的。
 - **該專案的 Claude 不再帶 `--safe-mode`**，因為 `--safe-mode` 會連 MCP 伺服器一起關掉。它原本關閉的項目改成逐項關閉：設定與 hooks（`--setting-sources ""`）、skills（`--disable-slash-commands`）、`CLAUDE.md` 與自動記憶（環境變數）。沒有安裝 MCP 的專案不受影響，仍使用 `--safe-mode`。
-- **只有本機 CLI 能安裝。** 沒有對應的 MCP 工具，專案的 `settings.json` 也不是這個設定的匯入來源，所以 ChatGPT 或儲存庫裡的檔案都無法加入一個會在派工時被執行的指令。客戶端設定裡的環境變數一律不會被複製。
+- **可從本機 CLI 或 Web 控制台安裝。** 控制台的「Skills 與 MCP」頁會列出 MCP 客戶端設定，以及 PATH、執行 ccc-mcp 的 Python 環境或專案 `.venv` 裡名稱像 MCP 的執行檔。選取候選項目後才會啟動它驗證工具，再由操作者勾選要啟用的工具；單純探索不會執行或安裝。其他名稱或完整路徑可用「依名稱安裝」。沒有對應的 MCP 安裝工具，專案的 `settings.json` 也不是這個設定的匯入來源，所以 ChatGPT 或儲存庫裡的檔案都無法加入一個會在派工時被執行的指令。客戶端設定裡的環境變數一律不會被複製。
 - 不支援遠端（HTTP）伺服器；指令必須啟動 stdio 伺服器。
 
 [`examples/skills/demo-mcp-skill`](../../examples/skills/demo-mcp-skill/SKILL.md) 是 canary：提需求時說「mcp canary」；有 MCP 的 agent 會回報真實的專案名稱，沒有的必須回報 `MCP-UNAVAILABLE` 並列出它實際擁有的工具。

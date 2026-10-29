@@ -102,6 +102,8 @@ The console covers: listing, adding and creating projects with the combined writ
 
 The console's **Documentation** page includes the English and Traditional Chinese guides in the installed package. Changing the interface language updates the open guide and its links immediately; task reports, Context, and project data remain in their original language.
 
+The sidebar's **Global Skills** page lets you select local Claude Code or Codex Skills and install them for every project and role. It also lists and removes installed global Skills. Each project's **Skills & MCP** page shows the shared list and links to global management.
+
 On **Projects**, create named groups, move cards with the dropdown or drag-and-drop, and reorder groups. This only changes local console organization (`<home>/ui/project_groups.json`), not project paths or settings. **Connect** can save multiple named profiles, including different keys for the same Tunnel ID; select a saved profile and click Connect to use it. One Tunnel connection runs at a time. Saved keys are never returned to the browser after storage.
 
 ## Documentation

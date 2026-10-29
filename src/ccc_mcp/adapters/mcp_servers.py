@@ -84,12 +84,63 @@ def _entries(client, path, kind):
     return found
 
 
+def _discover_executables(project_root=None):
+    """List likely MCP commands without starting arbitrary programs on PATH.
+
+    The running Python environment is included even when a GUI launcher did not
+    activate its venv in PATH. A project's own venv is also a useful local source.
+    Candidates are verified by a real MCP handshake only when selected for install.
+    """
+    directories = [Path(p) for p in os.get_exec_path() if p]
+    directories.append(Path(sys.executable).parent)
+    if project_root:
+        venv = Path(project_root) / ".venv"
+        directories.append(venv / ("Scripts" if os.name == "nt" else "bin"))
+    found, seen_directories, seen_commands = [], set(), set()
+    for directory in directories:
+        try:
+            directory = directory.expanduser().resolve()
+            if directory in seen_directories or not directory.is_dir():
+                continue
+            seen_directories.add(directory)
+            with os.scandir(directory) as entries:
+                for entry in entries:
+                    name = entry.name
+                    if os.name == "nt" and Path(name).suffix.lower() in {".exe", ".cmd", ".bat"}:
+                        name = Path(name).stem
+                    lower = name.lower()
+                    if not NAME.fullmatch(name) or not (
+                        lower.endswith("-mcp") or lower.startswith("mcp-")
+                        or lower.startswith("mcp_") or lower == "mcp"
+                    ):
+                        continue
+                    if not entry.is_file() or not os.access(entry.path, os.X_OK):
+                        continue
+                    command = str(Path(entry.path).resolve())
+                    if command in seen_commands:
+                        continue
+                    seen_commands.add(command)
+                    found.append({
+                        "name": name,
+                        "client": "Local executable",
+                        "source_file": command,
+                        "transport": "stdio",
+                        "command": command,
+                        "args": [],
+                        "has_env": False,
+                    })
+        except OSError:
+            continue
+    return sorted(found, key=lambda item: item["name"].lower())
+
+
 def discover(project_root=None):
-    """Every MCP server defined by a client on this machine (stdio and remote)."""
+    """Client-configured servers and likely local MCP executables (no handshake yet)."""
     found = []
     for client, path, kind in client_config_files(project_root):
         if path.is_file():
             found += _entries(client, path, kind)
+    found += _discover_executables(project_root)
     return found
 
 

@@ -168,6 +168,7 @@
       return { project: decodeURIComponent(parts[1]), view: parts[2] || "overview", sub: parts[3] ? decodeURIComponent(parts[3]) : undefined };
     }
     if (parts[0] === "connect") return { view: "connect" };
+    if (parts[0] === "global-skills") return { view: "global-skills" };
     return { view: "dashboard" };
   }
 
@@ -185,7 +186,17 @@
     up: `<svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 13V3M4.5 6.5 8 3l3.5 3.5"/></svg>`,
     down: `<svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10m-3.5-3.5L8 13l3.5-3.5"/></svg>`,
     back: `<svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M13 8H3m3.5-3.5L3 8l3.5 3.5"/></svg>`,
+    sun: `<svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="3"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.5 3.5l1.4 1.4M11.1 11.1l1.4 1.4M3.5 12.5l1.4-1.4M11.1 4.9l1.4-1.4"/></svg>`,
+    moon: `<svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M13.5 9.5A5.8 5.8 0 0 1 6.5 2.5 5.8 5.8 0 1 0 13.5 9.5Z"/></svg>`,
   };
+
+  function currentTheme() {
+    return document.documentElement.getAttribute("data-theme") === "dark" ? "dark" : "light";
+  }
+  function setTheme(theme) {
+    document.documentElement.setAttribute("data-theme", theme);
+    try { localStorage.setItem("ccc_ui_theme", theme); } catch (e) {}
+  }
 
   let lastConnectStatus = null;
   let activeTimers = [];
@@ -257,12 +268,14 @@
     root.innerHTML = `
       <div class="sidebar">
         <div class="brand"><span class="mark">C</span><span>ccc-mcp<small>CONTROL CENTER</small></span></div>
-        <a class="nav-item ${!currentProjectId && currentRoute.view !== "connect" && currentRoute.view !== "docs" ? "active" : ""}" href="#/">${ICON.projects}All projects</a>
+        <a class="nav-item ${currentRoute.view === "dashboard" ? "active" : ""}" href="#/">${ICON.projects}All projects</a>
+        <a class="nav-item ${currentRoute.view === "global-skills" ? "active" : ""}" href="#/global-skills">${ICON.skills}Global Skills</a>
         ${projectNav}
         <div class="nav-group-label">&nbsp;</div>
         <a class="nav-item ${currentRoute.view === "connect" ? "active" : ""}" href="#/connect">${ICON.connect}Connect<span id="nav-connect-dot" class="${dotClass}"></span></a>
         <a class="nav-item ${currentRoute.view === "docs" ? "active" : ""}" href="#/docs">${ICON.docs}Documentation</a>
         <div class="sidebar-spacer"></div>
+        <button type="button" id="theme-toggle" class="nav-item" aria-pressed="${currentTheme() === "dark"}" aria-label="Toggle dark mode">${currentTheme() === "dark" ? ICON.moon : ICON.sun}<span>Dark mode</span><span class="dot${currentTheme() === "dark" ? " on" : ""}"></span></button>
         <div class="sidebar-locale"><span>Interface language</span><select id="ui-locale" aria-label="Interface language"><option value="zh-TW">繁體中文</option><option value="en">English</option></select></div>
         <div class="sidebar-foot">LOCAL CONSOLE <span class="status-dot on"></span></div>
       </div>
@@ -274,6 +287,13 @@
       UI.setLocale(localeSelect.value);
       closeModal();
       route();
+    });
+    const themeToggle = document.getElementById("theme-toggle");
+    themeToggle.addEventListener("click", () => {
+      const next = currentTheme() === "dark" ? "light" : "dark";
+      setTheme(next);
+      themeToggle.setAttribute("aria-pressed", String(next === "dark"));
+      themeToggle.innerHTML = `${next === "dark" ? ICON.moon : ICON.sun}<span>${UI.translate("Dark mode")}</span><span class="dot${next === "dark" ? " on" : ""}"></span>`;
     });
     UI.localize(root);
   }
@@ -1132,6 +1152,114 @@
     });
   }
 
+  async function renderGlobalSkills() {
+    const gen = renderGen;
+    layout(`<div class="empty">Loading…</div>`);
+    let installed, discovered;
+    try {
+      [installed, discovered] = await Promise.all([api("/skills"), api("/skills/discover")]);
+    } catch (err) { if (!stale(gen)) errorView(err); return; }
+    if (stale(gen)) return;
+    const available = discovered.map((skill, index) => ({ skill, index }))
+      .filter(({ skill }) => skill.usable && !skill.already_installed);
+    const firstById = new Map();
+    for (const entry of available) if (!firstById.has(entry.skill.id)) firstById.set(entry.skill.id, entry.index);
+    const installedRows = installed.map((skill) => `
+      <tr>
+        <td><strong>${esc(skill.name || skill.id)}</strong><div class="table-sub mono">${esc(skill.id)}</div></td>
+        <td>${esc(skill.description || "")}</td>
+        <td class="table-actions"><button class="btn small danger" data-remove-global-skill="${esc(skill.id)}">Remove</button></td>
+      </tr>
+    `).join("");
+    const discoveredRows = discovered.map((skill, index) => `
+      <tr>
+        <td><input type="checkbox" data-global-skill-choice="${index}" aria-label="${esc(`${UI.translate("Install for all projects")}: ${skill.name}`)}" ${skill.usable && !skill.already_installed ? "" : "disabled"} /></td>
+        <td><strong>${esc(skill.name)}</strong><div class="table-sub">${esc(UI.translate(skill.provider))}</div></td>
+        <td>${esc(skill.description || "")}</td>
+        <td>${skill.already_installed
+          ? `<span class="pill accent">${esc(UI.translate("Already installed"))}</span>`
+          : skill.usable
+            ? `<span class="pill positive">${esc(UI.translate("Can install"))}</span>`
+            : `<span class="pill negative" title="${esc(skill.reason || "")}">${esc(UI.translate("Not usable"))}</span>`}</td>
+      </tr>
+    `).join("");
+    layout(`
+      <div class="title-row"><div><h1>Global Skills</h1><div class="sub">${esc(UI.translate("Installed Skills are shared with every project and agent role."))}</div></div><div class="title-actions"><button class="btn" id="refresh-global-skills">Refresh</button></div></div>
+      <div class="section">
+        <div class="section-heading"><div><h2>Installed for all projects</h2><p>${esc(UI.translate("Removing a Skill here removes it from every project's future handoffs."))}</p></div></div>
+        ${installed.length ? `<div class="table-wrap"><table><thead><tr><th>Name</th><th>Description</th><th></th></tr></thead><tbody>${installedRows}</tbody></table></div>` : `<div class="empty">${esc(UI.translate("No global Skills are installed yet."))}</div>`}
+      </div>
+      <div class="section">
+        <div class="section-heading"><div><h2>Discover local Skills</h2><p>${esc(UI.translate("Choose Skills from Claude Code or Codex and install them for every project."))}</p></div></div>
+        ${discovered.length ? `
+          <div class="skill-bulk-actions">
+            <label class="checkbox-row"><input type="checkbox" id="select-all-global-skills" ${available.length ? "" : "disabled"} /><span>${esc(UI.translate("Select all available"))}</span></label>
+            <button class="btn primary" id="install-selected-skills" disabled>${esc(UI.translate("Install selected"))} (0)</button>
+          </div>
+          <div class="table-wrap"><table><thead><tr><th></th><th>Name</th><th>Description</th><th>Status</th></tr></thead><tbody>${discoveredRows}</tbody></table></div>
+        ` : `<div class="empty">${esc(UI.translate("No local Skills were found in ~/.claude/skills or ~/.codex/skills."))}</div>`}
+      </div>
+    `);
+    document.getElementById("refresh-global-skills").addEventListener("click", renderGlobalSkills);
+    document.querySelectorAll("[data-remove-global-skill]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const skillId = button.dataset.removeGlobalSkill;
+        confirmTextModal({
+          title: "Remove global Skill",
+          description: `${skillId}\n\n${UI.translate("This removes the Skill from every project's future handoffs. Source files on your computer remain unchanged.")}`,
+          challenge: `REMOVE SKILL ${skillId}`,
+          confirmLabel: "Remove",
+          onConfirm: async (typed) => {
+            await api(`/skills/${encodeURIComponent(skillId)}/remove`, { method: "POST", body: { confirm: typed } });
+            toast("Global Skill removed.");
+            await renderGlobalSkills();
+          },
+        });
+      });
+    });
+    if (!discovered.length) return;
+    const selected = new Set();
+    const selectAll = document.getElementById("select-all-global-skills");
+    const installButton = document.getElementById("install-selected-skills");
+    const choices = [...document.querySelectorAll("[data-global-skill-choice]")];
+    const updateSelection = () => {
+      choices.forEach((input) => { input.checked = selected.has(Number(input.dataset.globalSkillChoice)); });
+      selectAll.checked = selected.size > 0 && selected.size === firstById.size;
+      selectAll.indeterminate = selected.size > 0 && selected.size < firstById.size;
+      installButton.disabled = selected.size === 0;
+      installButton.textContent = `${UI.translate("Install selected")} (${selected.size})`;
+    };
+    choices.forEach((input) => input.addEventListener("change", () => {
+      const index = Number(input.dataset.globalSkillChoice);
+      if (input.checked) {
+        for (const other of [...selected]) if (discovered[other].id === discovered[index].id) selected.delete(other);
+        selected.add(index);
+      } else selected.delete(index);
+      updateSelection();
+    }));
+    selectAll.addEventListener("change", () => {
+      selected.clear();
+      if (selectAll.checked) for (const index of firstById.values()) selected.add(index);
+      updateSelection();
+    });
+    installButton.addEventListener("click", async () => {
+      installButton.disabled = true;
+      installButton.setAttribute("aria-busy", "true");
+      let installedCount = 0;
+      try {
+        for (const index of selected) {
+          const skill = discovered[index];
+          await api("/skills/install-discovered", { method: "POST", body: { id: skill.id, path: skill.path } });
+          installedCount += 1;
+        }
+        toast("Selected Skills installed for all projects.");
+      } catch (err) {
+        toast(installedCount ? `${UI.translate("Some selected Skills were installed before an error.")} ${err.message}` : err.message, true);
+      }
+      await renderGlobalSkills();
+    });
+  }
+
   async function renderSkills() {
     const gen = renderGen;
     const id = parseRoute().project;
@@ -1159,7 +1287,7 @@
     const discovered = (mcp.discovered || []).filter((item) => item.transport === "stdio");
     const discoveredRows = discovered.map((item, index) => `
       <tr>
-        <td><strong>${esc(item.name)}</strong><div class="table-sub">${esc(item.client)}</div></td>
+        <td><strong>${esc(item.name)}</strong><div class="table-sub">${esc(UI.translate(item.client))}</div></td>
         <td class="mono">${esc(item.command || "")}</td>
         <td>${item.has_env ? `<span class="pill warning">env</span>` : `<span class="pill neutral">stdio</span>`}</td>
         <td class="table-actions"><button class="btn small" data-install="${index}">Install</button></td>
@@ -1186,15 +1314,16 @@
         ${installed.length ? `<div class="table-wrap"><table><thead><tr><th>Name</th><th>Scope</th><th class="num">Tools</th><th>Status</th><th></th></tr></thead><tbody>${mcpRows}</tbody></table></div>` : `<div class="empty">Nothing installed yet — calling a tool needs one install step first. Pick a server below, click Install, choose which tools to allow, then come back here and click Tools to call one.</div>`}
       </div>
       <div class="section">
-        <div class="section-heading"><div><h2>Discover local servers</h2><p>Available on this computer — Install here, then use Tools above to call it</p></div></div>
+        <div class="section-heading"><div><h2>Discover local servers</h2><p>${esc(UI.translate("Candidates from MCP client settings and local executables. Select one to verify its tools before installing."))}</p></div><button class="btn small" id="mcp-install-by-name">${esc(UI.translate("Install by name…"))}</button></div>
         ${discovered.length ? `<div class="table-wrap"><table><thead><tr><th>Name</th><th>Command</th><th>Source</th><th></th></tr></thead><tbody>${discoveredRows}</tbody></table></div>` : `<div class="empty">No local MCP servers were discovered.</div>`}
+        <p class="table-sub" style="margin-top:10px">${esc(UI.translate("Not listed? Use Install by name to enter a command or an exact executable path."))}</p>
       </div>
       <div class="section">
         <div class="section-heading"><div><h2>Recent MCP calls</h2><p>${esc(id)}</p></div></div>
         ${recent.length ? `<div class="table-wrap"><table><thead><tr><th>Time</th><th>Server</th><th>Tool</th><th>Status</th></tr></thead><tbody>${callRows}</tbody></table></div>` : `<div class="empty">No MCP calls for this project yet.</div>`}
       </div>
       <div class="section">
-        <div class="section-heading"><div><h2>Installed skills</h2></div></div>
+        <div class="section-heading"><div><h2>Global Skills</h2><p>${esc(UI.translate("These Skills are shared with every project and agent role."))}</p></div><a class="btn small" href="#/global-skills">${esc(UI.translate("Manage global Skills"))}</a></div>
         ${skills.length ? `<div class="table-wrap"><table><thead><tr><th>Name</th><th>Description</th></tr></thead><tbody>${skillRows}</tbody></table></div>` : `<div class="empty">No skills installed.</div>`}
       </div>
     `);
@@ -1202,6 +1331,7 @@
     document.querySelectorAll("[data-install]").forEach((button) => {
       button.addEventListener("click", () => openMcpInstall(id, discovered[Number(button.dataset.install)]));
     });
+    document.getElementById("mcp-install-by-name").addEventListener("click", () => openMcpInstallByName(id));
     document.querySelectorAll("[data-tools]").forEach((button) => {
       button.addEventListener("click", () => openMcpTools(id, button.dataset.tools));
     });
@@ -1267,6 +1397,68 @@
         openMcpTools(projectId, selected.name);
       } catch (err) { toast(err.message, true); event.currentTarget.disabled = false; }
     });
+  }
+
+  // Manual fallback for an executable whose name does not match the discovery pattern,
+  // or one outside PATH, the running Python environment, and the project's venv.
+  function openMcpInstallByName(projectId) {
+    closeModal();
+    const overlay = document.createElement("div");
+    overlay.id = "modal-overlay";
+    overlay.className = "modal-overlay";
+    overlay.innerHTML = `
+      <div class="modal modal-wide" role="dialog" aria-modal="true">
+        <h2>${esc(UI.translate("Install by name…"))}</h2>
+        <div class="body">${esc(UI.translate("Resolves the same way as `skill install mcp <name>`: a client's config, or a PATH command named <name>, <name>-mcp or <name>-server."))}</div>
+        <div class="field"><label for="mcp-name-input">${esc(UI.translate("Name"))}</label><input type="text" id="mcp-name-input" placeholder="codebase-memory" autocomplete="off" /></div>
+        <div class="field"><label for="mcp-command-input">${esc(UI.translate("Command path (optional)"))}</label><input type="text" id="mcp-command-input" placeholder="${esc(UI.translate("leave empty to resolve from PATH or a client's config"))}" autocomplete="off" /></div>
+        <div class="actions"><button class="btn" id="mcp-name-cancel">${esc(UI.translate("Cancel"))}</button><button class="btn primary" id="mcp-name-check">${esc(UI.translate("Check"))}</button></div>
+      </div>`;
+    mountModal(overlay);
+    overlay.addEventListener("click", (event) => { if (event.target === overlay) closeModal(); });
+    document.getElementById("mcp-name-cancel").addEventListener("click", closeModal);
+    const nameInput = document.getElementById("mcp-name-input");
+    nameInput.focus();
+    const check = async () => {
+      const name = nameInput.value.trim();
+      const command = document.getElementById("mcp-command-input").value.trim();
+      if (!name) { toast(UI.translate("Enter an MCP server name"), true); return; }
+      const button = document.getElementById("mcp-name-check");
+      button.disabled = true;
+      let preview;
+      try {
+        preview = await api(`/projects/${encodeURIComponent(projectId)}/mcp/probe-by-name`, { method: "POST", body: { name, command } });
+      } catch (err) { toast(err.message, true); button.disabled = false; return; }
+      if (!overlay.isConnected) return;
+      const tools = preview.tools || [];
+      overlay.innerHTML = `
+        <div class="modal modal-wide" role="dialog" aria-modal="true">
+          <h2>${esc(preview.name)}</h2>
+          <div class="body">${esc(UI.translate("The MCP process will be started to verify its tools. Only selected tools will be available to this project's agents."))}</div>
+          <div class="mcp-command mono">${esc(preview.command)}</div>
+          <div class="table-sub">${esc(UI.translate("Source"))}: ${esc(preview.source || "")}</div>
+          ${(preview.warnings || []).map((w) => `<div class="notice">${esc(w)}</div>`).join("")}
+          <div class="field"><label>${esc(UI.translate("Select tools to enable"))} <span class="muted">(${tools.length})</span></label></div>
+          <div class="tool-list">${tools.length ? tools.map((tool, index) => `<label class="tool-choice"><input type="checkbox" data-tool="${index}" /><span><strong>${esc(tool.name)} <em class="tool-risk ${tool.read_only ? "read" : "write"}">${esc(UI.translate(tool.read_only ? "Read only" : "Can change data"))}</em></strong><small>${esc(tool.description || "")}</small></span></label>`).join("") : `<div class="empty">${esc(UI.translate("No tools were exposed by this server."))}</div>`}</div>
+          <div class="actions"><button class="btn" id="mcp-name-cancel2">${esc(UI.translate("Cancel"))}</button><button class="btn primary" id="mcp-name-confirm" ${tools.length ? "" : "disabled"}>${esc(UI.translate("Install to project"))}</button></div>
+        </div>`;
+      overlay.querySelector('[role="dialog"]').focus();
+      document.getElementById("mcp-name-cancel2").addEventListener("click", closeModal);
+      document.getElementById("mcp-name-confirm").addEventListener("click", async (event) => {
+        const allowed = [...overlay.querySelectorAll("[data-tool]:checked")].map((input) => tools[Number(input.dataset.tool)].name);
+        if (!allowed.length) { toast("No tools are selected. Choose at least one.", true); return; }
+        event.currentTarget.disabled = true;
+        try {
+          await api(`/projects/${encodeURIComponent(projectId)}/mcp/install-by-name`, { method: "POST", body: { name: preview.name, command, tools: allowed } });
+          closeModal();
+          toast("MCP server installed. Opening its tools now…");
+          await renderSkills();
+          openMcpTools(projectId, preview.name);
+        } catch (err) { toast(err.message, true); event.currentTarget.disabled = false; }
+      });
+    };
+    document.getElementById("mcp-name-check").addEventListener("click", check);
+    nameInput.addEventListener("keydown", (event) => { if (event.key === "Enter") check(); });
   }
 
   async function openMcpTools(projectId, serverName) {
@@ -1532,6 +1724,7 @@
     refreshConnectDot();
     if (r.view === "docs") return renderDocs();
     if (r.view === "connect") return renderConnect();
+    if (r.view === "global-skills") return renderGlobalSkills();
     if (!r.project) return renderDashboard();
     if (r.view === "tasks" && r.sub) return renderTaskDetail();
     if (r.view === "tasks") return renderTasksList();

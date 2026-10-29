@@ -5,6 +5,16 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="robots" content="noindex" />
 <title>ccc-mcp console</title>
+<script>
+(() => {
+  try {
+    var saved = localStorage.getItem("ccc_ui_theme");
+    var theme = saved === "dark" || saved === "light" ? saved
+      : (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    document.documentElement.setAttribute("data-theme", theme);
+  } catch (e) {}
+})();
+</script>
 <link rel="stylesheet" href="app.css" />
 </head>
 <body>

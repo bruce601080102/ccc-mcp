@@ -11,6 +11,8 @@ ccc-mcp skill remove my-skill
 
 Skills live globally at `~/.ccc-mcp/skills/<id>/` and are shown to every role through `available_skills`. Agents may choose whether a Skill is relevant; a Skill is guidance, not an enforced policy. Install only trusted sources because its text enters an agent prompt.
 
+The Web console's **Global Skills** page, next to All projects in the sidebar, finds local Skills from Claude Code and Codex. Select several to install them for every project, or review and remove installed Skills. Removal affects future handoffs for every project, requires typed confirmation, and leaves the source directory untouched. A project's Skills & MCP page shows the shared Skills and links to global management.
+
 | Source | Files retained |
 | --- | --- |
 | Local directory | Directory and all descendants |
@@ -45,15 +47,15 @@ Then, with a real run, ask for: "multilevel canary: create hello.txt containing 
 
 ## MCP servers: let dispatched agents call a local MCP live
 
-By default agents dispatched by ccc-mcp run without any MCP (`--strict-mcp-config` with an empty list for Claude Code, `--ignore-user-config` for Codex). To give a project's agents a local stdio MCP server, such as codebase-memory-mcp, install it from the terminal:
+By default agents dispatched by ccc-mcp run without any MCP (`--strict-mcp-config` with an empty list for Claude Code, `--ignore-user-config` for Codex). To give a project's agents a local stdio MCP server, such as codebase-memory-mcp, install it from the terminal or local Web console:
 
 ### Set this up beforehand: ChatGPT cannot do it
 
-Nothing here is automatic. Until an operator has done the steps below, ChatGPT (and every dispatched agent) has no access to the MCP and will fall back to reading source files; ChatGPT cannot install or index anything itself, and the tools it can call never include a standalone "codebase-memory" tool.
+Discovery is automatic, but installation is an operator action. Until an operator has done the steps below, ChatGPT (and every dispatched agent) has no access to the MCP and will fall back to reading source files; ChatGPT cannot install or index anything itself, and the tools it can call never include a standalone "codebase-memory" tool.
 
 1. **The tool must run in your terminal.** For codebase-memory-mcp, `codebase-memory-mcp --version` must work (activate its conda/venv first if that is where it lives).
 2. **Prepare the tool for the project.** codebase-memory-mcp can only answer about repositories it has indexed: `codebase-memory-mcp cli index_repository '{"repo_path":"/path/to/project"}'`.
-3. **Install it for the scope you want**, in that same shell: `ccc-mcp --project <id> skill install mcp codebase-memory` (one project) or without `--project` (every project). Enable only the tools you accept with `--tools`.
+3. **Install it for the scope you want.** In the Web console's Skills & MCP page, select a candidate, verify it, and choose tools for one project. Or run `ccc-mcp --project <id> skill install mcp codebase-memory` in the terminal (one project), or omit `--project` (every project). The CLI's `--tools` option enables only the tools you accept.
 4. **Restart `ccc-mcp connect`, then refresh the connection's tools in ChatGPT** (or start a new connection/conversation); ChatGPT caches the tool list.
 5. **Check:** ask ChatGPT to list its ccc-mcp tools (`call_installed_mcp_tool` must appear), then to use the MCP, and confirm with `ccc-mcp mcp calls`. `bootstrap_project` also reports `installed_mcp`, and tells ChatGPT to ask you for this setup when nothing is installed.
 
@@ -63,7 +65,7 @@ The commands for steps 3 and 5, and for managing installs afterwards:
 ccc-mcp skill install mcp codebase-memory                  # no --project = GLOBAL: every project's agents get it
 ccc-mcp --project <id> skill install mcp codebase-memory   # only this project
 ccc-mcp skill install mcp codebase-memory --tools search_graph,get_architecture   # enable only some tools
-ccc-mcp mcp list                                           # global installs + each project's own, and servers your MCP clients define (Claude Code/Desktop, Codex, VS Code, Cursor)
+ccc-mcp mcp list                                           # installs, MCP client definitions, and likely local MCP executables
 ccc-mcp --project <id> mcp list                            # what that project's agents actually get (each tagged global/project)
 ccc-mcp mcp calls                                          # evidence of MCP calls ChatGPT made through ccc-mcp (arguments summary + outcome, never the content)
 ccc-mcp mcp remove codebase-memory                         # removes the global install
@@ -76,10 +78,10 @@ Install first checks that the command exists and completes a real MCP handshake,
 
 What this changes, and what it does not:
 
-- **All three providers.** For Claude the server is passed with `--mcp-config` and only its enabled tools are allowed (`--allowedTools`). For Codex it is passed as `-c mcp_servers.<name>.*` overrides with `enabled_tools`, plus `required=true` (the server may take seconds to start, as codebase-memory-mcp does, and Codex otherwise begins the turn without its tools) and automatic approval (the run uses `-a never`, under which Codex refuses any MCP call that needs approval). Both were verified against a real codebase-memory-mcp. ChatGPT (the PM conversation and any `chatgpt` role) is not a process ccc-mcp launches, so it cannot be handed a config; it reaches the same servers through two ccc-mcp tools instead, `list_installed_mcp_tools` and `call_installed_mcp_tool`. ccc-mcp runs the call itself, only for a server+tool pair the local CLI enabled; nothing in the request can add a server, a command or a tool. The server stays running between calls (one process per project, closed after 5 idle minutes), so only the first call pays a slow start. Results are untrusted data. Because there is one install and one enabled-tool list, Claude, Codex and ChatGPT all use the same MCP the same way.
+- **All three providers.** For Claude the server is passed with `--mcp-config` and only its enabled tools are allowed (`--allowedTools`). For Codex it is passed as `-c mcp_servers.<name>.*` overrides with `enabled_tools`, plus `required=true` (the server may take seconds to start, as codebase-memory-mcp does, and Codex otherwise begins the turn without its tools) and automatic approval (the run uses `-a never`, under which Codex refuses any MCP call that needs approval). Both were verified against a real codebase-memory-mcp. ChatGPT (the PM conversation and any `chatgpt` role) is not a process ccc-mcp launches, so it cannot be handed a config; it reaches the same servers through two ccc-mcp tools instead, `list_installed_mcp_tools` and `call_installed_mcp_tool`. ccc-mcp runs the call itself, only for a server+tool pair the operator enabled; nothing in the request can add a server, a command or a tool. The server stays running between calls (one process per project, closed after 5 idle minutes), so only the first call pays a slow start. Results are untrusted data. Because there is one install and one enabled-tool list, Claude, Codex and ChatGPT all use the same MCP the same way.
 - **Applies to every role of the project (SA, SD/RD, REVIEW, and the ChatGPT PM).** That includes read-only roles: an MCP tool can do whatever the server lets it do, regardless of the role's read-only file tools. Check the printed tool list (a tool with `read_only: false`, for example one that deletes an index) and use `--tools` to enable only what you accept.
 - **Claude runs without `--safe-mode` for that project**, because `--safe-mode` also disables every MCP server. The surfaces it closed are closed individually: user/project/local settings and hooks (`--setting-sources ""`), skills (`--disable-slash-commands`), and `CLAUDE.md` plus auto-memory (environment variables). Projects with no installed MCP are unchanged and keep `--safe-mode`.
-- **Only the local CLI can install.** There is no MCP tool for it and the project's `settings.json` is not an import source for it, so neither ChatGPT nor a repository file can add a command that dispatch would execute. Environment variables from a client's config are never copied.
+- **Install from the local CLI or Web console.** The console's Skills & MCP page lists MCP client definitions and likely executables on PATH, in the Python environment running ccc-mcp, or in the project's `.venv`. Select a candidate to verify its tools, then choose which tools to enable; discovery alone never executes or installs it. Use **Install by name** for other command names or exact paths. There is no MCP tool for installation and the project's `settings.json` is not an import source, so neither ChatGPT nor a repository file can add a command that dispatch would execute. Environment variables from a client's config are never copied.
 - Remote (HTTP) servers are not supported; the command must start a stdio server.
 
 [`examples/skills/demo-mcp-skill`](../../examples/skills/demo-mcp-skill/SKILL.md) is a canary: ask for "mcp canary"; an agent with the MCP reports a real project name, one without it must report `MCP-UNAVAILABLE` and its actual tool list.

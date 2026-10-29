@@ -93,6 +93,28 @@ def test_discover_reads_client_configs_without_copying_env(monkeypatch, tmp_path
     assert found["web"]["transport"] == "http" and found["web"]["command"] is None
 
 
+def test_discover_finds_mcp_executables_in_path_and_running_venv(monkeypatch, tmp_path):
+    path_bin = tmp_path / "path-bin"
+    venv_bin = tmp_path / "venv" / "bin"
+    path_bin.mkdir()
+    venv_bin.mkdir(parents=True)
+    from_path = path_bin / "codebase-memory-mcp"
+    from_venv = venv_bin / "other-mcp"
+    unrelated = path_bin / "regular-command"
+    for path in (from_path, from_venv, unrelated):
+        path.write_text("#!/bin/sh\n")
+        path.chmod(0o755)
+    monkeypatch.setattr(mcp_servers, "client_config_files", lambda root=None: [])
+    monkeypatch.setattr(mcp_servers.os, "get_exec_path", lambda: [str(path_bin)])
+    monkeypatch.setattr(mcp_servers.sys, "executable", str(venv_bin / "python"))
+
+    found = {entry["name"]: entry for entry in mcp_servers.discover()}
+    assert set(found) == {"codebase-memory-mcp", "other-mcp"}
+    assert found["codebase-memory-mcp"]["command"] == str(from_path)
+    assert found["other-mcp"]["command"] == str(from_venv)
+    assert all(entry["client"] == "Local executable" for entry in found.values())
+
+
 def test_install_records_absolute_path_and_roles_and_remove(bridge, fake_server):
     result = bridge.install_mcp_server("demo", "fakemem", command=sys.executable, args=[fake_server])
     assert result["command"] == sys.executable

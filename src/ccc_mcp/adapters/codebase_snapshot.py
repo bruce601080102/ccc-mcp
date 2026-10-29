@@ -1,9 +1,10 @@
 """Snapshot a repo's codebase-memory-mcp index into a Skill (`skill install codebase-memory:`).
 
-ccc-mcp's dispatched agents run without MCP (docs/en/6-skills.md), so they cannot call
-codebase-memory-mcp. This runs its CLI once, on the operator's machine, and stores the
-results as files under the Skill's references/ folder; agents then read them with the
-multi-level Skill mechanism. The result is a point-in-time snapshot, not a live index.
+An operator can also give dispatched agents a live codebase-memory-mcp via
+`skill install mcp` (docs/en/6-skills.md); this is the lighter alternative for when that
+isn't set up. It runs the CLI once, on the operator's machine, and stores the results as
+files under the Skill's references/ folder; agents then read them with the multi-level
+Skill mechanism. The result is a point-in-time snapshot, not a live index.
 """
 
 import json
