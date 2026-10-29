@@ -18,6 +18,24 @@ ccc-mcp 是給軟體專案使用的本機 MCP 工作流程。ChatGPT 管理需�
 
 > [English README](README.md) · [繁體中文文件](docs/ch/1-install-and-sign-in.md)
 
+## 快速開始：開啟控制台
+
+需求：Git、Python 3.11 以上。要與 ChatGPT 連線時，還需要 [OpenAI Platform Tunnel](docs/ch/2-connect-chatgpt.md)。
+
+```bash
+pip install ccc-mcp
+ccc-mcp ui
+```
+
+瀏覽器會自動開啟本機控制台。接著在介面中：
+
+1. 從 **所有專案**建立 `hello-demo`，或加入既有資料夾。建立後到專案頁按「啟用寫入」並輸入確認文字；加入既有資料夾時也可直接勾選寫入授權。
+2. 在專案的 **設定**選擇工作流 profile、角色與測試命令。只用 ChatGPT 時選 `chatgpt-only`；使用 Codex／Claude Code 時先完成各自的原生 CLI 安裝與登入。
+3. 依照[連接 ChatGPT](docs/ch/2-connect-chatgpt.md)建立 Tunnel，再到 **連線**頁輸入 Tunnel ID 與 runtime API key，按「連線」。
+4. 在 ChatGPT 選取 ccc-mcp 連線，提出：「請在 `hello-demo` 建立 `hello.py`，執行時輸出 `Hello, World!`，並加入驗證輸出的測試。」回到控制台的 **任務**、**脈絡**頁查看進度與證據。
+
+控制台只在本機 `127.0.0.1` 提供服務；按 Ctrl+C 即可停止。更多操作見下方[Web 控制台](#web-控制台)。
+
 ## 它能做什麼
 
 - 以可設定的 `PM → SA → SD/RD → REVIEW → PM` 角色接力處理工作。
@@ -25,52 +43,13 @@ ccc-mcp 是給軟體專案使用的本機 MCP 工作流程。ChatGPT 管理需�
 - 透過原生 CLI 使用 Codex 和 Claude Code，也可將所有角色指定給 ChatGPT，走 ChatGPT-only workflow。
 - 只在辨識為額度耗盡時才啟用 fallback，不會把安裝、登入或一般執行錯誤誤當成額度問題。
 - 讓操作者安裝的 `SKILL.md` 指引可供所有角色使用。
-- 內建本機 Web 控制台（`ccc-mcp ui`），不用 CLI 也能管理專案、追蹤任務進度、編輯設定。
+- 透過本機 Web 控制台管理專案、追蹤任務、設定角色與連線，並管理 Skills 和 MCP 工具。
 
 ## 選擇模式
 
 **最佳模型工作流**：ChatGPT 擔任 PM、Codex 負責分析與審查、Claude Code 負責實作。若你三種工具都有，這是預設模式。
 
-**ChatGPT-only workflow**：用 `config profile chatgpt-only` 把全部五個角色（`SA`、`SD`、`RD`、`SD/RD`、`REVIEW`）都設為 ChatGPT——包含獨立的 `SD`、`RD`，`config show` 或手動派工都不會殘留 Codex／Claude。自動工作流本身實際上仍只會接力派發 `SA → SD/RD → REVIEW`。不需要 Codex 或 Claude Code CLI，也不會消耗它們的 CLI 額度；但可用模型、額度與功能一律依你連接的 ChatGPT 帳戶與方案而定，不要假設額度是無限的。
-
-## 快速開始
-
-需求：Git、Python 3.11 以上、OpenAI Platform Tunnel。最佳模型工作流另需已登入的 Codex 和／或 Claude Code 帳戶。
-
-```bash
-pip install ccc-mcp
-
-# 只有要使用 Codex 和／或 Claude Code 時才執行：
-ccc-mcp setup all
-
-ccc-mcp project create hello-demo --write
-```
-
-`--write`會在同一步驟建立專案並授予持續寫入授權，過程中會有一次本機確認，清楚說明這代表什麼（ccc-mcp 可以在 `hello-demo` 底下寫入檔案，並在每輪 REVIEW 前自動執行你設定的測試命令）。省略 `--write`則只會註冊唯讀專案，之後再用 `ccc-mcp project authorize hello-demo` 授權——這個兩步驟的舊用法仍然可用，只是不再是唯一路徑。`ccc-mcp project add <既有資料夾>`也支援同樣的 `--write` 旗標。
-
-比起終端機更想用瀏覽器？`ccc-mcp ui` 會啟動本機 Web 控制台（只綁定 `127.0.0.1`），提供同樣的加入／建立／授權／撤銷／刪除流程、唯讀任務儀表板與設定編輯器——詳見下方[Web 控制台](#web-控制台)。
-
-若要全程使用 ChatGPT，略過 `ccc-mcp setup all`，建立專案後套用 `chatgpt-only` profile：
-
-```bash
-ccc-mcp --project hello-demo config profile chatgpt-only
-```
-
-依照[連接 ChatGPT](docs/ch/2-connect-chatgpt.md)建立 Tunnel 並選取 ccc-mcp 連線後，在 ChatGPT 提出：
-
-> 請在 `hello-demo` 建立 `hello.py`，執行時輸出 `Hello, World!`，並加入驗證輸出的測試。
-
-在擁有專案的本機驗證結果：
-
-```bash
-ccc-mcp --project hello-demo task status
-ccc-mcp --project hello-demo task usage
-ccc-mcp --project hello-demo context show
-```
-
-對原生角色而言，`task usage` 才是 CLI 是否真的被呼叫的依據；ChatGPT 角色本來就是互動式執行，沒有原生 CLI 呼叫：`task usage` 會標示 `"interactive": true` 與 `invocation.source: "chatgpt_web"`，所以這裡的 `cli_invoked: false` 代表「設計上本來就不呼叫」，不是模糊的 CLI 失敗訊號。不論哪種模式，聊天回覆自稱成功都不夠；設定的主機測試命令會在 REVIEW 完成前留下紀錄。
-
-`ccc-mcp --project hello-demo config show`（或 `config providers`）也會顯示唯讀的 `profile` 欄位——`chatgpt-only`、`best-model` 或 `custom`——由目前所有角色的 provider 即時推算。隨時可用 `ccc-mcp --project hello-demo config profile best-model` 切回，這會依本機實際安裝的 CLI 動態決定（兩個都裝＝Codex/Claude 分工；只裝一個＝全部角色用那一個；一個都沒裝則拒絕）。
+**ChatGPT-only workflow**：在專案 **設定**選 `chatgpt-only`，就會把全部五個角色（`SA`、`SD`、`RD`、`SD/RD`、`REVIEW`）都設為 ChatGPT。自動工作流實際接力派發 `SA → SD/RD → REVIEW`。這個模式不需要 Codex 或 Claude Code CLI；可用模型、額度與功能依你連接的 ChatGPT 帳戶與方案而定。
 
 ## 工作流程
 
@@ -80,13 +59,7 @@ ChatGPT（PM）→ Codex（SA）→ Claude Code（SD/RD）→ Codex（REVIEW）
        └──────── 共用 Context、證據與下一個任務 ────────────┘
 ```
 
-預設角色是有意見的預設值，不是硬性規定。你可以替角色指定支援的 provider：
-
-```bash
-ccc-mcp --project hello-demo config role REVIEW codex --effort high --quota-fallback chatgpt
-ccc-mcp --project hello-demo config role SD/RD claude
-ccc-mcp --project hello-demo config show
-```
+預設角色可以調整。在專案的 **設定**頁，替各角色指定支援的 provider、effort 與額度 fallback；也可以設定測試命令與報告語言。
 
 完整說明請看[協作工作流程](docs/ch/4-workflow.md)。
 
@@ -98,13 +71,37 @@ ccc-mcp ui
 
 在同一個供應 CLI 與 MCP server 的程序裡啟動本機 Web 控制台——不需要另外 clone、建置或啟動前端，即使從原始碼建置也不需要 Node.js（介面是打包進 `ccc-mcp` wheel 的純 HTML/CSS/JS）。只綁定 `127.0.0.1`，啟動後會印出網址並自動開啟瀏覽器；可用 `--port` 指定埠號（若被占用會清楚回報），省略則自動挑一個可用的；`--no-browser` 可停用自動開啟瀏覽器。按 Ctrl+C 即可停止。它讀取與 CLI、MCP server 相同的 `--home` 資料庫，三者的專案與任務資料永遠同步。
 
-控制台涵蓋：列出／加入／建立專案（含上述合併寫入授權流程）、撤銷與刪除專案、任務儀表板（階段、Agent、等待原因、執行紀錄、usage／CLI 呼叫證據、原始結果）、設定編輯器（provider／角色、profile、報告語言、測試命令、Meeting Mode）、Context、Skills，以及 ChatGPT Tunnel 的 **Connect** 頁面。在 **Skills 與 MCP** 頁面，可探索本機 stdio MCP server、檢查其工具、勾選允許此專案使用的工具、以 JSON 參數呼叫已授權工具、移除專案安裝，並查看最近的 MCP 呼叫紀錄。全域安裝會顯示於頁面，但須用 CLI 移除，因為會影響所有專案。側邊欄可切換繁體中文與英文介面；這項瀏覽器偏好與專案的 Agent／報告語言設定分開。Connect 頁面有即時連線狀態與 log，並可選擇「記住這台裝置上的金鑰」（存在 `~/.ccc-mcp/tunnel/credentials.json`，權限僅限本機帳號；CLI 的 `connect --remember`／`--forget` 也提供同樣能力）。每個破壞性操作（啟用寫入、清除歷史、刪除）都需要輸入與終端機提示相同的確認文字——信任模型（以本機一次性 session token 取代終端機的 TTY 檢查，不落地、不寫入紀錄）詳見[可靠性與安全邊界](docs/ch/7-reliability-and-security.md#web-控制台)。
+控制台的主要頁面：
 
-控制台的 **文件**頁內含隨套件安裝的繁中與英文指南。切換介面語言時，目前開啟的指南與連結會立即切換；任務報告、Context 與專案資料仍保留原始語言。
+| 頁面 | 可做的事 |
+| --- | --- |
+| **所有專案** | 建立專案、加入既有資料夾、整理群組；新增後可啟用或撤銷寫入授權。 |
+| **設定** | 調整 profile、provider／角色、報告語言、測試命令與 Meeting Mode。 |
+| **任務／脈絡** | 查看階段、等待原因、執行紀錄、usage／CLI 呼叫證據、原始結果與共用 Context。 |
+| **連線** | 使用 OpenAI Platform Tunnel 的 ID 與 runtime API key 連到 ChatGPT，查看連線狀態與 log。 |
+| **全域 Skills** | 勾選要安裝給所有專案及角色的本機 Claude Code／Codex Skills，並查看或移除已安裝項目。 |
+| **Skills 與 MCP** | 查看共用 Skills；替單一專案探索、安裝及管理本機 stdio MCP server 與其可用工具。 |
+| **文件** | 在控制台內閱讀隨套件安裝的繁中與英文指南。 |
 
-側邊欄的 **全域 Skills** 頁可勾選本機 Claude Code／Codex 的 Skills，安裝後所有專案與角色都可使用；也可查看或移除已安裝的全域 Skills。單一專案的 **Skills 與 MCP** 頁會顯示這份共用清單，並提供前往全域管理頁的入口。
+在 **Skills 與 MCP** 頁可檢查工具、勾選此專案允許使用的工具、以 JSON 參數呼叫已授權工具，並查看最近的 MCP 呼叫紀錄。全域安裝的 MCP server 也會顯示於此，但仍須用 CLI 移除。側邊欄可切換介面語言，這項瀏覽器偏好與專案報告語言分開。**連線**頁可選擇將金鑰記住在這台裝置上（`~/.ccc-mcp/tunnel/credentials.json`，只開放本機帳號讀取）；金鑰儲存後不會再回傳給瀏覽器。啟用寫入、清除歷史和刪除等操作都需要輸入確認文字；詳見[可靠性與安全邊界](docs/ch/7-reliability-and-security.md#web-控制台)。
 
-**專案**頁可建立自訂群組，透過下拉選單或拖放移動專案卡片，並調整群組順序；分類只儲存在本機 `<home>/ui/project_groups.json`，不更動專案路徑或設定。**連線**頁可儲存多筆具名稱的設定，同一 Tunnel ID 也能存不同金鑰；選取設定後按「連線」即可切換，但同時間只執行一組 Tunnel 連線。金鑰儲存後不會再回傳給瀏覽器。
+**專案**頁可建立自訂群組，透過下拉選單或拖放移動專案卡片，並調整群組順序；分類只儲存在本機 `<home>/ui/project_groups.json`，不更動專案路徑或設定。**連線**頁可儲存多筆具名稱的設定，同一 Tunnel ID 也能存不同金鑰；選取設定後按「連線」即可切換，但同時間只執行一組 Tunnel 連線。
+
+## CLI：自動化與進階操作
+
+偏好終端機或要寫腳本時，可用 CLI 操作同一份專案資料。使用 Codex／Claude Code 原生角色前，先執行 `ccc-mcp setup all` 並完成各自的登入。例如，從頭以 CLI 建立專案：
+
+```bash
+ccc-mcp setup all
+ccc-mcp project create hello-demo --write
+ccc-mcp --project hello-demo task status
+ccc-mcp --project hello-demo task usage
+ccc-mcp --project hello-demo context show
+```
+
+`--write` 會在建立專案時要求本機確認，授予 ccc-mcp 持續寫入專案並執行設定的測試命令的權限。加入既有資料夾也可用 `ccc-mcp project add <資料夾> --write`。若只用 ChatGPT，可略過 `setup all`，並在專案 **設定**選 `chatgpt-only`，或執行 `ccc-mcp --project hello-demo config profile chatgpt-only`。
+
+對原生角色而言，`task usage` 是確認 CLI 是否真的被呼叫的依據。ChatGPT 角色是互動式執行，`task usage` 會標示 `"interactive": true` 與 `invocation.source: "chatgpt_web"`，其 `cli_invoked: false` 是預期結果。[CLI 參考](docs/ch/8-cli-reference.md)列出完整命令。
 
 ## 文件
 

@@ -18,6 +18,24 @@ It is designed for people who use more than one AI coding tool and do not want a
 
 > [Traditional Chinese README](README_ZH.md) · [English documentation](docs/en/1-install-and-sign-in.md)
 
+## Quick start: open the console
+
+Requirements: Git and Python 3.11+. Connecting ChatGPT also requires an [OpenAI Platform Tunnel](docs/en/2-connect-chatgpt.md).
+
+```bash
+pip install ccc-mcp
+ccc-mcp ui
+```
+
+Your browser opens the local console. Then, in the UI:
+
+1. Open **Projects** to create `hello-demo` or add an existing folder. After creating a project, open it and choose **Enable write**, then type the confirmation text. When adding an existing folder, you can select write authorization in the add dialog.
+2. In the project's **Settings**, choose a workflow profile, roles, and test command. Choose `chatgpt-only` if you only use ChatGPT. To use Codex or Claude Code, first install and sign in to their native CLIs.
+3. Follow [Connect ChatGPT](docs/en/2-connect-chatgpt.md) to create a Tunnel. On the console's **Connect** page, enter its Tunnel ID and runtime API key, then click **Connect**.
+4. Select the ccc-mcp connection in ChatGPT and ask: “Create `hello.py` in `hello-demo`; it should print `Hello, World!`, with a test that verifies the output.” Return to **Tasks** and **Context** in the console to inspect progress and evidence.
+
+The console serves only on local `127.0.0.1`; press Ctrl+C to stop it. See [Web console](#web-console) for its other features.
+
 ## What it does
 
 - Routes work through configurable `PM → SA → SD/RD → REVIEW → PM` roles.
@@ -25,52 +43,13 @@ It is designed for people who use more than one AI coding tool and do not want a
 - Uses Codex and Claude Code through their native CLIs, or assigns every role to ChatGPT for a ChatGPT-only workflow.
 - Falls back only for recognised quota exhaustion, never for a normal install, login, or execution error.
 - Shares operator-installed `SKILL.md` guidance across all roles.
-- Ships a local web console (`ccc-mcp ui`) for managing projects, watching task progress, and editing settings without the CLI.
+- Uses a local web console to manage projects, track tasks, configure roles and connections, and manage Skills and MCP tools.
 
 ## Choose your mode
 
 **Best-model workflow** uses ChatGPT as PM, Codex for analysis/review, and Claude Code for implementation. It is the default when you have all three tools.
 
-**ChatGPT-only workflow** sets all five role slots (`SA`, `SD`, `RD`, `SD/RD`, and `REVIEW`) to ChatGPT via `config profile chatgpt-only` — including the standalone `SD`/`RD` slots, so neither `config show` nor a manual dispatch is left showing a leftover Codex/Claude provider. The automatic workflow itself still only ever dispatches `SA → SD/RD → REVIEW`. It needs no Codex or Claude Code CLI, so it does not consume their CLI allowances. Available models, quotas, and tool access always follow your connected ChatGPT account and plan — never assume unlimited usage.
-
-## Quick start
-
-Prerequisites: Git, Python 3.11+, and an OpenAI Platform Tunnel. The best-model workflow also needs signed-in Codex and/or Claude Code accounts.
-
-```bash
-pip install ccc-mcp
-
-# Run this only when using Codex and/or Claude Code:
-ccc-mcp setup all
-
-ccc-mcp project create hello-demo --write
-```
-
-`--write` creates the project and grants it continuous write authorization in the same step, with one local confirmation describing exactly what that means (ccc-mcp can write files under `hello-demo` and run its configured test command automatically before each review round). Omit `--write` to register a read-only project and grant write later with `ccc-mcp project authorize hello-demo` — that two-step form still works and is not going away, it is just no longer the only path. The same `--write` flag is available on `ccc-mcp project add <existing-folder>` for registering a folder you already have.
-
-Prefer a browser to a terminal? `ccc-mcp ui` starts a local web console (binds `127.0.0.1` only) with the same add/create/authorize/revoke/delete flow, a read-only task dashboard, and a settings editor — see [Web console](#web-console) below.
-
-For a ChatGPT-only workflow, omit `ccc-mcp setup all`, then apply the `chatgpt-only` profile after creating the project:
-
-```bash
-ccc-mcp --project hello-demo config profile chatgpt-only
-```
-
-Connect the local server to ChatGPT with the Tunnel instructions in [Chinese](docs/ch/2-connect-chatgpt.md) or [English](docs/en/2-connect-chatgpt.md). Then ask ChatGPT, with the ccc-mcp connection selected:
-
-> Create `hello.py` in `hello-demo`; it should print `Hello, World!`, with a test that verifies the output.
-
-Verify the work on the machine that owns the project:
-
-```bash
-ccc-mcp --project hello-demo task status
-ccc-mcp --project hello-demo task usage
-ccc-mcp --project hello-demo context show
-```
-
-For a native role, `task usage` is the source of truth for whether its CLI was actually invoked. A ChatGPT role is intentionally interactive and has no native CLI invocation: `task usage` marks it `"interactive": true` with `invocation.source: "chatgpt_web"`, so `cli_invoked: false` there reads as "by design," never as an ambiguous CLI failure. In either mode, a reported success is not sufficient: the configured host test command is recorded before review can complete the task.
-
-`ccc-mcp --project hello-demo config show` (or `config providers`) also reports a read-only `profile` field — `chatgpt-only`, `best-model`, or `custom` — derived live from every role's current provider. Switch back at any time with `ccc-mcp --project hello-demo config profile best-model`, which resolves dynamically from whichever native CLIs are actually installed (both → the Codex/Claude split; only one → every role on it; neither → rejected).
+**ChatGPT-only workflow** sets all five role slots (`SA`, `SD`, `RD`, `SD/RD`, and `REVIEW`) to ChatGPT when you select `chatgpt-only` in the project's **Settings**. The automatic workflow dispatches `SA → SD/RD → REVIEW`. This mode needs no Codex or Claude Code CLI; available models, quotas, and tool access depend on your connected ChatGPT account and plan.
 
 ## How the workflow works
 
@@ -80,13 +59,7 @@ ChatGPT (PM) → Codex (SA) → Claude Code (SD/RD) → Codex (REVIEW)
        └──────── shared context + evidence + next task ─────┘
 ```
 
-The defaults are deliberately opinionated, not mandatory. Assign any supported provider to a role:
-
-```bash
-ccc-mcp --project hello-demo config role REVIEW codex --effort high --quota-fallback chatgpt
-ccc-mcp --project hello-demo config role SD/RD claude
-ccc-mcp --project hello-demo config show
-```
+You can change the default roles. In the project's **Settings**, assign a supported provider, effort, and quota fallback to each role; you can also set the test command and report language.
 
 For the complete role and workflow model, see [the workflow guide](docs/en/4-workflow.md) or the [Traditional Chinese guide](docs/ch/4-workflow.md).
 
@@ -98,13 +71,37 @@ ccc-mcp ui
 
 Starts a local web console in the same process that already serves the CLI and MCP server — no separate frontend to clone, build, or run, and no Node.js required even if you build from source (the UI ships as plain HTML/CSS/JS bundled into the `ccc-mcp` wheel). It binds `127.0.0.1` only, prints its URL, and opens your browser; pass `--port` to pin a port (ccc-mcp reports clearly if that port is taken) or leave it out to pick a free one automatically, and `--no-browser` to skip the auto-open. Press Ctrl+C to stop it. It reads the same `--home` database the CLI and MCP server use, so projects and tasks are always in sync across all three.
 
-The console covers: listing, adding and creating projects with the combined write-authorization step described above, revoking and deleting projects, a task dashboard (stage, agent, waiting reason, execution history, usage/CLI invocation evidence, raw results), a settings editor (provider/role, profile, report language, test command, Meeting Mode), Context and Skills views, and a **Connect** page for the ChatGPT Tunnel — equivalent to `ccc-mcp connect`, with live connection status and logs. In **Skills & MCP**, you can discover local stdio servers, inspect their tools, choose which tools to allow for one project, invoke enabled tools with JSON arguments, remove that project's installation, and view recent MCP calls. Global installations are shown but must be removed through the CLI because they affect every project. The sidebar switches the interface between English and Traditional Chinese; that browser preference is separate from each project's report language. The Connect page can optionally remember a runtime API key on this device (saved to `~/.ccc-mcp/tunnel/credentials.json`, permissions restricted to your OS account — the CLI's `connect --remember`/`--forget` offer the same). Every destructive action (enable write, clear history, delete) requires typing back the same confirmation text the CLI's terminal prompt uses — see [reliability and security](docs/en/7-reliability-and-security.md#web-console) for the trust model (a per-launch session token, never written to disk or logged, replaces the terminal's TTY check).
+The console's main pages:
 
-The console's **Documentation** page includes the English and Traditional Chinese guides in the installed package. Changing the interface language updates the open guide and its links immediately; task reports, Context, and project data remain in their original language.
+| Page | What you can do |
+| --- | --- |
+| **Projects** | Create projects, add existing folders, and organize groups; enable or revoke write access after adding a project. |
+| **Settings** | Set the profile, providers and roles, report language, test command, and Meeting Mode. |
+| **Tasks / Context** | Inspect stages, waiting reasons, execution history, usage and CLI invocation evidence, raw results, and shared context. |
+| **Connect** | Connect ChatGPT with an OpenAI Platform Tunnel ID and runtime API key; inspect status and logs. |
+| **Global Skills** | Select local Claude Code or Codex Skills to install for every project and role; inspect or remove installed Skills. |
+| **Skills & MCP** | View shared Skills; discover, install, and manage local stdio MCP servers and their tools for one project. |
+| **Documentation** | Read the bundled English and Traditional Chinese guides inside the console. |
 
-The sidebar's **Global Skills** page lets you select local Claude Code or Codex Skills and install them for every project and role. It also lists and removes installed global Skills. Each project's **Skills & MCP** page shows the shared list and links to global management.
+In **Skills & MCP**, inspect tools, choose which ones this project may use, invoke enabled tools with JSON arguments, and view recent MCP calls. Globally installed MCP servers also appear there, but still require the CLI to remove. The sidebar's interface language is separate from each project's report language. **Connect** can remember a runtime API key on this device (`~/.ccc-mcp/tunnel/credentials.json`, readable only by your OS account); stored keys are never returned to the browser. Enabling write, clearing history, and deleting require typed confirmation. See [reliability and security](docs/en/7-reliability-and-security.md#web-console) for details.
 
-On **Projects**, create named groups, move cards with the dropdown or drag-and-drop, and reorder groups. This only changes local console organization (`<home>/ui/project_groups.json`), not project paths or settings. **Connect** can save multiple named profiles, including different keys for the same Tunnel ID; select a saved profile and click Connect to use it. One Tunnel connection runs at a time. Saved keys are never returned to the browser after storage.
+On **Projects**, create named groups, move cards with the dropdown or drag-and-drop, and reorder groups. This only changes local console organization (`<home>/ui/project_groups.json`), not project paths or settings. **Connect** can save multiple named profiles, including different keys for the same Tunnel ID; select a saved profile and click Connect to use it. One Tunnel connection runs at a time.
+
+## CLI: automation and advanced use
+
+If you prefer a terminal or write scripts, the CLI operates on the same project data. Before using native Codex or Claude Code roles, run `ccc-mcp setup all` and sign in to those tools. For example, to create a project entirely from the CLI:
+
+```bash
+ccc-mcp setup all
+ccc-mcp project create hello-demo --write
+ccc-mcp --project hello-demo task status
+ccc-mcp --project hello-demo task usage
+ccc-mcp --project hello-demo context show
+```
+
+`--write` asks for local confirmation while creating the project, authorizing ccc-mcp to write there and run its configured test command. For an existing folder, use `ccc-mcp project add <folder> --write`. If you only use ChatGPT, skip `setup all` and select `chatgpt-only` in the project's **Settings**, or run `ccc-mcp --project hello-demo config profile chatgpt-only`.
+
+For native roles, `task usage` shows whether the CLI was actually invoked. ChatGPT roles are interactive: `task usage` marks them `"interactive": true` with `invocation.source: "chatgpt_web"`, so `cli_invoked: false` is expected. See the [CLI reference](docs/en/8-cli-reference.md) for all commands.
 
 ## Documentation
 
