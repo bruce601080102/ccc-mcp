@@ -30,7 +30,7 @@ ccc-mcp ui
 Your browser opens the local console. Then, in the UI:
 
 1. Open **Projects** to create `hello-demo` or add an existing folder. After creating a project, open it and choose **Enable write**, then type the confirmation text. When adding an existing folder, you can select write authorization in the add dialog.
-2. In the project's **Settings**, choose a workflow profile, roles, and test command. Choose `chatgpt-only` if you only use ChatGPT. To use Codex or Claude Code, first install and sign in to their native CLIs.
+2. In the project's **Settings**, choose a workflow profile and roles. Leave **Test command** blank for automatic testing: ccc-mcp installs declared dependencies and runs changed Python test files when present. If pytest settings changed or no test files changed, pytest uses the project's configured scope. Set a command only to override this. Choose `chatgpt-only` if you only use ChatGPT. To use Codex or Claude Code, first install and sign in to their native CLIs.
 3. Follow [Connect ChatGPT](docs/en/2-connect-chatgpt.md) to create a Tunnel. On the console's **Connect** page, enter its Tunnel ID and runtime API key, then click **Connect**.
 4. Select the ccc-mcp connection in ChatGPT and ask: “Create `hello.py` in `hello-demo`; it should print `Hello, World!`, with a test that verifies the output.” Return to **Tasks** and **Context** in the console to inspect progress and evidence.
 

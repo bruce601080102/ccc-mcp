@@ -33,6 +33,8 @@ Agents run without MCP unless an operator runs `ccc-mcp skill install mcp <name>
 
 `project authorize` permits writes inside the registered project plus configured test execution. ccc-mcp may create a project venv and install dependencies found in `requirements.txt`, `pyproject.toml`, or `package.json`; package install hooks can execute code. Review dependency diffs.
 
+For Python projects with a `pyproject.toml`, ccc-mcp installs the declared `test` extra from `pyproject.toml` or `setup.cfg` when present. With no configured test command, it runs changed Python test files found in Git. If a pytest configuration file also changed, it lets pytest use that configuration's scope; otherwise it runs the project's default pytest scope. The recorded test evidence identifies the selected scope. Focused tests passing does not imply the full suite passed, and ccc-mcp does not invent dependency version pins.
+
 Codex roles use OS-enforced `read-only` or `workspace-write` sandbox modes. Claude Code roles are restricted to selected tools and a worktree, but do **not** currently have the same OS-enforced boundary. Run ccc-mcp under a least-privileged OS account and do not represent Claude containment as verified sandboxing.
 
 All project, task, and evidence paths are validated to resist traversal. Persisted evidence is checked by `ccc-mcp --project <id> verify`.

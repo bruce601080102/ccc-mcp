@@ -1,4 +1,5 @@
 import sys
+from pathlib import Path
 
 from ccc_mcp.worker import run_execution
 
@@ -96,6 +97,26 @@ def test_advance_project_defaults_to_pytest_when_no_test_command_is_configured(b
     assert brief["tests"]["executed_by_host"] is True
     assert brief["tests"]["passed"] is True
     assert brief["tests"]["no_tests_collected"] is True
+
+
+def test_advance_project_auto_selects_changed_test_file(bridge, human):
+    task_id, implementation_id = advance_to_implementation(bridge)
+    workspace = Path(bridge.get_task_result("demo", task_id)[-1]["worktree"])
+    (workspace / "test_auto_target.py").write_text(
+        "def test_auto_target():\n    assert 1 + 1 == 2\n"
+    )
+
+    result = bridge.advance_project(
+        "demo", pending_patch(bridge, implementation_id), adapter="fake"
+    )
+
+    evidence = result["test_evidence"]
+    assert evidence["passed"] is True
+    assert evidence["selection"] == {
+        "mode": "changed_test_files", "paths": ["test_auto_target.py"], "full_suite": False,
+    }
+    assert evidence["command"][-1] == "test_auto_target.py"
+    assert bridge.get_task_status("demo", task_id)["brief"]["tests"]["selection"] == evidence["selection"]
 
 
 def test_advance_project_surfaces_a_failing_test_command(bridge, human):

@@ -337,9 +337,9 @@
     const row = (p) => `
       <div class="project-row" draggable="true" data-drag-project="${esc(p.id)}">
         <a class="project-row-link" href="#/p/${encodeURIComponent(p.id)}/overview">
-          <span class="project-avatar small">${esc((p.name || p.id).slice(0, 1).toUpperCase())}</span>
+          <span class="project-avatar small">${esc(p.id.slice(0, 1).toUpperCase())}</span>
           <span class="project-row-text">
-            <span class="project-row-name" data-no-i18n>${esc(p.name || p.id)}</span>
+            <span class="project-row-name" data-no-i18n>${esc(p.id)}</span>
             <span class="project-row-path mono">${esc(p.root)}</span>
           </span>
         </a>
@@ -775,6 +775,24 @@
     return tests.passed ? `<span class="pill positive">${esc(UI.translate("host tests passed"))}</span>` : `<span class="pill negative">${esc(UI.translate("host tests failed"))}</span>`;
   }
 
+  function testScopeLine(tests) {
+    const selection = tests && tests.selection;
+    if (!selection) return "";
+    if (selection.mode === "changed_test_files") {
+      return `${esc(UI.translate("Automatically selected changed test files"))}: <span class="mono">${esc((selection.paths || []).join(", "))}</span>`;
+    }
+    const label = selection.mode === "full_suite" ? "Project default test scope" :
+      selection.mode === "project_pytest_config" ? "Scope from changed pytest settings" : "Project test command";
+    return esc(UI.translate(label));
+  }
+
+  function dependencyLine(tests) {
+    const deps = tests && tests.dependencies;
+    if (!deps || !deps.detected) return "";
+    const label = deps.installed ? "Installed before testing" : "Dependency installation failed";
+    return `${esc(UI.translate(label))} · <span class="mono">${esc(deps.manifest || "")}</span>${deps.reason ? ` · ${esc(deps.reason)}` : ""}`;
+  }
+
   async function renderTaskDetail() {
     const gen = renderGen;
     const route = parseRoute();
@@ -805,6 +823,8 @@
         <div class="kv-row"><span class="k">Agent / role</span><span class="v">${esc(brief.agent || "—")} / ${esc(brief.role || "—")}</span></div>
         <div class="kv-row"><span class="k">Execution status</span><span class="v">${esc(brief.execution_status || "—")}</span></div>
         <div class="kv-row"><span class="k">Host verification</span><span class="v">${verificationLine(brief.tests)}</span></div>
+        ${testScopeLine(brief.tests) ? `<div class="kv-row"><span class="k">Test scope</span><span class="v">${testScopeLine(brief.tests)}</span></div>` : ""}
+        ${dependencyLine(brief.tests) ? `<div class="kv-row"><span class="k">Dependencies</span><span class="v">${dependencyLine(brief.tests)}</span></div>` : ""}
         ${brief.summary ? `<div class="kv-row"><span class="k">Summary</span><span class="v">${esc(brief.summary)}</span></div>` : ""}
         ${brief.next_action ? `<div class="kv-row"><span class="k">Next action</span><span class="v">${esc(brief.next_action)}</span></div>` : ""}
       </div>
@@ -908,11 +928,11 @@
       </div>
       <div class="section">
         <div class="section-row">
-          <div class="section-label"><div class="t">Test command</div><div class="d">Runs on the host automatically before each REVIEW round, once the project has write access.</div></div>
+          <div class="section-label"><div class="t">Test command</div><div class="d">After each implementation, ccc-mcp installs declared dependencies and runs tests automatically before REVIEW.</div></div>
           <div class="section-panel">
             <div class="field">
               <input type="text" id="test-command" value="${esc((overview.editable.test_command || []).join(" "))}" placeholder="e.g. python -m pytest -q" />
-              <div class="hint">Space-separated argv, never a shell string.</div>
+              <div class="hint">Leave blank to test changed Python test files automatically. If none changed, or pytest settings changed, pytest uses the project's configured scope. Enter a command only to override this.</div>
             </div>
             <button class="btn small" id="save-test-command">Save</button>
           </div>
@@ -1468,20 +1488,30 @@
     overlay.className = "modal-overlay";
     overlay.innerHTML = `<div class="modal modal-wide" role="dialog" aria-modal="true"><h2>${esc(serverName)}</h2><div class="body">${esc(UI.translate("Checking server and tools…"))}</div></div>`;
     mountModal(overlay);
-    let tools;
+    let tools, projectRoot = "";
     try {
-      tools = await api(`/projects/${encodeURIComponent(projectId)}/mcp/${encodeURIComponent(serverName)}/tools`);
+      const [availableTools, projects] = await Promise.all([
+        api(`/projects/${encodeURIComponent(projectId)}/mcp/${encodeURIComponent(serverName)}/tools`),
+        api("/projects"),
+      ]);
+      tools = availableTools;
+      projectRoot = projects.find((project) => project.id === projectId)?.root || "";
     } catch (err) { closeModal(); toast(err.message, true); return; }
     if (!overlay.isConnected) return;
     overlay.innerHTML = `
       <div class="modal modal-wide" role="dialog" aria-modal="true">
         <h2>${esc(serverName)}</h2>
-        <div class="body">${esc(UI.translate("Choose an enabled tool and provide JSON arguments. Its result is shown here and is not saved by this page."))}</div>
+        <div class="body">${esc(UI.translate("Choose a tool and fill in its required fields. The result appears here and is not saved by this page."))}</div>
         ${tools.length ? `
           <div class="field"><label for="mcp-tool-select">${esc(UI.translate("Tool"))}</label><select id="mcp-tool-select">${tools.map((tool, index) => `<option value="${index}">${esc(tool.name)}</option>`).join("")}</select></div>
-          <div id="mcp-tool-description" class="muted"></div>
+          <div id="mcp-tool-fields"></div>
+          <div id="mcp-tool-validation" class="mcp-tool-validation" role="alert"></div>
+          <details class="schema-details"><summary>${esc(UI.translate("About this tool"))}</summary><div id="mcp-tool-description" class="mcp-tool-description"></div></details>
+          <details class="schema-details"><summary>${esc(UI.translate("Optional parameters (JSON)"))}</summary>
+            <div class="hint">${esc(UI.translate("Leave {} to use the tool's defaults. Add optional fields as a JSON object."))}</div>
+            <label for="mcp-tool-arguments">${esc(UI.translate("Optional arguments"))}</label><textarea id="mcp-tool-arguments" spellcheck="false">{}</textarea>
+          </details>
           <details class="schema-details"><summary>${esc(UI.translate("Input schema"))}</summary><pre id="mcp-tool-schema" class="panel mono"></pre></details>
-          <div class="field"><label for="mcp-tool-arguments">${esc(UI.translate("Arguments (JSON)"))}</label><textarea id="mcp-tool-arguments" spellcheck="false">{}</textarea></div>
           <div id="mcp-tool-result" aria-live="polite"></div>
         ` : `<div class="empty">${esc(UI.translate("No enabled tools are available."))}</div>`}
         <div class="actions"><button class="btn" id="mcp-tool-close">${esc(UI.translate("Close"))}</button>${tools.length ? `<button class="btn primary" id="mcp-tool-run">${esc(UI.translate("Run tool"))}</button>` : ""}</div>
@@ -1490,27 +1520,106 @@
     document.getElementById("mcp-tool-close").addEventListener("click", closeModal);
     if (!tools.length) return;
     const select = document.getElementById("mcp-tool-select");
+    const requiredFields = (tool) => {
+      const schema = tool.input_schema || {};
+      const required = Array.isArray(schema.required) ? schema.required : [];
+      const properties = schema.properties || {};
+      if (!required.length) return `<p class="mcp-tool-empty">${esc(UI.translate("This tool has no required parameters. Open Optional parameters to add any settings."))}</p>`;
+      return `<div class="mcp-tool-fields-title">${esc(UI.translate("Required parameters"))}</div>` + required.map((name, index) => {
+        const spec = properties[name] || {};
+        const kind = Array.isArray(spec.type) ? spec.type.find((type) => type !== "null") : spec.type;
+        const value = name === "repo_path" && projectRoot ? projectRoot : spec.default;
+        const label = name === "repo_path" ? UI.translate("Repository path (repo_path)") : (spec.title ? `${spec.title} (${name})` : name);
+        const fieldId = `mcp-required-${index}`;
+        let control;
+        if (Array.isArray(spec.enum)) {
+          control = `<select id="${fieldId}" data-required-index="${index}"><option value="">${esc(UI.translate("Choose a value"))}</option>${spec.enum.map((option) => `<option value="${esc(option)}" ${option === value ? "selected" : ""}>${esc(option)}</option>`).join("")}</select>`;
+        } else if (kind === "boolean") {
+          control = `<select id="${fieldId}" data-required-index="${index}"><option value="">${esc(UI.translate("Choose a value"))}</option><option value="true" ${value === true ? "selected" : ""}>true</option><option value="false" ${value === false ? "selected" : ""}>false</option></select>`;
+        } else if (kind === "object" || kind === "array") {
+          control = `<textarea id="${fieldId}" data-required-index="${index}" spellcheck="false">${esc(value === undefined ? "" : JSON.stringify(value, null, 2))}</textarea>`;
+        } else {
+          control = `<input id="${fieldId}" data-required-index="${index}" type="${kind === "number" || kind === "integer" ? "number" : "text"}" ${kind === "number" ? 'step="any"' : ""} value="${esc(value === undefined ? "" : value)}" />`;
+        }
+        const hint = name === "repo_path" && projectRoot
+          ? UI.translate("Current project folder is filled in. Change it to use another repository.")
+          : spec.description || "";
+        return `<div class="field mcp-required-field"><label for="${fieldId}">${esc(label)} <span class="required-mark">${esc(UI.translate("Required"))}</span></label>${control}${hint ? `<div class="hint">${esc(hint)}</div>` : ""}</div>`;
+      }).join("");
+    };
     const refreshTool = () => {
       const tool = tools[Number(select.value)];
       document.getElementById("mcp-tool-description").textContent = tool.description || "";
       document.getElementById("mcp-tool-schema").textContent = JSON.stringify(tool.input_schema || {}, null, 2);
+      document.getElementById("mcp-tool-fields").innerHTML = requiredFields(tool);
+      document.getElementById("mcp-tool-arguments").value = "{}";
+      document.getElementById("mcp-tool-validation").textContent = "";
       document.getElementById("mcp-tool-result").replaceChildren();
     };
     select.addEventListener("change", refreshTool);
     refreshTool();
     select.focus();
     document.getElementById("mcp-tool-run").addEventListener("click", async (event) => {
-      let argumentsValue;
+      const tool = tools[Number(select.value)];
+      const schema = tool.input_schema || {};
+      const required = Array.isArray(schema.required) ? schema.required : [];
+      const properties = schema.properties || {};
+      const validation = document.getElementById("mcp-tool-validation");
+      validation.textContent = "";
+      let argumentsValue, invalidField = null;
       try {
         argumentsValue = JSON.parse(document.getElementById("mcp-tool-arguments").value || "{}");
         if (!argumentsValue || Array.isArray(argumentsValue) || typeof argumentsValue !== "object") throw new Error();
-      } catch (_) { toast("Arguments must be a JSON object.", true); return; }
+      } catch (_) {
+        validation.textContent = UI.translate("Optional parameters must be a JSON object, such as {}.");
+        const optionalInput = document.getElementById("mcp-tool-arguments");
+        optionalInput.closest("details").open = true;
+        optionalInput.focus();
+        return;
+      }
+      for (const [index, name] of required.entries()) {
+        const input = document.getElementById(`mcp-required-${index}`);
+        const raw = input.value.trim();
+        input.removeAttribute("aria-invalid");
+        if (!raw) {
+          validation.textContent = `${name}: ${UI.translate("This field is required.")}`;
+          invalidField = input;
+          break;
+        }
+        const spec = properties[name] || {};
+        const kind = Array.isArray(spec.type) ? spec.type.find((type) => type !== "null") : spec.type;
+        if (kind === "integer" || kind === "number") {
+          const number = Number(raw);
+          if (!Number.isFinite(number) || kind === "integer" && !Number.isInteger(number)) {
+            validation.textContent = `${name}: ${UI.translate(kind === "integer" ? "Enter a whole number." : "Enter a number.")}`;
+            invalidField = input;
+            break;
+          }
+          argumentsValue[name] = number;
+        } else if (kind === "boolean") {
+          argumentsValue[name] = raw === "true";
+        } else if (kind === "object" || kind === "array") {
+          try {
+            const value = JSON.parse(raw);
+            if (kind === "array" ? !Array.isArray(value) : !value || Array.isArray(value) || typeof value !== "object") throw new Error();
+            argumentsValue[name] = value;
+          } catch (_) {
+            validation.textContent = `${name}: ${UI.translate(kind === "array" ? "Enter a JSON array." : "Enter a JSON object.")}`;
+            invalidField = input;
+            break;
+          }
+        } else argumentsValue[name] = raw;
+      }
+      if (invalidField) {
+        invalidField.setAttribute("aria-invalid", "true");
+        invalidField.focus();
+        return;
+      }
       const button = event.currentTarget;
       button.disabled = true;
       const result = document.getElementById("mcp-tool-result");
       result.textContent = UI.translate("Running tool…");
       try {
-        const tool = tools[Number(select.value)];
         const response = await api(`/projects/${encodeURIComponent(projectId)}/mcp/${encodeURIComponent(serverName)}/tools/${encodeURIComponent(tool.name)}/call`, { method: "POST", body: { arguments: argumentsValue } });
         result.innerHTML = `<div class="result-label ${response.is_error ? "error-text" : ""}">${esc(UI.translate(response.is_error ? "Tool returned an error" : "Tool result"))}${response.truncated ? ` · ${esc(UI.translate("truncated"))}` : ""}</div><pre class="log-panel" id="mcp-result-text"></pre>`;
         document.getElementById("mcp-result-text").textContent = response.text || "";

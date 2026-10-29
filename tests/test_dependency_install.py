@@ -9,6 +9,7 @@ from conftest import dispatch as dispatch_role
 from ccc_mcp.adapters.test_runner import (
     _resolve_against_venv,
     _venv_environment,
+    automatic_test_command,
     detect_dependency_setup,
     ensure_project_venv,
     install_dependencies,
@@ -75,6 +76,51 @@ def test_detect_dependency_setup_falls_back_to_pyproject(tmp_path):
     name, command = detect_dependency_setup(tmp_path)
     assert name == "pyproject.toml"
     assert command == [sys.executable, "-m", "pip", "install", "-q", "-e", "."]
+
+
+def test_detect_dependency_setup_installs_declared_test_extra(tmp_path):
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='x'\n")
+    (tmp_path / "setup.cfg").write_text(
+        "[options.extras_require]\ntest =\n    pytest>=8\n"
+    )
+    assert detect_dependency_setup(tmp_path)[1][-1] == ".[test]"
+
+    (tmp_path / "setup.cfg").unlink()
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname='x'\n[project.optional-dependencies]\ntest=['pytest>=8']\n"
+    )
+    assert detect_dependency_setup(tmp_path)[1][-1] == ".[test]"
+
+
+def test_automatic_test_command_uses_only_changed_test_files(tmp_path):
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    test = tmp_path / "tests" / "test_feature.py"
+    test.parent.mkdir()
+    test.write_text("def test_feature():\n    assert True\n")
+    (tmp_path / "module.py").write_text("value = 1\n")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "."], check=True)
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "-c", "user.name=Test",
+         "-c", "user.email=test@example.com", "commit", "-qm", "baseline"],
+        check=True,
+    )
+
+    command, selection = automatic_test_command(tmp_path)
+    assert command[-3:] == ["-m", "pytest", "-q"]
+    assert selection["mode"] == "full_suite"
+
+    test.write_text("def test_feature():\n    assert 1 == 1\n")
+    (tmp_path / "module.py").write_text("value = 2\n")
+    command, selection = automatic_test_command(tmp_path)
+    assert command[-1] == "tests/test_feature.py"
+    assert selection == {
+        "mode": "changed_test_files", "paths": ["tests/test_feature.py"], "full_suite": False,
+    }
+
+    (tmp_path / "setup.cfg").write_text("[tool:pytest]\ntestpaths = tests\n")
+    command, selection = automatic_test_command(tmp_path)
+    assert command[-3:] == ["-m", "pytest", "-q"]
+    assert selection["mode"] == "project_pytest_config"
 
 
 def test_detect_dependency_setup_prefers_lockfile_npm_ci(tmp_path):

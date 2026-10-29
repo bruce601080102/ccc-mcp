@@ -129,6 +129,12 @@ def test_chatgpt_only_profile_reverts_to_sd_rd_on_host_test_failure(bridge, huma
     assert execution_row(bridge, result["next_execution"]["execution_id"]) == {
         "agent": "chatgpt", "role": "SD/RD", "adapter": "interactive",
     }
+    # Saving the next interactive report must not erase the failed host test
+    # evidence before the PM advances the handoff and reruns that test.
+    bridge.submit_agent_report("demo", result["next_execution"]["execution_id"], report())
+    status = bridge.get_task_status("demo", task_id)
+    assert status["brief"]["tests"]["executed_by_host"] is True
+    assert status["brief"]["tests"]["passed"] is False
 
 
 def test_chatgpt_only_profile_dispatch_is_resumable_after_a_worker_spawn_failure(

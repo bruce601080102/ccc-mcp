@@ -318,11 +318,10 @@ class WorkspaceHub:
                         "reason": "ChatGPT web usage is not exposed to MCP",
                     },
                 },
-                "test_evidence": {
-                    "executed_by_host": False,
-                    "reason": "Local tests require separate authorization",
-                },
             }
+            # The durable project write grant already covers host tests. They run
+            # when PM advances the SD/RD handoff, not while this report is saved.
+            # Do not replace an earlier host TEST-RESULT with a placeholder here.
             state = None
             if row["role"] not in {"SA", "REVIEW"}:
                 evidence, state = implementation_evidence(self, row, Path(row["worktree"]))

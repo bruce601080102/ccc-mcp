@@ -492,10 +492,20 @@ tr.clickable:focus-visible { outline: 2px solid var(--accent); outline-offset: -
 .tool-risk.read { background: var(--pill-positive-bg); color: var(--pill-positive-ink); }
 .tool-risk.write { background: var(--pill-warning-bg); color: var(--pill-warning-ink); }
 .modal textarea { width: 100%; min-height: 108px; resize: vertical; background: var(--surface); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+.mcp-tool-fields-title { margin: 20px 0 13px; font-size: 13px; font-weight: 650; }
+.mcp-required-field :where(input, select, textarea) { width: 100%; }
+.mcp-required-field .hint, .schema-details .hint { color: var(--muted); font-size: 12px; line-height: 1.5; margin-top: 6px; }
+.required-mark { color: var(--negative); font-size: 11px; margin-left: 6px; }
+.mcp-tool-validation { color: var(--negative); font-size: 12px; min-height: 0; margin-bottom: 10px; }
+.mcp-tool-validation:empty { display: none; }
+.mcp-required-field [aria-invalid="true"] { border-color: var(--negative); }
+.mcp-tool-empty { color: var(--muted); font-size: 13px; margin: 18px 0; }
+.mcp-tool-description { color: var(--muted); font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; margin-top: 8px; }
 .schema-details { margin: 14px 0 18px; }
 .schema-details summary { cursor: pointer; color: var(--accent); font-size: 12px; padding: 4px 0; }
 .schema-details summary:hover { text-decoration: underline; }
 .schema-details pre { white-space: pre-wrap; max-height: 180px; overflow: auto; margin-top: 9px; padding: 12px; font-size: 11px; }
+.schema-details label { display: block; font-size: 12px; font-weight: 600; margin: 12px 0 7px; }
 .result-label { font-size: 12px; font-weight: 650; margin: 14px 0 7px; }
 .connect-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .saved-connection { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--rule); }

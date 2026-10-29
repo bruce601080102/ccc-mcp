@@ -1,8 +1,10 @@
+import configparser
 import hashlib
 import os
 import re
 import subprocess
 import sys
+import tomllib
 import uuid
 from pathlib import Path
 
@@ -35,6 +37,88 @@ def _implementation_workspace(bridge, project_id, task_id):
 
 
 _PYTHON_MANIFESTS = {"requirements.txt", "pyproject.toml"}
+
+
+def _declares_test_extra(cwd):
+    """Use only a project's declared test extra; never guess package versions."""
+    pyproject = Path(cwd) / "pyproject.toml"
+    if pyproject.is_file():
+        try:
+            extras = tomllib.loads(pyproject.read_text(encoding="utf-8")).get(
+                "project", {}
+            ).get("optional-dependencies", {})
+            if "test" in extras:
+                return True
+        except (OSError, UnicodeError, tomllib.TOMLDecodeError):
+            pass
+    setup_cfg = Path(cwd) / "setup.cfg"
+    if setup_cfg.is_file():
+        parser = configparser.ConfigParser(interpolation=None)
+        try:
+            parser.read(setup_cfg, encoding="utf-8")
+            return parser.has_option("options.extras_require", "test")
+        except (OSError, UnicodeError, configparser.Error):
+            pass
+    return False
+
+
+def detect_changed_python_tests(cwd):
+    """Find modified test files for the default Python test command.
+
+    Only explicit test-file changes narrow the command. A project with no changed
+    tests keeps the full-suite default, so source-only edits are never treated as
+    verified by a guessed neighboring test.
+    """
+    root = Path(cwd).resolve()
+    paths = set()
+    changed_test_config = False
+    for args in (
+        ["git", "diff", "--name-only", "--diff-filter=ACMRT", "-z", "HEAD", "--"],
+        ["git", "ls-files", "--others", "--exclude-standard", "-z", "--"],
+    ):
+        try:
+            result = subprocess.run(
+                args, cwd=root, capture_output=True, stdin=subprocess.DEVNULL,
+                timeout=10, shell=False, check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return []
+        if result.returncode:
+            return []
+        for raw in result.stdout.split(b"\0"):
+            if not raw:
+                continue
+            name = os.fsdecode(raw)
+            path = Path(name)
+            if path.as_posix() in {"setup.cfg", "pytest.ini", "tox.ini"}:
+                changed_test_config = True
+            if not (path.name.startswith("test_") or path.name.endswith("_test.py")):
+                continue
+            if path.suffix != ".py" or len(name) > 4096:
+                continue
+            resolved = (root / path).resolve()
+            if resolved.is_relative_to(root) and resolved.is_file():
+                paths.add(path.as_posix())
+    # A changed pytest configuration may deliberately define testpaths/addopts.
+    # Let pytest read that configuration instead of overriding it with file args.
+    if changed_test_config:
+        return None
+    return sorted(paths) if len(paths) <= 32 else []
+
+
+def automatic_test_command(cwd):
+    paths = detect_changed_python_tests(cwd)
+    if paths is None:
+        return list(DEFAULT_TEST_COMMAND), {
+            "mode": "project_pytest_config", "paths": [], "full_suite": False,
+        }
+    if paths:
+        return [*DEFAULT_TEST_COMMAND, *paths], {
+            "mode": "changed_test_files", "paths": paths, "full_suite": False,
+        }
+    return list(DEFAULT_TEST_COMMAND), {
+        "mode": "full_suite", "paths": [], "full_suite": True,
+    }
 
 
 def venv_python_path(venv_dir):
@@ -99,7 +183,8 @@ def detect_dependency_setup(cwd, python_executable=None):
     if (Path(cwd) / "requirements.txt").is_file():
         return "requirements.txt", [python_executable, "-m", "pip", "install", "-q", "-r", "requirements.txt"]
     if (Path(cwd) / "pyproject.toml").is_file():
-        return "pyproject.toml", [python_executable, "-m", "pip", "install", "-q", "-e", "."]
+        target = ".[test]" if _declares_test_extra(cwd) else "."
+        return "pyproject.toml", [python_executable, "-m", "pip", "install", "-q", "-e", target]
     if (Path(cwd) / "package-lock.json").is_file():
         return "package-lock.json", ["npm", "ci"]
     if (Path(cwd) / "package.json").is_file():
@@ -262,12 +347,13 @@ def _resolve_against_venv(command, venv_scripts_dir):
     return command
 
 
-def execute_test_command(bridge, project_id, task_id, command, identity, cwd=None):
+def execute_test_command(bridge, project_id, task_id, command, identity, cwd=None, selection=None):
     """Run `command` (an argv, never a shell string) in the task's implementation
     workspace and persist it as TEST-RESULT.md evidence. Shared by the human-confirmed
     `ccc-mcp task test` path and the automatic project-authorize-consented path that
-    runs before REVIEW (core.tasks.TaskHub.run_configured_test_command), which now runs
-    DEFAULT_TEST_COMMAND when no test_command was explicitly configured.
+    runs before REVIEW (core.tasks.TaskHub.run_configured_test_command). With no
+    configured command, it selects changed Python test files when present and runs
+    the full pytest suite otherwise.
 
     A dependency manifest (requirements.txt/pyproject.toml/package.json) is installed
     first, best-effort, if one is present (see install_dependencies). A failed install is
@@ -278,6 +364,8 @@ def execute_test_command(bridge, project_id, task_id, command, identity, cwd=Non
     that venv's absolute interpreter path.
     """
     cwd = cwd or _implementation_workspace(bridge, project_id, task_id)
+    if command is None:
+        command, selection = automatic_test_command(cwd)
     settings = bridge.get_project_settings(project_id)
     runtime = settings.get("runtime")
     selected = None
@@ -347,6 +435,7 @@ def execute_test_command(bridge, project_id, task_id, command, identity, cwd=Non
         "command": command,
         "dependencies": dependencies,
         "runtime": selected,
+        **({"selection": selection} if selection else {}),
     }
     return record_test_evidence(bridge, project_id, task_id, result)
 
@@ -363,7 +452,10 @@ def run_tests_local(bridge, project_id, task_id):
 
     bridge.approved_plan(project_id, task_id)
     cwd = _implementation_workspace(bridge, project_id, task_id)
-    command = bridge.get_project_settings(project_id).get("test_command") or DEFAULT_TEST_COMMAND
+    command = bridge.get_project_settings(project_id).get("test_command")
+    selection = None
+    if command is None:
+        command, selection = automatic_test_command(cwd)
     identity = confirm_local(
         f"在 {cwd} 執行 {' '.join(command)}\n測試會執行儲存庫程式碼，請先審閱測試內容。",
         task_id,
@@ -377,4 +469,4 @@ def run_tests_local(bridge, project_id, task_id):
         )
         if live:
             raise BridgeError("Wait for the active agent before running tests")
-        return execute_test_command(bridge, project_id, task_id, command, identity, cwd)
+        return execute_test_command(bridge, project_id, task_id, command, identity, cwd, selection)

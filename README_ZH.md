@@ -30,7 +30,7 @@ ccc-mcp ui
 瀏覽器會自動開啟本機控制台。接著在介面中：
 
 1. 從 **所有專案**建立 `hello-demo`，或加入既有資料夾。建立後到專案頁按「啟用寫入」並輸入確認文字；加入既有資料夾時也可直接勾選寫入授權。
-2. 在專案的 **設定**選擇工作流 profile、角色與測試命令。只用 ChatGPT 時選 `chatgpt-only`；使用 Codex／Claude Code 時先完成各自的原生 CLI 安裝與登入。
+2. 在專案的 **設定**選擇工作流 profile 與角色。**測試指令**可留空：ccc-mcp 會安裝專案宣告的相依套件，優先測試本次修改的 Python 測試檔；若沒有修改測試檔，或 pytest 設定也有變動，則由專案的 pytest 設定決定測試範圍。只有要覆寫這個規則時才需填指令。只用 ChatGPT 時選 `chatgpt-only`；使用 Codex／Claude Code 時先完成各自的原生 CLI 安裝與登入。
 3. 依照[連接 ChatGPT](docs/ch/2-connect-chatgpt.md)建立 Tunnel，再到 **連線**頁輸入 Tunnel ID 與 runtime API key，按「連線」。
 4. 在 ChatGPT 選取 ccc-mcp 連線，提出：「請在 `hello-demo` 建立 `hello.py`，執行時輸出 `Hello, World!`，並加入驗證輸出的測試。」回到控制台的 **任務**、**脈絡**頁查看進度與證據。
 

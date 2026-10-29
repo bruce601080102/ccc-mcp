@@ -124,7 +124,7 @@ or reduce decision/report history, then dispatch again. Already omitted: [...]
 | 偵測到的檔案 | 執行的安裝指令 |
 |---|---|
 | `requirements.txt` | `python -m pip install -q -r requirements.txt` |
-| `pyproject.toml`（且沒有 `requirements.txt`） | `python -m pip install -q -e .` |
+| `pyproject.toml`（且沒有 `requirements.txt`） | `python -m pip install -q -e '.[test]'`（若 `pyproject.toml` 或 `setup.cfg` 宣告 `test` 額外依賴）；否則安裝 `-e .` |
 | `package-lock.json` | `npm ci` |
 | `package.json`（沒有 lockfile） | `npm install` |
 | 以上皆無 | 不執行任何安裝指令，直接跑 `test_command`（跟改動前完全一樣） |
@@ -133,7 +133,7 @@ or reduce decision/report history, then dispatch again. Already omitted: [...]
 
 > **實作細節（Windows 專用的坑）**：單純把 venv 的 Scripts 目錄加進子行程的 `PATH` 環境變數**不夠**——Windows 的 `CreateProcess` 在解析不帶路徑的執行檔名稱（例如 `"python"`）時，用的是**呼叫端**行程當下的 `PATH`，不是即將交給子行程的那份環境變數，所以光改 `env["PATH"]` 不會讓 `"python"` 真的指向 venv（這不是臆測，是本次開發時自己的測試先抓到的）。實際做法是把 `test_command` 的第一個元素直接改寫成 venv 內對應執行檔的絕對路徑，`env["PATH"]` 只用來讓指令本身再往下開的子行程（例如 pytest 自己呼叫的子程序）也能繼續在這個 venv 裡解析套件。
 
-**安全邊界**：套件安裝指令是 ccc-mcp 自動決定要不要跑、但**安裝目標清單是 Agent 寫入的檔案內容**——`setup.py`、npm 的 `postinstall` script 都可以在安裝當下執行任意程式碼。這跟 `test_command` 本身（操作者固定設定、Agent 完全無法變更）的信任模型不同，是本次新增、刻意沿用 `project authorize` 同意範圍的風險：等於同意自動安裝 Agent 寫入清單裡的任何套件。審閱 Diff 時請把 `requirements.txt`／`package.json` 的異動當成跟程式碼本身一樣需要檢查的內容。把安裝隔離在專屬 venv，至少避免了污染 ccc-mcp 自己執行所在的那個環境。
+**安全邊界**：套件安裝指令由 ccc-mcp 選擇，但安裝目標清單來自專案檔案；`setup.py` 和 npm `postinstall` 可在安裝時執行程式碼。自動選取的測試檔也來自 Git 工作樹，測試本身同樣會執行程式碼。這些行為都沿用 `project authorize` 的授權範圍。審閱 Diff 時應包含相依設定與測試檔；專屬 venv 可避免污染 ccc-mcp 自己的執行環境。
 
 安裝結果記錄在測試證據的 `dependencies` 欄位，`brief.tests.dependencies` 可查（`venv: true` 代表這次用了專屬 venv）：
 
@@ -145,7 +145,7 @@ or reduce decision/report history, then dispatch again. Already omitted: [...]
 
 ## 6. `project authorize` 預設就會自動跑測試，不需要另外設定 `test_command`
 
-原本即使已經 `project authorize`，也要再額外 `config test-command` 設定一次才會自動跑測試——這是刻意的雙重確認（會執行 Agent 寫的測試碼，是別於一般改檔的額外風險）。現在改成：`project authorize` 本身就是足夠的同意，沒有另外設定時，預設跑 `python -m pytest -q`；只有想換成別的命令才需要 `config test-command`。
+`project authorize` 本身就允許自動執行主機測試。未設定 `test_command` 時，若 Git 工作樹中有修改或新增的 Python 測試檔，ccc-mcp 會自動以 `python -m pytest -q <這些測試檔>` 驗證；若 pytest 設定檔也被修改，則不另外指定檔案，由 pytest 採用該設定的測試範圍；其餘情況執行 `python -m pytest -q`，範圍依專案原有設定。測試結果會記錄實際指令與範圍；只跑目標測試不代表全套通過。只有要覆寫此規則時才需設定 `test_command`。安裝依賴若失敗，仍會如實回報，不會自行猜測或改寫套件版本限制。
 
 **新專案還沒寫任何測試時怎麼辦？** `pytest -q` 在一個測試檔都沒有時會回傳退出碼 5（「沒收集到測試」），這跟「測試執行但失敗」（退出碼 1）語意不同。ccc-mcp 會辨識這個狀況，回報成：
 

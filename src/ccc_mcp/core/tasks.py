@@ -244,6 +244,11 @@ def verification_summary(report, test_result, reverted, language):
         ),
     }[host_verification]
     message = f"{claim_text}；{host_text}" if zh else f"{claim_text}; {host_text}"
+    if (test_result or {}).get("selection", {}).get("mode") == "changed_test_files":
+        message += (
+            "；僅驗證本次修改的測試檔，全套測試尚未驗證"
+            if zh else "; only changed test files were verified; the full suite was not run"
+        )
     if reverted:
         message += (
             "\n⤷ 本輪退回 SD/RD 是因為主機測試結果覆蓋了 REVIEW 的「無需修訂」自述，"
@@ -1778,6 +1783,7 @@ class TaskHub:
                     ),
                     "dependencies": _dependency_summary(test_result),
                     "no_tests_collected": bool((test_result or {}).get("no_tests_collected")),
+                    **({"selection": test_result["selection"]} if test_result and "selection" in test_result else {}),
                 },
                 "verification": verification_summary(
                     report, test_result, reverted, self.get_project_settings(project_id)["language"]
@@ -2545,11 +2551,10 @@ class TaskHub:
         without per-step approval also covers running a fixed, host-executed test
         command. Without continuous authorization, no command runs and the reason is
         recorded instead of silently skipping. A project that never explicitly configured
-        `test_command` still gets `DEFAULT_TEST_COMMAND` (`python -m pytest -q`) run
-        automatically — `config test-command` only needs to be set to use something else.
+        Without `test_command`, changed Python test files are selected automatically;
+        when none changed, the default is the full `python -m pytest -q` suite.
         """
         from ..adapters.test_runner import (
-            DEFAULT_TEST_COMMAND,
             execute_test_command,
             record_test_evidence,
         )
@@ -2565,7 +2570,7 @@ class TaskHub:
                     "reason": "Project is not continuously authorized; run project authorize",
                 },
             )
-        command = self.get_project_settings(project_id).get("test_command") or DEFAULT_TEST_COMMAND
+        command = self.get_project_settings(project_id).get("test_command")
         return execute_test_command(self, project_id, task_id, command, access["identity"])
 
     def _latest_test_result(self, project_id, task_id):
@@ -2901,17 +2906,18 @@ class TaskHub:
                             + canonical(report.get("findings", []))
                             + "\n",
                         )
-                        self.save_artifact(
-                            conn,
-                            project_id,
-                            task_id,
-                            "TEST-RESULT.md",
-                            execution_id,
-                            f"# {headings[2]}\n\n"
-                            + attribution(language, "ccc-mcp host", row["role"])
-                            + canonical((extras or {}).get("test_evidence", []))
-                            + "\n",
-                        )
+                        if (extras or {}).get("test_evidence") is not None:
+                            self.save_artifact(
+                                conn,
+                                project_id,
+                                task_id,
+                                "TEST-RESULT.md",
+                                execution_id,
+                                f"# {headings[2]}\n\n"
+                                + attribution(language, "ccc-mcp host", row["role"])
+                                + canonical(extras["test_evidence"])
+                                + "\n",
+                            )
                 if extras and extras.get("invocation"):
                     self.save_artifact(
                         conn,
