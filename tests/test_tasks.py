@@ -67,6 +67,18 @@ def test_get_task_status_does_not_flag_execution_with_live_lock(bridge, human):
     assert status["brief"]["progress"]["orphaned"] is False
 
 
+def test_get_task_status_remains_available_while_project_is_locked(bridge, human):
+    bridge.create_task("demo", "新增 API", ["API 回傳 200"])
+
+    with bridge.lock("demo"):
+        started = time.monotonic()
+        status = bridge.get_task_status("demo", "TASK-0001")
+
+    assert time.monotonic() - started < 2
+    assert status["brief"]["task_id"] == "TASK-0001"
+    assert status["brief"]["state"] == "CREATED"
+
+
 def test_recover_workers_clears_orphaned_execution(bridge, human):
     bridge.create_task("demo", "新增 API", ["API 回傳 200"])
     queued = dispatch(bridge)

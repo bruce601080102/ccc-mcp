@@ -5,7 +5,7 @@ import subprocess
 import sys
 import time
 import uuid
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -460,6 +460,28 @@ def meeting_mode_notice(clarification, language):
 
 
 class TaskHub:
+    @contextmanager
+    def _status_read_scope(self, project_id):
+        """Keep status polling available while a long operation holds the project lock.
+
+        Writers commit their state to SQLite before releasing the lock.  A status
+        response may briefly combine two committed snapshots during a transition,
+        which is preferable to a 30-second wait followed by an ASGI exception.
+        The next poll will show the settled state.
+        """
+        folder = self.home / "locks"
+        folder.mkdir(exist_ok=True)
+        lock = portalocker.Lock(folder / f"{identifier(project_id)}.lock", timeout=0)
+        try:
+            lock.acquire()
+        except portalocker.exceptions.AlreadyLocked:
+            lock = None
+        try:
+            yield
+        finally:
+            if lock is not None:
+                lock.release()
+
     def task(self, project_id, task_id):
         self.project(project_id)
         row = self.store.one(
@@ -1626,7 +1648,7 @@ class TaskHub:
         )
 
     def get_task_status(self, project_id, task_id):
-        with self.lock(project_id):
+        with self._status_read_scope(project_id):
             task = self.task(project_id, task_id)
             task["executions"] = self.store.all(
                 "SELECT id,status,role,error,worktree FROM agent_executions "

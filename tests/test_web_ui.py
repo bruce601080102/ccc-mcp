@@ -32,6 +32,20 @@ def mkrepo(tmp_path, name):
     return repo
 
 
+def test_task_status_remains_available_while_project_is_locked(tmp_path, client):
+    repo = mkrepo(tmp_path, "busy")
+    added = client.post("/api/projects/add", json={"path": str(repo), "id": "busy"})
+    assert added.status_code == 200
+    bridge = client.app.state.bridge
+    bridge.create_task("busy", "新增 API", ["API 回傳 200"])
+
+    with bridge.lock("busy"):
+        response = client.get("/api/projects/busy/tasks/TASK-0001")
+
+    assert response.status_code == 200
+    assert response.json()["brief"]["task_id"] == "TASK-0001"
+
+
 def test_remove_project_keeps_folder_by_default_and_checks_confirmation(tmp_path, client):
     repo = mkrepo(tmp_path, "removable")
     assert client.post("/api/projects/add", json={"path": str(repo), "id": "removable"}).status_code == 200
