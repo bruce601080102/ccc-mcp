@@ -20,7 +20,7 @@ ccc-mcp connects ChatGPT Chat to a local coding workspace through MCP. Ask in Ch
 
 [![Watch ccc-mcp work in ChatGPT and the local control center](docs/assets/demo-preview.gif)](docs/assets/demo.mp4)
 
-The animated preview plays directly in this README. **[▶ Watch the full 56-second demo with audio](docs/assets/demo.mp4)** ([original recording on Google Drive](https://drive.google.com/drive/folders/15vn8wYrZ55JL5Aetb1IR6YGm7fK1i81m)). It shows the local console's projects, task, settings, and Skills & MCP pages, then ChatGPT's Astropy target-test result. The separate [SWE-bench evidence](#proof-three-selected-swe-bench-verified-cases) records the official harness results.
+The animated preview plays directly in this README. **[▶ Open or download the full 56-second demo with audio](docs/assets/demo.mp4)** ([original recording on Google Drive](https://drive.google.com/drive/folders/15vn8wYrZ55JL5Aetb1IR6YGm7fK1i81m)). It shows the local console's projects, task, settings, and Skills & MCP pages, then ChatGPT's Astropy target-test result. The separate [SWE-bench evidence](#proof-three-selected-swe-bench-verified-cases) records the official harness results.
 
 Want to try it yourself? The quick start below takes you from `ccc-mcp ui` to a ChatGPT conversation connected to an authorized local project.
 
