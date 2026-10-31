@@ -38,6 +38,8 @@ def run_execution(bridge, execution_id):
         lease.acquire()
     except portalocker.exceptions.LockException:
         return
+    with bridge._inprocess_worker_lock:
+        bridge._inprocess_worker_ids.add(execution_id)
     try:
         with bridge.store.transaction() as conn:
             row = conn.execute(
@@ -257,7 +259,11 @@ def run_execution(bridge, execution_id):
                         }
                 record_fallback_outcome(bridge, execution_id, fallback_info)
     finally:
-        lease.release()
+        try:
+            lease.release()
+        finally:
+            with bridge._inprocess_worker_lock:
+                bridge._inprocess_worker_ids.discard(execution_id)
 
 
 def main():

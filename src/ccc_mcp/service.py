@@ -1,3 +1,5 @@
+import threading
+
 from .adapters.git import revision
 from .adapters.storage import Store
 from .core.access import ProjectAccessHub
@@ -15,5 +17,9 @@ class CCCMCP(ConfigurationHub, WorkspaceHub, DirectEditHub, ProjectAccessHub, Co
     def __init__(self, home=None):
         self.home = bridge_home(home)
         self.store = Store(self.home)
+        # Tests and embedded callers can run workers in threads on this service.
+        # OS file locks alone do not reliably distinguish threads on every platform.
+        self._inprocess_worker_ids = set()
+        self._inprocess_worker_lock = threading.Lock()
 
     git_revision = staticmethod(revision)

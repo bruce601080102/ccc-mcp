@@ -219,6 +219,55 @@ def test_wait_for_task_blocks_until_background_agent_finishes(bridge):
     assert waited["must_continue_in_this_turn"] is True
 
 
+def test_wait_for_task_tracks_worker_thread_when_file_lock_looks_free(bridge, monkeypatch):
+    """macOS can let a thread acquire a file lock held by its own process."""
+    entered = threading.Event()
+    release = threading.Event()
+
+    def hold_worker(execution_id):
+        entered.set()
+        assert release.wait(timeout=10)
+
+    monkeypatch.setattr(bridge, "auto_advance_low_risk", hold_worker)
+    task_id = bridge.create_task("demo", "Implement a change")["id"]
+    execution = bridge.dispatch_agent(
+        "demo", task_id, "codex", "SA", bridge.latest("demo")["version"],
+        "Analyze", adapter="fake",
+    )
+    worker = threading.Thread(
+        target=run_execution, args=(bridge, execution["execution_id"]), daemon=True,
+    )
+    worker.start()
+    try:
+        assert entered.wait(timeout=10)
+        assert bridge.task_handoff("demo", task_id)["waiting_on"] == "PM_REFINEMENT"
+        # Simulate the same-process file-lock behavior seen on the macOS runner.
+        class ApparentlyFreeLock:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def acquire(self):
+                return self
+
+            def release(self):
+                pass
+
+            def __enter__(self):
+                return self.acquire()
+
+            def __exit__(self, *args):
+                self.release()
+
+        with monkeypatch.context() as patch:
+            patch.setattr("ccc_mcp.core.tasks.portalocker.Lock", ApparentlyFreeLock)
+            waited = bridge.wait_for_task("demo", task_id, timeout_seconds=0.05, poll_seconds=0.05)
+        assert waited["timed_out"] is True
+        assert waited["handoff"]["waiting_on"] == "PM_REFINEMENT"
+    finally:
+        release.set()
+        worker.join(timeout=10)
+
+
 def test_wait_for_task_timeout_requires_same_turn_to_keep_waiting(bridge):
     task_id = bridge.create_task("demo", "Implement a change")["id"]
     bridge.dispatch_agent(

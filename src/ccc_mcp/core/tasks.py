@@ -2050,6 +2050,10 @@ class TaskHub:
                 settling_ids.append(pointer["source_execution_id"])
             worker_settling = False
             for execution_id in set(settling_ids):
+                with self._inprocess_worker_lock:
+                    if execution_id in self._inprocess_worker_ids:
+                        worker_settling = True
+                        break
                 lockfile = self.home / "locks" / f"{execution_id}.lock"
                 lockfile.parent.mkdir(exist_ok=True)
                 try:
