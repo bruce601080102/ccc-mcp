@@ -16,6 +16,14 @@ ccc-mcp 透過 MCP，把 ChatGPT Chat 連到你電腦上的開發環境。你在
 
 > [English README](README.md) · [繁體中文文件](docs/ch/1-install-and-sign-in.md)
 
+## 觀看 Demo
+
+[![觀看 ccc-mcp 在 ChatGPT 與本機控制中心的操作畫面](docs/assets/demo-preview.gif)](docs/assets/demo.mp4)
+
+上方動態預覽會直接在 README 播放。**[▶ 觀看 56 秒有聲完整影片](docs/assets/demo.mp4)**（[Google Drive 原始錄影](https://drive.google.com/drive/folders/15vn8wYrZ55JL5Aetb1IR6YGm7fK1i81m)）。影片展示本機控制台的專案、任務、設定及 Skills 與 MCP 頁面，最後呈現 ChatGPT 的 Astropy 目標測試結果；[SWE-bench 證據](#實際成果三題選定的-swe-bench-verified-案例)則另外記錄官方 harness 的結果。
+
+想自己操作？下方的快速開始會帶你從 `ccc-mcp ui` 連上 ChatGPT，並讓它處理已授權的本機專案。
+
 ## 從 UI 開始
 
 安裝後直接開啟本機控制中心：

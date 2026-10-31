@@ -12,3 +12,4 @@ dist/
 .tools/
 .tunnel/
 npm
+/Recording_*.mp4
