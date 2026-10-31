@@ -1,8 +1,8 @@
-import shutil
 import sqlite3
 from pathlib import Path
 
 import pytest
+from conftest import remove_tree
 
 from ccc_mcp.infra.errors import BridgeError, PermissionDenied
 
@@ -162,7 +162,7 @@ def test_cli_project_remove_keeps_folder_by_default(bridge, human):
 
 def test_remove_missing_project_root_does_not_recreate_it(bridge, human):
     root = Path(bridge.project("demo")["root"])
-    shutil.rmtree(root)
+    remove_tree(root)
     bridge.remove_project_local("demo")
     assert not root.exists()
     assert "demo" not in {p["id"] for p in bridge.list_projects()}

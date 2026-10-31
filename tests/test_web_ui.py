@@ -8,6 +8,7 @@ and MCP server use.
 """
 
 import asyncio
+import os
 import sys
 
 import pytest
@@ -555,7 +556,8 @@ def test_mcp_ui_lists_venv_executable_and_installs_after_tool_selection(tmp_path
     from ccc_mcp.adapters import mcp_servers
 
     repo = mkrepo(tmp_path, "mcp-venv-repo")
-    binary = repo / ".venv" / "bin" / "codebase-memory-mcp"
+    executable = "codebase-memory-mcp.exe" if os.name == "nt" else "codebase-memory-mcp"
+    binary = repo / ".venv" / ("Scripts" if os.name == "nt" else "bin") / executable
     binary.parent.mkdir(parents=True)
     binary.write_text("#!/bin/sh\n")
     binary.chmod(0o755)
