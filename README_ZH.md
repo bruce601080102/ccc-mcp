@@ -18,9 +18,27 @@ ccc-mcp 透過 MCP，把 ChatGPT Chat 連到你電腦上的開發環境。你在
 
 ## 觀看 Demo
 
-https://github.com/user-attachments/assets/ff906a5d-1459-4c50-b2f1-654f5e48cfda
+**1080p 高清 · 每秒 60 格 · 有聲音。** 為符合 GitHub 的影片附件大小限制，README 將 Demo 分成三段播放；也可[觀看或下載不中斷的 56 秒高清完整版](docs/assets/demo.mp4)。
 
-上方影片可直接在 README 以每秒 60 格播放。**[▶ 開啟或下載 56 秒有聲完整影片](docs/assets/demo.mp4)**（[Google Drive 原始錄影](https://drive.google.com/drive/folders/15vn8wYrZ55JL5Aetb1IR6YGm7fK1i81m)）。影片展示本機控制台的專案、任務、設定及 Skills 與 MCP 頁面，最後呈現 ChatGPT 的 Astropy 目標測試結果；[SWE-bench 證據](#實際成果三題選定的-swe-bench-verified-案例)則另外記錄官方 harness 的結果。
+**ChatGPT 處理 Astropy 並展示測試結果（0:40–0:56）**
+
+https://github.com/user-attachments/assets/cf288955-585b-43bb-9a0b-275194ac13c4
+
+<details>
+<summary>從頭觀看：UI 與專案（0:00–0:20）</summary>
+
+https://github.com/user-attachments/assets/86165f18-3e9c-4ed0-8010-766f263f933b
+
+</details>
+
+<details>
+<summary>任務、設定、Skills 與 MCP（0:20–0:40）</summary>
+
+https://github.com/user-attachments/assets/36ea8738-c4c9-4562-b2f2-38b18838e6d7
+
+</details>
+
+[Google Drive 也保留原始錄影](https://drive.google.com/drive/folders/15vn8wYrZ55JL5Aetb1IR6YGm7fK1i81m)；[SWE-bench 證據](#實際成果三題選定的-swe-bench-verified-案例)則另外記錄官方 harness 的結果。
 
 想自己操作？下方的快速開始會帶你從 `ccc-mcp ui` 連上 ChatGPT，並讓它處理已授權的本機專案。
 

@@ -18,9 +18,27 @@ ccc-mcp connects ChatGPT Chat to a local coding workspace through MCP. Ask in Ch
 
 ## Watch the demo
 
-https://github.com/user-attachments/assets/ff906a5d-1459-4c50-b2f1-654f5e48cfda
+**1080p · 60 fps · with audio.** The inline demo is split into three HD chapters to fit GitHub's video attachment limit. The uninterrupted [56-second HD video is also available to watch or download](docs/assets/demo.mp4).
 
-Play the 60 fps video directly in this README, or **[open or download the full 56-second demo with audio](docs/assets/demo.mp4)** ([original recording on Google Drive](https://drive.google.com/drive/folders/15vn8wYrZ55JL5Aetb1IR6YGm7fK1i81m)). It shows the local console's projects, task, settings, and Skills & MCP pages, then ChatGPT's Astropy target-test result. The separate [SWE-bench evidence](#proof-three-selected-swe-bench-verified-cases) records the official harness results.
+**ChatGPT works on Astropy and shows the test result (0:40–0:56)**
+
+https://github.com/user-attachments/assets/cf288955-585b-43bb-9a0b-275194ac13c4
+
+<details>
+<summary>Start from the beginning: UI and projects (0:00–0:20)</summary>
+
+https://github.com/user-attachments/assets/86165f18-3e9c-4ed0-8010-766f263f933b
+
+</details>
+
+<details>
+<summary>Tasks, settings, and Skills & MCP (0:20–0:40)</summary>
+
+https://github.com/user-attachments/assets/36ea8738-c4c9-4562-b2f2-38b18838e6d7
+
+</details>
+
+The [original recording is on Google Drive](https://drive.google.com/drive/folders/15vn8wYrZ55JL5Aetb1IR6YGm7fK1i81m). The separate [SWE-bench evidence](#proof-three-selected-swe-bench-verified-cases) records the official harness results.
 
 Want to try it yourself? The quick start below takes you from `ccc-mcp ui` to a ChatGPT conversation connected to an authorized local project.
 
