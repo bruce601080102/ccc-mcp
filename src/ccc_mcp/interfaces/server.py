@@ -9,6 +9,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp_types import ToolAnnotations
 
+from .. import __version__
 from ..core.models import (
     AgentReport,
     ClarificationRequest,
@@ -97,7 +98,7 @@ def create_server(
     )
     server = MCPServer(
         "ccc-mcp",
-        version="0.1.0",
+        version=__version__,
         token_verifier=verifier,
         auth=auth,
         instructions="Use bootstrap_project to restore state and inspect project_access. "
