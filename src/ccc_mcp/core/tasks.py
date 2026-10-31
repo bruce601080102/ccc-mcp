@@ -2016,10 +2016,10 @@ class TaskHub:
     def wait_for_task(self, project_id, task_id=None, timeout_seconds=50, poll_seconds=0.5):
         """Long-poll one task until background work settles or a PM/user action is needed.
 
-        A completed native execution can briefly expose PM_REFINEMENT while its worker
-        still holds the lease and is auto-compacting/dispatching the next low-risk
-        stage. Treat that lease as background activity too, so callers do not wake in
-        the middle of the automatic SD/RD -> host-test -> REVIEW chain.
+        A completed native execution can briefly expose PM_REFINEMENT or a pending
+        dispatch while its worker still holds the lease and is auto-compacting or
+        dispatching the next low-risk stage. Treat that lease as background activity
+        so callers do not wake in the middle of the SD/RD -> host-test -> REVIEW chain.
         """
         task_id = task_id or self.project_workstream_task(project_id)
         if not 0 <= timeout_seconds <= 3600:
@@ -2035,18 +2035,29 @@ class TaskHub:
                 "AND task_id=? ORDER BY created DESC LIMIT 1",
                 (project_id, task_id),
             )
-            worker_settling = False
+            settling_ids = []
             if latest and latest["adapter"] != "interactive" and latest["status"] not in {
                 "QUEUED",
                 "RUNNING",
             }:
-                lockfile = self.home / "locks" / f"{latest['id']}.lock"
+                settling_ids.append(latest["id"])
+            if handoff["waiting_on"] == "DISPATCH_RETRY_NEEDED":
+                pointer = self._pending_dispatch_row(project_id, task_id)
+                if pointer is None:
+                    # The dispatch completed after task_handoff took its snapshot.
+                    # Read the new state instead of returning a stale retry request.
+                    continue
+                settling_ids.append(pointer["source_execution_id"])
+            worker_settling = False
+            for execution_id in set(settling_ids):
+                lockfile = self.home / "locks" / f"{execution_id}.lock"
                 lockfile.parent.mkdir(exist_ok=True)
                 try:
                     with portalocker.Lock(lockfile, timeout=0):
                         pass
                 except portalocker.exceptions.LockException:
                     worker_settling = True
+                    break
             still_running = handoff["waiting_on"] == "AGENT_RUNNING" or worker_settling
             elapsed = time.monotonic() - started
             if not still_running:

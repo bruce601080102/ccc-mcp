@@ -157,6 +157,9 @@ def test_handoff_reuses_pending_dispatch_next_action_verbatim(bridge, human, mon
     assert handoff["waiting_on"] == "DISPATCH_RETRY_NEEDED"
     assert handoff["next_action"] == brief["pending_dispatch"]["next_action"]
     assert handoff["chatgpt_prompt"] is None
+    waited = bridge.wait_for_task("demo", task_id, timeout_seconds=0)
+    assert waited["timed_out"] is False
+    assert waited["handoff"]["waiting_on"] == "DISPATCH_RETRY_NEEDED"
 
 
 def test_handoff_reuses_pm_refinement_workflow_text(bridge, human):
@@ -291,6 +294,8 @@ def test_wait_for_task_stays_through_implementation_tests_and_review(bridge, hum
     )
     assert advanced["next_execution"]["status"] == "QUEUED"
 
+    # The SD/RD worker briefly records a pending REVIEW dispatch while it still
+    # owns the source execution lease. Waiting must not return that transient state.
     completed = bridge.wait_for_task("demo", task_id, timeout_seconds=30, poll_seconds=0.05)
     for worker in workers:
         worker.join(timeout=5)
