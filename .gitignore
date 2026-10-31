@@ -13,3 +13,4 @@ dist/
 .tunnel/
 npm
 /Recording_*.mp4
+/docs/assets/source/
