@@ -1,6 +1,6 @@
 # ccc-mcp
 
-**Let the right coding agent do the right job—and keep the handoff verifiable.**
+**Let ChatGPT Chat write, test, and review code on your own computer.**
 
 [![CI](https://img.shields.io/github/actions/workflow/status/bruce601080102/ccc-mcp/release.yaml?branch=main&style=flat-square&logo=githubactions&logoColor=white&label=CI)](https://github.com/bruce601080102/ccc-mcp/actions/workflows/release.yaml)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/downloads/)
@@ -8,60 +8,68 @@
 [![MCP](https://img.shields.io/badge/Protocol-MCP-6E56CF?style=flat-square)](https://modelcontextprotocol.io/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue?style=flat-square)](LICENSE)
 
-[![ChatGPT](https://img.shields.io/badge/ChatGPT-PM-10A37F?style=flat-square)](docs/en/2-connect-chatgpt.md)
-[![Codex](https://img.shields.io/badge/Codex-SA%20%C2%B7%20REVIEW-000000?style=flat-square)](docs/en/4-workflow.md)
-[![Claude Code](https://img.shields.io/badge/Claude%20Code-SD%2FRD-D97757?style=flat-square)](docs/en/4-workflow.md)
+[![ChatGPT](https://img.shields.io/badge/ChatGPT-Core%20engine-10A37F?style=flat-square)](docs/en/2-connect-chatgpt.md)
+[![Codex](https://img.shields.io/badge/Codex-Optional-000000?style=flat-square)](docs/en/4-workflow.md)
+[![Claude Code](https://img.shields.io/badge/Claude%20Code-Optional-D97757?style=flat-square)](docs/en/4-workflow.md)
 
-ccc-mcp is a local MCP workflow for software projects. ChatGPT manages the request and shared context; Codex can analyse and review; Claude Code can implement. Or, when that is the better fit, ChatGPT can run every workflow role itself. Each handoff retains the evidence needed to continue, review, or recover the work.
+ccc-mcp connects ChatGPT Chat to a local coding workspace through MCP. Ask in ChatGPT; it can work on an authorized repository, make changes, run host-side tests, and show the diff and results. Use your existing ChatGPT plan instead of a separately metered model API. **ChatGPT-only is the primary workflow.** Codex and Claude Code are optional providers for teams that want to split roles across tools.
 
-It is designed for people who use more than one AI coding tool and do not want a quota limit, lost chat history, or an unverified "tests passed" claim to end a project.
+> [繁體中文 README](README_ZH.md) · [English documentation](docs/en/1-install-and-sign-in.md)
 
-> [Traditional Chinese README](README_ZH.md) · [English documentation](docs/en/1-install-and-sign-in.md)
+## Start with the UI
 
-## Quick start: open the console
-
-Requirements: Git and Python 3.11+. Connecting ChatGPT also requires an [OpenAI Platform Tunnel](docs/en/2-connect-chatgpt.md).
+Install ccc-mcp, then open its local control center:
 
 ```bash
 pip install ccc-mcp
 ccc-mcp ui
 ```
 
-Your browser opens the local console. Then, in the UI:
+Requires Git and Python 3.11+. In the UI:
 
-1. Open **Projects** to create `hello-demo` or add an existing folder. After creating a project, open it and choose **Enable write**, then type the confirmation text. When adding an existing folder, you can select write authorization in the add dialog.
-2. In the project's **Settings**, choose a workflow profile and roles. Leave **Test command** blank for automatic testing: ccc-mcp installs declared dependencies and runs changed Python test files when present. If pytest settings changed or no test files changed, pytest uses the project's configured scope. Set a command only to override this. Choose `chatgpt-only` if you only use ChatGPT. To use Codex or Claude Code, first install and sign in to their native CLIs.
-3. Follow [Connect ChatGPT](docs/en/2-connect-chatgpt.md) to create a Tunnel. On the console's **Connect** page, enter its Tunnel ID and runtime API key, then click **Connect**.
-4. Select the ccc-mcp connection in ChatGPT and ask: “Create `hello.py` in `hello-demo`; it should print `Hello, World!`, with a test that verifies the output.” Return to **Tasks** and **Context** in the console to inspect progress and evidence.
+1. **Projects:** create a project or add an existing folder, then enable write access for the project.
+2. **Connect:** follow [Connect ChatGPT](docs/en/2-connect-chatgpt.md) to create an OpenAI Platform Tunnel. Enter its Tunnel ID and runtime API key in the console.
+3. **Settings:** select the `chatgpt-only` profile. The **Test command** can be left blank: ccc-mcp installs declared Python dependencies and chooses tests from changed test files when possible. Set a command when you need a specific scope.
+4. **ChatGPT:** select the ccc-mcp connection and ask it to make a change. Inspect **Tasks** and **Context** in the UI to see the actual edits, test results, and next step.
 
-The console serves only on local `127.0.0.1`; press Ctrl+C to stop it. See [Web console](#web-console) for its other features.
+The UI runs on local `127.0.0.1` and stops with Ctrl+C. [See every console page](#web-console).
 
-## What it does
+**About tokens and keys:** This workflow uses your existing ChatGPT plan instead of an OpenAI *model* API key and its per-token API billing. [ChatGPT plan limits](https://learn.chatgpt.com/docs/pricing) still apply. The Tunnel connection uses its own runtime API key; [connection setup](docs/en/2-connect-chatgpt.md) explains that key.
 
-- Routes work through configurable `PM → SA → SD/RD → REVIEW → PM` roles.
-- Preserves versioned shared context, raw agent reports, diffs, and host-observed test evidence.
-- Uses Codex and Claude Code through their native CLIs, or assigns every role to ChatGPT for a ChatGPT-only workflow.
-- Falls back only for recognised quota exhaustion, never for a normal install, login, or execution error.
-- Shares operator-installed `SKILL.md` guidance across all roles.
-- Uses a local web console to manage projects, track tasks, configure roles and connections, and manage Skills and MCP tools.
+## What makes ccc-mcp useful
 
-## Choose your mode
+| Capability | What you get |
+| --- | --- |
+| **ChatGPT Chat as the coding agent** | ChatGPT can read and edit an authorized local project, then continue the work in the same conversation. No Codex or Claude Code installation is required for `chatgpt-only`. |
+| **Skills, including MCP-oriented Skills** | Install reusable `SKILL.md` guidance, including nested supporting files. Choose global Skills in the UI so every project and role can use them. A Skill can guide an agent to use an MCP tool after that server is installed. |
+| **MCP servers and tools** | Discover local MCP servers, install one for a project, select which tools the project may use, and call them from ChatGPT. For example, `codebase-memory-mcp` can provide repository structure and code relationships. Skills guide the workflow; MCP tools supply live capabilities. |
+| **A recoverable workflow** | Run `SA → SD/RD → REVIEW` with versioned shared Context and saved execution records. Resume a task in another chat from the project’s `.ccc-mcp` data. |
+| **Host-side verification** | Install declared dependencies, run pytest, and retain host-observed results, exit codes when available, diffs, reports, and review evidence. |
+| **One local control center** | Manage projects, permissions, connections, global Skills, per-project MCP tools, tasks, and Context from `ccc-mcp ui`. The CLI remains available for scripts and advanced use. |
 
-**Best-model workflow** uses ChatGPT as PM, Codex for analysis/review, and Claude Code for implementation. It is the default when you have all three tools.
+## Proof: three selected SWE-bench Verified cases
 
-**ChatGPT-only workflow** sets all five role slots (`SA`, `SD`, `RD`, `SD/RD`, and `REVIEW`) to ChatGPT when you select `chatgpt-only` in the project's **Settings**. The automatic workflow dispatches `SA → SD/RD → REVIEW`. This mode needs no Codex or Claude Code CLI; available models, quotas, and tool access depend on your connected ChatGPT account and plan.
+Using **ChatGPT-only**, ccc-mcp resolved three selected [SWE-bench Verified](https://www.swebench.com/) Astropy instances after iterative repair. Each has a local run of the official evaluation harness reporting `resolved: true`:
 
-## How the workflow works
+| Instance | Harness report |
+| --- | --- |
+| `astropy__astropy-12907` | [report.json](benchmarks/swebench-verified/12907-report.json) |
+| `astropy__astropy-13236` | [report.json](benchmarks/swebench-verified/13236-report.json) |
+| `astropy__astropy-13398` | [report.json](benchmarks/swebench-verified/13398-report.json) |
+
+[Read the evidence and methodology](benchmarks/swebench-verified/README.md), including run IDs and ChatGPT conversations. These are **3 selected cases**, not a full-benchmark score or an official leaderboard submission.
+
+## ChatGPT first; other agents are optional
+
+With the `chatgpt-only` profile selected, ChatGPT handles the project manager and `SA → SD/RD → REVIEW` roles. The workflow records each handoff so the next chat can pick up the saved state.
 
 ```text
-ChatGPT (PM) → Codex (SA) → Claude Code (SD/RD) → Codex (REVIEW)
-       ↑                                                    │
-       └──────── shared context + evidence + next task ─────┘
+ChatGPT Chat → local project → tests, diff, review
+       ↑                            │
+       └──── saved Context and next step ────┘
 ```
 
-You can change the default roles. In the project's **Settings**, assign a supported provider, effort, and quota fallback to each role; you can also set the test command and report language.
-
-For the complete role and workflow model, see [the workflow guide](docs/en/4-workflow.md) or the [Traditional Chinese guide](docs/ch/4-workflow.md).
+If you want a multi-agent workflow, assign supported roles to Codex or Claude Code through their native CLIs. Configure providers, effort, quota fallback, test command, and report language in **Settings**. See the [workflow guide](docs/en/4-workflow.md).
 
 ## Web console
 
@@ -89,10 +97,9 @@ On **Projects**, create named groups, move cards with the dropdown or drag-and-d
 
 ## CLI: automation and advanced use
 
-If you prefer a terminal or write scripts, the CLI operates on the same project data. Before using native Codex or Claude Code roles, run `ccc-mcp setup all` and sign in to those tools. For example, to create a project entirely from the CLI:
+If you prefer a terminal or write scripts, the CLI operates on the same project data. `ccc-mcp setup all` and signing in to Codex or Claude Code are only needed if you plan to use those **optional** native roles. For example, to create a project entirely from the CLI:
 
 ```bash
-ccc-mcp setup all
 ccc-mcp project create hello-demo --write
 ccc-mcp --project hello-demo task status
 ccc-mcp --project hello-demo task usage

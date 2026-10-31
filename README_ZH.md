@@ -1,6 +1,6 @@
 # ccc-mcp
 
-**讓最適合的 coding agent 負責最適合的工作，並讓每一次交接都能驗證。**
+**讓 ChatGPT Chat 在你的電腦上寫程式、跑測試、完成審查。**
 
 [![CI](https://img.shields.io/github/actions/workflow/status/bruce601080102/ccc-mcp/release.yaml?branch=main&style=flat-square&logo=githubactions&logoColor=white&label=CI)](https://github.com/bruce601080102/ccc-mcp/actions/workflows/release.yaml)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/downloads/)
@@ -8,60 +8,68 @@
 [![MCP](https://img.shields.io/badge/Protocol-MCP-6E56CF?style=flat-square)](https://modelcontextprotocol.io/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue?style=flat-square)](LICENSE)
 
-[![ChatGPT](https://img.shields.io/badge/ChatGPT-PM-10A37F?style=flat-square)](docs/ch/2-connect-chatgpt.md)
-[![Codex](https://img.shields.io/badge/Codex-SA%20%C2%B7%20REVIEW-000000?style=flat-square)](docs/ch/4-workflow.md)
-[![Claude Code](https://img.shields.io/badge/Claude%20Code-SD%2FRD-D97757?style=flat-square)](docs/ch/4-workflow.md)
+[![ChatGPT](https://img.shields.io/badge/ChatGPT-核心引擎-10A37F?style=flat-square)](docs/ch/2-connect-chatgpt.md)
+[![Codex](https://img.shields.io/badge/Codex-選用-000000?style=flat-square)](docs/ch/4-workflow.md)
+[![Claude Code](https://img.shields.io/badge/Claude%20Code-選用-D97757?style=flat-square)](docs/ch/4-workflow.md)
 
-ccc-mcp 是給軟體專案使用的本機 MCP 工作流程。ChatGPT 管理需求與共用 Context；Codex 可以負責分析與審查；Claude Code 可以負責實作。若那才是合適選擇，也能讓 ChatGPT 單獨完成所有工作流角色。每一次交接都會保留繼續工作、審查或恢復任務需要的證據。
-
-它適合同時使用多種 AI coding 工具的人：不讓額度耗盡、對話遺失，或模型一句「測試通過」就中止專案。
+ccc-mcp 透過 MCP，把 ChatGPT Chat 連到你電腦上的開發環境。你在 ChatGPT 提需求，它就能在**已授權的本機專案**修改程式、執行主機測試，並讓你檢查 diff 和結果。使用現有的 ChatGPT 方案，無須另開按 token 計費的模型 API。**主要用法是 ChatGPT-only**；Codex 與 Claude Code 是選用的協作工具。
 
 > [English README](README.md) · [繁體中文文件](docs/ch/1-install-and-sign-in.md)
 
-## 快速開始：開啟控制台
+## 從 UI 開始
 
-需求：Git、Python 3.11 以上。要與 ChatGPT 連線時，還需要 [OpenAI Platform Tunnel](docs/ch/2-connect-chatgpt.md)。
+安裝後直接開啟本機控制中心：
 
 ```bash
 pip install ccc-mcp
 ccc-mcp ui
 ```
 
-瀏覽器會自動開啟本機控制台。接著在介面中：
+需要 Git 與 Python 3.11 以上。接著在介面裡：
 
-1. 從 **所有專案**建立 `hello-demo`，或加入既有資料夾。建立後到專案頁按「啟用寫入」並輸入確認文字；加入既有資料夾時也可直接勾選寫入授權。
-2. 在專案的 **設定**選擇工作流 profile 與角色。**測試指令**可留空：ccc-mcp 會安裝專案宣告的相依套件，優先測試本次修改的 Python 測試檔；若沒有修改測試檔，或 pytest 設定也有變動，則由專案的 pytest 設定決定測試範圍。只有要覆寫這個規則時才需填指令。只用 ChatGPT 時選 `chatgpt-only`；使用 Codex／Claude Code 時先完成各自的原生 CLI 安裝與登入。
-3. 依照[連接 ChatGPT](docs/ch/2-connect-chatgpt.md)建立 Tunnel，再到 **連線**頁輸入 Tunnel ID 與 runtime API key，按「連線」。
-4. 在 ChatGPT 選取 ccc-mcp 連線，提出：「請在 `hello-demo` 建立 `hello.py`，執行時輸出 `Hello, World!`，並加入驗證輸出的測試。」回到控制台的 **任務**、**脈絡**頁查看進度與證據。
+1. **所有專案：**建立專案或加入既有資料夾，再授權該專案寫入。
+2. **連線：**依[連接 ChatGPT](docs/ch/2-connect-chatgpt.md)建立 OpenAI Platform Tunnel，在控制台輸入 Tunnel ID 與 runtime API key。
+3. **設定：**選擇 `chatgpt-only` profile。**測試指令**可以留空：ccc-mcp 會安裝專案宣告的 Python 相依套件，並在可能時依本次修改的測試檔選擇測試。需要指定測試範圍時再填指令。
+4. **ChatGPT：**選取 ccc-mcp 連線，直接提出修改需求；回到 UI 的**任務**與**脈絡**查看實際變更、測試結果和下一步。
 
-控制台只在本機 `127.0.0.1` 提供服務；按 Ctrl+C 即可停止。更多操作見下方[Web 控制台](#web-控制台)。
+UI 只在本機 `127.0.0.1` 提供服務，按 Ctrl+C 停止。[查看控制台所有頁面](#web-控制台)。
 
-## 它能做什麼
+**關於 token 與金鑰：**此工作流使用你現有的 ChatGPT 方案，無須另外申請 OpenAI *模型* API 金鑰，也不產生模型 API 的逐 token 計費；[ChatGPT 方案本身仍有使用限制](https://learn.chatgpt.com/docs/pricing)。Tunnel 連線會使用獨立的 runtime API key，詳見[連線設定](docs/ch/2-connect-chatgpt.md)。
 
-- 以可設定的 `PM → SA → SD/RD → REVIEW → PM` 角色接力處理工作。
-- 保存版本化共用 Context、原始 agent 報告、diff 與主機實際觀察到的測試證據。
-- 透過原生 CLI 使用 Codex 和 Claude Code，也可將所有角色指定給 ChatGPT，走 ChatGPT-only workflow。
-- 只在辨識為額度耗盡時才啟用 fallback，不會把安裝、登入或一般執行錯誤誤當成額度問題。
-- 讓操作者安裝的 `SKILL.md` 指引可供所有角色使用。
-- 透過本機 Web 控制台管理專案、追蹤任務、設定角色與連線，並管理 Skills 和 MCP 工具。
+## 特色一覽
 
-## 選擇模式
+| 能力 | 你可以做什麼 |
+| --- | --- |
+| **ChatGPT Chat 寫本機程式** | 在對話中讓 ChatGPT 讀取、修改已授權專案，接著執行測試；`chatgpt-only` 不需要安裝 Codex 或 Claude Code。 |
+| **Skills，包含 MCP 型 Skill** | 安裝可重複使用的 `SKILL.md` 工作指引，支援多層目錄的補充檔案；在 UI 選擇全域 Skills，提供所有專案及角色使用。Skill 可引導 Agent 呼叫已另外安裝的 MCP 工具。 |
+| **MCP Server 與工具** | 探索本機 MCP Server，為專案安裝並勾選允許使用的工具，再由 ChatGPT 呼叫。例如使用 `codebase-memory-mcp` 分析程式架構與關聯。Skill 提供工作方法，MCP 工具提供即時能力。 |
+| **可接續的工作流** | 以 `SA → SD/RD → REVIEW` 處理任務，保存版本化共用 Context 與執行紀錄；在另一個聊天室從專案內的 `.ccc-mcp` 資料接續。 |
+| **主機實際驗證** | 安裝宣告的相依套件、執行 pytest，保存主機回傳的結果、可取得的 exit code、diff、報告與審查證據。 |
+| **一個本機控制中心** | 用 `ccc-mcp ui` 管理專案、權限、連線、全域 Skills、各專案 MCP 工具、任務及脈絡；CLI 仍可供腳本與進階操作使用。 |
 
-**最佳模型工作流**：ChatGPT 擔任 PM、Codex 負責分析與審查、Claude Code 負責實作。若你三種工具都有，這是預設模式。
+## 實際成果：三題選定的 SWE-bench Verified 案例
 
-**ChatGPT-only workflow**：在專案 **設定**選 `chatgpt-only`，就會把全部五個角色（`SA`、`SD`、`RD`、`SD/RD`、`REVIEW`）都設為 ChatGPT。自動工作流實際接力派發 `SA → SD/RD → REVIEW`。這個模式不需要 Codex 或 Claude Code CLI；可用模型、額度與功能依你連接的 ChatGPT 帳戶與方案而定。
+只使用 **ChatGPT-only**，ccc-mcp 經過多輪修復，解出三題選定的 [SWE-bench Verified](https://www.swebench.com/) Astropy 題目。各題在本機執行官方評測 harness，報告均顯示 `resolved: true`：
 
-## 工作流程
+| 題目 | Harness 報告 |
+| --- | --- |
+| `astropy__astropy-12907` | [report.json](benchmarks/swebench-verified/12907-report.json) |
+| `astropy__astropy-13236` | [report.json](benchmarks/swebench-verified/13236-report.json) |
+| `astropy__astropy-13398` | [report.json](benchmarks/swebench-verified/13398-report.json) |
+
+[查看完整證據與方法](benchmarks/swebench-verified/README.md)，包含評測 run ID 與 ChatGPT 開發對話。這是**三題選定案例**，不是完整 Benchmark 分數，也不是官方排行榜提交結果。
+
+## 以 ChatGPT 為主，其他 Agent 選用
+
+選擇 `chatgpt-only` profile 後，由 ChatGPT 擔任專案管理者，並完成 `SA → SD/RD → REVIEW`。每次交接都保存紀錄，方便在新聊天室讀取既有狀態繼續工作。
 
 ```text
-ChatGPT（PM）→ Codex（SA）→ Claude Code（SD/RD）→ Codex（REVIEW）
-       ↑                                                    │
-       └──────── 共用 Context、證據與下一個任務 ────────────┘
+ChatGPT Chat → 本機專案 → 測試、diff、審查
+       ↑                           │
+       └──── 保存的 Context 與下一步 ────┘
 ```
 
-預設角色可以調整。在專案的 **設定**頁，替各角色指定支援的 provider、effort 與額度 fallback；也可以設定測試命令與報告語言。
-
-完整說明請看[協作工作流程](docs/ch/4-workflow.md)。
+想用多 Agent 時，才透過原生 CLI 把支援的角色分配給 Codex 或 Claude Code。你可以在**設定**調整 provider、effort、額度 fallback、測試指令與報告語言；詳見[協作工作流程](docs/ch/4-workflow.md)。
 
 ## Web 控制台
 
@@ -89,10 +97,9 @@ ccc-mcp ui
 
 ## CLI：自動化與進階操作
 
-偏好終端機或要寫腳本時，可用 CLI 操作同一份專案資料。使用 Codex／Claude Code 原生角色前，先執行 `ccc-mcp setup all` 並完成各自的登入。例如，從頭以 CLI 建立專案：
+偏好終端機或要寫腳本時，可用 CLI 操作同一份專案資料。只有要使用 Codex／Claude Code 這類**選用**的原生角色時，才需要先執行 `ccc-mcp setup all` 並完成各自的登入。例如，從頭以 CLI 建立專案：
 
 ```bash
-ccc-mcp setup all
 ccc-mcp project create hello-demo --write
 ccc-mcp --project hello-demo task status
 ccc-mcp --project hello-demo task usage

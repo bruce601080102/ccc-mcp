@@ -1,0 +1,62 @@
+{
+  "description": "Local official SWE-bench Verified harness reports; three selected instances after iterative fixes",
+  "instances": {
+    "astropy__astropy-12907": {
+      "run_id": "ccc_sop_12907_20261030_082922_e6f381",
+      "resolved": true,
+      "report_file": "12907-report.json",
+      "report_sha256": "c0d4229660a6e54df069a5393d311ea4aac0522b2ecfec053cad28e915b0bc6d",
+      "report_bytes": 2155,
+      "test_log_sha256_local_only": "c2a46aeadaef1c8c312095bb50141e12fb23fd99a1430f494e6b8f82f210bc5b",
+      "tests_status": {
+        "FAIL_TO_PASS": {
+          "passed": 2,
+          "failed": 0
+        },
+        "PASS_TO_PASS": {
+          "passed": 13,
+          "failed": 0
+        }
+      },
+      "chatgpt_conversation_share_url": "https://chatgpt.com/share/6ae42e59-3cf4-83ee-b784-c2d1e784aeb8"
+    },
+    "astropy__astropy-13236": {
+      "run_id": "ccc_sop_13236_20261030_131736_40dfb9",
+      "resolved": true,
+      "report_file": "13236-report.json",
+      "report_sha256": "2c6d5dba666eee90169107daa6bce0bedcc84234196c79d182f5814b026d7412",
+      "report_bytes": 63381,
+      "test_log_sha256_local_only": "df573ad57d516a3744d55edf55e77567a3edf23790656b334792d56d18c4a295",
+      "tests_status": {
+        "FAIL_TO_PASS": {
+          "passed": 2,
+          "failed": 0
+        },
+        "PASS_TO_PASS": {
+          "passed": 644,
+          "failed": 0
+        }
+      },
+      "chatgpt_conversation_share_url": "https://chatgpt.com/share/6ae42e69-bfe0-83e8-bdfd-c0a35da32b63"
+    },
+    "astropy__astropy-13398": {
+      "run_id": "ccc_sop_13398_20261031_031206_0ab9c4",
+      "resolved": true,
+      "report_file": "13398-report.json",
+      "report_sha256": "f0572c4f07399bfdfc0770ef95904f461262c8c5c19a31df4b7d537ea218b1d8",
+      "report_bytes": 9301,
+      "test_log_sha256_local_only": "d37f723bb2b4ea188bdd9315383877beffc6d9eba5a06b9c04fc4b4983f276cf",
+      "tests_status": {
+        "FAIL_TO_PASS": {
+          "passed": 4,
+          "failed": 0
+        },
+        "PASS_TO_PASS": {
+          "passed": 68,
+          "failed": 0
+        }
+      },
+      "chatgpt_conversation_share_url": "https://chatgpt.com/share/6ae42e7c-afd4-83ec-93b3-7dc2cb1d8597"
+    }
+  }
+}
