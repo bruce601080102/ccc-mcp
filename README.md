@@ -12,7 +12,7 @@
 [![Codex](https://img.shields.io/badge/Codex-Optional-000000?style=flat-square)](docs/en/4-workflow.md)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-Optional-D97757?style=flat-square)](docs/en/4-workflow.md)
 
-ccc-mcp connects ChatGPT Chat to a local coding workspace through MCP. Ask in ChatGPT; it can work on an authorized repository, make changes, run host-side tests, and show the diff and results. Use your existing ChatGPT plan instead of a separately metered model API. **ChatGPT-only is the primary workflow.** Codex and Claude Code are optional providers for teams that want to split roles across tools.
+ccc-mcp connects ChatGPT Chat to a local coding workspace through MCP, so it can work on an **authorized repository** — making changes, running host-side tests, keeping a resumable task history, and showing you every diff and review result, which a chat window can't do on its own. As a bonus, it runs on your existing ChatGPT plan, with no separately metered model API to set up. **ChatGPT-only is the primary workflow.** Codex and Claude Code are optional providers for teams that want to split roles across tools.
 
 > [繁體中文 README](README_ZH.md) · [English documentation](docs/en/1-install-and-sign-in.md)
 
@@ -67,10 +67,10 @@ The UI runs on local `127.0.0.1` and stops with Ctrl+C. [See every console page]
 | Capability | What you get |
 | --- | --- |
 | **ChatGPT Chat as the coding agent** | ChatGPT can read and edit an authorized local project, then continue the work in the same conversation. No Codex or Claude Code installation is required for `chatgpt-only`. |
-| **Skills, including MCP-oriented Skills** | Install reusable `SKILL.md` guidance, including nested supporting files. Choose global Skills in the UI so every project and role can use them. A Skill can guide an agent to use an MCP tool after that server is installed. |
-| **MCP servers and tools** | Discover local MCP servers, install one for a project, select which tools the project may use, and call them from ChatGPT. For example, `codebase-memory-mcp` can provide repository structure and code relationships. Skills guide the workflow; MCP tools supply live capabilities. |
 | **A recoverable workflow** | Run `SA → SD/RD → REVIEW` with versioned shared Context and saved execution records. Resume a task in another chat from the project’s `.ccc-mcp` data. |
 | **Host-side verification** | Install declared dependencies, run pytest, and retain host-observed results, exit codes when available, diffs, reports, and review evidence. |
+| **Skills, including MCP-oriented Skills** | Install reusable `SKILL.md` guidance, including nested supporting files. Choose global Skills in the UI so every project and role can use them. A Skill can guide an agent to use an MCP tool after that server is installed. |
+| **MCP servers and tools** | Discover local MCP servers, install one for a project, select which tools the project may use, and call them from ChatGPT. For example, `codebase-memory-mcp` can provide repository structure and code relationships. Skills guide the workflow; MCP tools supply live capabilities. |
 | **One local control center** | Manage projects, permissions, connections, global Skills, per-project MCP tools, tasks, and Context from `ccc-mcp ui`. The CLI remains available for scripts and advanced use. |
 
 ## Proof: three selected SWE-bench Verified cases

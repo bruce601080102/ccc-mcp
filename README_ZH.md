@@ -12,7 +12,7 @@
 [![Codex](https://img.shields.io/badge/Codex-選用-000000?style=flat-square)](docs/ch/4-workflow.md)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-選用-D97757?style=flat-square)](docs/ch/4-workflow.md)
 
-ccc-mcp 透過 MCP，把 ChatGPT Chat 連到你電腦上的開發環境。你在 ChatGPT 提需求，它就能在**已授權的本機專案**修改程式、執行主機測試，並讓你檢查 diff 和結果。使用現有的 ChatGPT 方案，無須另開按 token 計費的模型 API。**主要用法是 ChatGPT-only**；Codex 與 Claude Code 是選用的協作工具。
+ccc-mcp 透過 MCP，把 ChatGPT Chat 接上你電腦上的開發環境，讓它能在**已授權的本機專案**修改程式、執行主機測試、保留可續接的任務紀錄，並讓你檢查每一次 diff 和審查結果——這些是單純的聊天視窗做不到的事。額外好處是：它直接用你現有的 ChatGPT 方案運作，不必另外申請按 token 計費的模型 API。**主要用法是 ChatGPT-only**；Codex 與 Claude Code 是選用的協作工具。
 
 > [English README](README.md) · [繁體中文文件](docs/ch/1-install-and-sign-in.md)
 
@@ -67,10 +67,10 @@ UI 只在本機 `127.0.0.1` 提供服務，按 Ctrl+C 停止。[查看控制台�
 | 能力 | 你可以做什麼 |
 | --- | --- |
 | **ChatGPT Chat 寫本機程式** | 在對話中讓 ChatGPT 讀取、修改已授權專案，接著執行測試；`chatgpt-only` 不需要安裝 Codex 或 Claude Code。 |
-| **Skills，包含 MCP 型 Skill** | 安裝可重複使用的 `SKILL.md` 工作指引，支援多層目錄的補充檔案；在 UI 選擇全域 Skills，提供所有專案及角色使用。Skill 可引導 Agent 呼叫已另外安裝的 MCP 工具。 |
-| **MCP Server 與工具** | 探索本機 MCP Server，為專案安裝並勾選允許使用的工具，再由 ChatGPT 呼叫。例如使用 `codebase-memory-mcp` 分析程式架構與關聯。Skill 提供工作方法，MCP 工具提供即時能力。 |
 | **可接續的工作流** | 以 `SA → SD/RD → REVIEW` 處理任務，保存版本化共用 Context 與執行紀錄；在另一個聊天室從專案內的 `.ccc-mcp` 資料接續。 |
 | **主機實際驗證** | 安裝宣告的相依套件、執行 pytest，保存主機回傳的結果、可取得的 exit code、diff、報告與審查證據。 |
+| **Skills，包含 MCP 型 Skill** | 安裝可重複使用的 `SKILL.md` 工作指引，支援多層目錄的補充檔案；在 UI 選擇全域 Skills，提供所有專案及角色使用。Skill 可引導 Agent 呼叫已另外安裝的 MCP 工具。 |
+| **MCP Server 與工具** | 探索本機 MCP Server，為專案安裝並勾選允許使用的工具，再由 ChatGPT 呼叫。例如使用 `codebase-memory-mcp` 分析程式架構與關聯。Skill 提供工作方法，MCP 工具提供即時能力。 |
 | **一個本機控制中心** | 用 `ccc-mcp ui` 管理專案、權限、連線、全域 Skills、各專案 MCP 工具、任務及脈絡；CLI 仍可供腳本與進階操作使用。 |
 
 ## 實際成果：三題選定的 SWE-bench Verified 案例
