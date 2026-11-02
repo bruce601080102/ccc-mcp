@@ -90,6 +90,9 @@ def test_chatgpt_only_profile_completes_full_three_role_relay(bridge, human):
     assert all(item["interactive"] for item in usage)
     assert all(item["invocation"]["cli_invoked"] is False for item in usage)
     assert all(item["invocation"]["source"] == "chatgpt_web" for item in usage)
+    dashboard_usage = bridge.dashboard_snapshot()["usage"]
+    assert dashboard_usage["chatgpt_executions"] == 3
+    assert all(item["executions"] == 0 for item in dashboard_usage["providers"])
     assert (
         Path(bridge.project("demo")["root"]) / "hello.py"
     ).read_text(encoding="utf-8") == 'print("Hello")\n'

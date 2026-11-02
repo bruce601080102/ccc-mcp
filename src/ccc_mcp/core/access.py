@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from ..adapters.storage import now
+from ..adapters.ui_groups import forget_project_group
 from ..infra.config import metadata_name
 from ..infra.errors import BridgeError, PermissionDenied, VersionConflict
 from ..infra.security import digest
@@ -37,7 +38,7 @@ def _deregister_description(project_id, project):
     )
 
 
-def _remove_description(project_id, project, delete_files):
+def _remove_description(project_id, project, delete_files, keep_records=False):
     files = (
         "專案根目錄及其中所有檔案也會從磁碟永久刪除；無法復原。"
         if delete_files
@@ -45,12 +46,17 @@ def _remove_description(project_id, project, delete_files):
     )
     return (
         f"移除 ccc-mcp 專案註冊：{project_id}\n{project['root']}\n\n"
-        "此專案會從 project list 消失；其 ccc-mcp 歷史與設定先備份到 archives，"
-        "之後可使用同一 ID 重新註冊。" + files
+        "此專案會從 project list 消失，之後可使用同一 ID 重新註冊。"
+        + (
+            "完整 ccc-mcp 資料庫（可能包含其他專案）與此專案管理資料會備份到 archives，不會在重新註冊時自動恢復。"
+            if keep_records
+            else "ccc-mcp 任務、Context、設定與管理紀錄會清除，不建立新的封存備份；既有封存檔不受影響。重新註冊會從空白紀錄開始。"
+        )
+        + files
     )
 
 
-def _remove_description_en(project_id, project, delete_files):
+def _remove_description_en(project_id, project, delete_files, keep_records=False):
     files = (
         "The entire project folder and all its contents will be permanently deleted."
         if delete_files
@@ -58,8 +64,13 @@ def _remove_description_en(project_id, project, delete_files):
     )
     return (
         f"Remove ccc-mcp registration: {project_id}\n{project['root']}\n\n"
-        "The project will disappear from project list. Its ccc-mcp history and settings "
-        "are backed up under archives, and the same ID can be registered again. " + files
+        "The project will disappear from project list. The same ID can be registered again. "
+        + (
+            "A full ccc-mcp database snapshot (possibly including other projects) and this project's metadata will be backed up under archives; re-registering will not restore them automatically. "
+            if keep_records
+            else "Its ccc-mcp tasks, Context, settings, and management records will be cleared without an archive for this removal; earlier archives remain untouched. Re-registering starts with empty records. "
+        )
+        + files
     )
 
 
@@ -86,28 +97,31 @@ class ProjectAccessHub:
             raise BridgeError("Refusing to remove a project whose root is a symlink or junction")
         return row
 
-    def remove_project_local(self, project_id, delete_files=False):
+    def remove_project_local(self, project_id, delete_files=False, keep_records=False):
         from .approval import confirm_local
 
-        return self._remove_project(project_id, bool(delete_files), confirm_local)
+        return self._remove_project(project_id, bool(delete_files), bool(keep_records), confirm_local)
 
-    def remove_project_web(self, project_id, typed_confirmation, delete_files=False):
+    def remove_project_web(self, project_id, typed_confirmation, delete_files=False, keep_records=False):
         from .approval import confirm_web
 
         def confirm(_description, challenge):
             return confirm_web(challenge, typed_confirmation)
 
-        return self._remove_project(project_id, bool(delete_files), confirm)
+        return self._remove_project(project_id, bool(delete_files), bool(keep_records), confirm)
 
-    def remove_preview(self, project_id, delete_files=False):
+    def remove_preview(self, project_id, delete_files=False, keep_records=False):
         project = self._removable_project(project_id)
         if delete_files and Path(project["root"]).exists():
             self._check_removable_root(Path(project["root"]))
         return {
-            "description": _remove_description(project_id, project, delete_files),
-            "description_en": _remove_description_en(project_id, project, delete_files),
+            "description": _remove_description(project_id, project, delete_files, keep_records),
+            "description_en": _remove_description_en(project_id, project, delete_files, keep_records),
+            "description_keep_records": _remove_description(project_id, project, delete_files, True),
+            "description_en_keep_records": _remove_description_en(project_id, project, delete_files, True),
             "challenge": f"REMOVE FILES {project_id}" if delete_files else f"REMOVE {project_id}",
             "delete_files": bool(delete_files),
+            "keep_records": bool(keep_records),
         }
 
     def _check_removable_root(self, root):
@@ -126,7 +140,7 @@ class ProjectAccessHub:
                 raise BridgeError(f"Another registered project is inside this directory: {other['id']}")
         return resolved
 
-    def _remove_project(self, project_id, delete_files, confirm):
+    def _remove_project(self, project_id, delete_files, keep_records, confirm):
         project = self._removable_project(project_id)
         if delete_files and Path(project["root"]).exists():
             self._check_removable_root(Path(project["root"]))
@@ -136,7 +150,9 @@ class ProjectAccessHub:
         ):
             raise BridgeError("Wait for or cancel the active execution before removing the project")
         challenge = f"REMOVE FILES {project_id}" if delete_files else f"REMOVE {project_id}"
-        identity = confirm(_remove_description(project_id, project, delete_files), challenge)
+        identity = confirm(
+            _remove_description(project_id, project, delete_files, keep_records), challenge
+        )
         with self.lock(project_id):
             current = self._removable_project(project_id)
             if current["root"] != project["root"]:
@@ -149,15 +165,6 @@ class ProjectAccessHub:
             root = Path(project["root"])
             if delete_files and root.exists():
                 self._check_removable_root(root)
-            stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-            archive = self.home / "archives" / f"{project_id}-removed-{stamp}-{uuid.uuid4().hex[:6]}"
-            archive.mkdir(parents=True, mode=0o700)
-            with sqlite3.connect(self.store.path) as source, sqlite3.connect(archive / "bridge.sqlite3") as target:
-                source.backup(target)
-            try:
-                (archive / "bridge.sqlite3").chmod(0o600)
-            except OSError:
-                pass
             metadata = root / metadata_name(root)
             moved = []
             staged_root = None
@@ -179,6 +186,17 @@ class ProjectAccessHub:
                 if path.resolve() != expected.resolve():
                     raise BridgeError(f"Refusing to move unexpected worktree: {path}")
                 worktrees.append((row["task_id"], path))
+            stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+            retained = self.home / "archives" / f"{project_id}-removed-{stamp}-{uuid.uuid4().hex[:6]}"
+            staging = retained if keep_records else self.home / ".removal-staging" / f"{project_id}-{uuid.uuid4().hex}"
+            staging.mkdir(parents=True, mode=0o700)
+            if keep_records:
+                with sqlite3.connect(self.store.path) as source, sqlite3.connect(staging / "bridge.sqlite3") as target:
+                    source.backup(target)
+                try:
+                    (staging / "bridge.sqlite3").chmod(0o600)
+                except OSError:
+                    pass
             try:
                 if delete_files and root.exists():
                     staged_root = root.with_name(f".{root.name}.ccc-mcp-removing-{uuid.uuid4().hex[:8]}")
@@ -187,15 +205,18 @@ class ProjectAccessHub:
                 # Archive managed worktrees outside a folder scheduled for deletion;
                 # never follow an unexpected execution-supplied path.
                 for task_id, path in worktrees:
-                    target = archive / "worktrees" / task_id
+                    target = staging / "worktrees" / task_id
                     target.parent.mkdir(exist_ok=True)
                     if not target.exists():
                         shutil.move(str(path), str(target))
                         moved.append((target, path))
-                if staged_root is None and (metadata.exists() or metadata.is_symlink()):
-                    target = archive / "project-metadata"
-                    shutil.move(str(metadata), str(target))
-                    moved.append((target, metadata))
+                source_metadata = (staged_root / metadata.name) if staged_root is not None else metadata
+                if (staged_root is None or keep_records) and (
+                    source_metadata.exists() or source_metadata.is_symlink()
+                ):
+                    target = staging / "project-metadata"
+                    shutil.move(str(source_metadata), str(target))
+                    moved.append((target, source_metadata))
                 with self.store.transaction() as conn:
                     trigger_names = (
                         "project_access_no_delete", "project_receipt_no_delete",
@@ -236,19 +257,35 @@ class ProjectAccessHub:
             # The original directory path is already gone. A cleanup failure leaves the
             # staging directory intact and reports its path instead of claiming deletion.
             cleanup_error = None
+            folder_cleanup_error = None
+            remaining_paths = []
             if staged_root is not None:
                 try:
                     shutil.rmtree(staged_root, onerror=_retry_readonly_delete)
                 except OSError as exc:
-                    cleanup_error = str(exc)
+                    folder_cleanup_error = str(exc)
+                    cleanup_error = folder_cleanup_error
+                    remaining_paths.append(str(staged_root))
+            if not keep_records:
+                try:
+                    shutil.rmtree(staging, onerror=_retry_readonly_delete)
+                except OSError as exc:
+                    cleanup_error = f"{cleanup_error}; {exc}" if cleanup_error else str(exc)
+                    remaining_paths.append(str(staging))
+            try:
+                forget_project_group(self.home, project_id)
+            except OSError as exc:
+                cleanup_error = f"{cleanup_error}; {exc}" if cleanup_error else str(exc)
+                remaining_paths.append(str(self.home / "ui" / "project_groups.json"))
             return {
                 "project_id": project_id,
                 "removed": True,
-                "files_deleted": bool(delete_files and cleanup_error is None),
+                "files_deleted": bool(delete_files and folder_cleanup_error is None),
                 "directory_was_missing": not root.exists() and staged_root is None,
-                "archive": str(archive),
+                "records_retained": bool(keep_records),
+                "archive": str(retained) if keep_records else None,
                 "identity": identity,
-                **({"cleanup_error": cleanup_error, "remaining_path": str(staged_root)} if cleanup_error else {}),
+                **({"cleanup_error": cleanup_error, "remaining_path": remaining_paths[0], "remaining_paths": remaining_paths} if cleanup_error else {}),
             }
 
     def get_project_access(self, project_id):

@@ -6,7 +6,7 @@ import sys
 import time
 import uuid
 from contextlib import contextmanager, nullcontext
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import portalocker
@@ -499,6 +499,117 @@ class TaskHub:
                 "SELECT * FROM tasks WHERE project_id=? ORDER BY created", (project_id,)
             )
         ]
+
+    def dashboard_snapshot(self):
+        """A read-only cross-project view for the local console.
+
+        Every unfinished task is included so an old blocker cannot disappear behind
+        newer work. Only the eight most recent finished tasks need detailed status.
+        Usage totals include recorded native CLI executions from active projects.
+        """
+        visible_projects = {project["id"] for project in self.list_projects()}
+        rows = [
+            row
+            for row in self.store.all(
+                "SELECT t.project_id,t.id,t.state,t.created,"
+                "COALESCE((SELECT MAX(e.created) FROM task_events e "
+                "WHERE e.project_id=t.project_id AND e.task_id=t.id),t.created) AS changed "
+                "FROM tasks t ORDER BY changed DESC,t.created DESC"
+            )
+            if row["project_id"] in visible_projects
+        ]
+        terminal = {"COMPLETED", "CANCELLED", "REJECTED"}
+        open_rows = [row for row in rows if row["state"] not in terminal]
+        recent_rows = [row for row in rows if row["state"] in terminal][:8]
+        today = datetime.now(UTC).date()
+        activity = {
+            (today - timedelta(days=offset)).isoformat(): {"created": 0, "completed": 0}
+            for offset in range(13, -1, -1)
+        }
+        for row in rows:
+            day = row["created"][:10]
+            if day in activity:
+                activity[day]["created"] += 1
+        for row in self.store.all(
+            "SELECT project_id,created FROM task_events "
+            "WHERE new_state='COMPLETED' AND created>=?",
+            (next(iter(activity)),),
+        ):
+            day = row["created"][:10]
+            if row["project_id"] in visible_projects and day in activity:
+                activity[day]["completed"] += 1
+        tasks = []
+        for row in [*open_rows, *recent_rows]:
+            status = self.get_task_status(row["project_id"], row["id"])
+            brief = dict(status["brief"])
+            # Elapsed seconds change on every poll even when the workflow does not.
+            brief.pop("progress", None)
+            tasks.append(
+                {
+                    "project_id": row["project_id"],
+                    "task_id": row["id"],
+                    "requirement": status["requirement"],
+                    "state": status["state"],
+                    "created": row["created"],
+                    "brief": brief,
+                }
+            )
+        token_fields = {
+            "codex": ("input_tokens", "output_tokens", "cached_input_tokens", "reasoning_output_tokens"),
+            "claude": ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"),
+        }
+        providers = {
+            name: {"provider": name, "executions": 0, "fields": {}}
+            for name in token_fields
+        }
+        unmeasured_native = 0
+        chatgpt_executions = 0
+        for row in self.store.all(
+            "SELECT project_id,agent,adapter,result FROM agent_executions "
+            "WHERE status NOT IN ('QUEUED','RUNNING') AND adapter IN ('real','interactive')"
+        ):
+            if row["project_id"] not in visible_projects:
+                continue
+            if row["agent"] == "chatgpt" and row["adapter"] == "interactive":
+                chatgpt_executions += 1
+                continue
+            if row["agent"] not in providers or row["adapter"] != "real":
+                continue
+            saved = json.loads(row["result"]) if row["result"] else {}
+            invocation = (saved.get("invocation") or {}) if isinstance(saved, dict) else {}
+            usage = (invocation.get("usage") or {}) if isinstance(invocation, dict) else {}
+            if not isinstance(usage, dict):
+                usage = {}
+            tokens = usage.get("tokens") or {}
+            if not isinstance(tokens, dict):
+                tokens = {}
+            valid = {
+                name: value
+                for name in token_fields[row["agent"]]
+                if isinstance((value := tokens.get(name)), int)
+                and not isinstance(value, bool)
+                and value >= 0
+            }
+            if not usage.get("available") or not valid:
+                unmeasured_native += 1
+                continue
+            provider = providers[row["agent"]]
+            provider["executions"] += 1
+            for name, value in valid.items():
+                field = provider["fields"].setdefault(name, {"total": 0, "executions": 0})
+                field["total"] += value
+                field["executions"] += 1
+        return {
+            "task_count": len(rows),
+            "open_count": len(open_rows),
+            "activity": [{"date": day, **counts} for day, counts in activity.items()],
+            "usage": {
+                "providers": list(providers.values()),
+                "unmeasured_native_executions": unmeasured_native,
+                "chatgpt_executions": chatgpt_executions,
+            },
+            "tasks": tasks,
+        }
 
     def project_workstream_task(self, project_id):
         tasks = self.list_tasks(project_id)

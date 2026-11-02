@@ -44,6 +44,7 @@ from ..adapters.tunnel_client import (
     tunnel_client_path,
 )
 from ..adapters.ui_groups import change_project_groups, project_groups
+from ..infra.codex_account import read_account_usage
 from ..infra.errors import BridgeError
 from ..service import CCCMCP
 
@@ -192,6 +193,16 @@ async def list_projects(request: Request):
         access = await run(bridge.get_project_access, project["id"])
         rows.append({**project, "access": access})
     return JSONResponse(rows)
+
+
+@endpoint
+async def dashboard(request: Request):
+    return JSONResponse(await run(bridge_of(request).dashboard_snapshot))
+
+
+@endpoint
+async def dashboard_account_usage(request: Request):
+    return JSONResponse(await read_account_usage())
 
 
 @endpoint
@@ -348,11 +359,14 @@ async def remove_project(request: Request):
     body = await _body(request)
     if not isinstance(body.get("delete_files", False), bool):
         raise BridgeError("delete_files must be a boolean")
+    if not isinstance(body.get("keep_records", False), bool):
+        raise BridgeError("keep_records must be a boolean")
     result = await run(
         bridge.remove_project_web,
         request.path_params["project_id"],
         body.get("confirm", ""),
         body.get("delete_files", False),
+        body.get("keep_records", False),
     )
     return JSONResponse(result)
 
@@ -893,6 +907,8 @@ ROUTES = [
     Route("/api/connect/forget", connect_forget, methods=["POST"]),
     Route("/api/browse", browse),
     Route("/api/projects", list_projects, methods=["GET"]),
+    Route("/api/dashboard", dashboard, methods=["GET"]),
+    Route("/api/dashboard/account-usage", dashboard_account_usage, methods=["GET"]),
     Route("/api/project-groups", get_project_groups, methods=["GET"]),
     Route("/api/project-groups", update_project_groups, methods=["POST"]),
     Route("/api/projects/add", add_project, methods=["POST"]),

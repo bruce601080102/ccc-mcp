@@ -810,6 +810,12 @@ def test_worker_persists_host_process_audit(bridge, monkeypatch):
     saved = bridge.get_task_result("demo", "TASK-0001")[-1]["result"]["invocation"]
     assert saved["cli_invoked"] and saved["pid"] > 0
     assert saved["usage"]["tokens"]["output_tokens"] == 2
+    dashboard_usage = bridge.dashboard_snapshot()["usage"]
+    codex = next(item for item in dashboard_usage["providers"] if item["provider"] == "codex")
+    assert codex["executions"] == 1
+    assert codex["fields"]["input_tokens"] == {"total": 7, "executions": 1}
+    assert codex["fields"]["output_tokens"] == {"total": 2, "executions": 1}
+    assert dashboard_usage["unmeasured_native_executions"] == 0
     assert bridge.store.one(
         "SELECT sha256 FROM artifacts WHERE project_id=? AND path=?",
         (

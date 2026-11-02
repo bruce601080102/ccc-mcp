@@ -49,6 +49,15 @@ def project_groups(home: Path, project_ids: set[str]) -> dict:
         return {"groups": groups, "assignments": assignments}
 
 
+def forget_project_group(home: Path, project_id: str) -> None:
+    """Remove a retired registration's UI assignment before its ID can be reused."""
+    with _lock:
+        data = _read(home)
+        if project_id in data["assignments"]:
+            data["assignments"].pop(project_id)
+            _write(home, data)
+
+
 def change_project_groups(home: Path, project_ids: set[str], body: dict) -> dict:
     action = body.get("action")
     with _lock:

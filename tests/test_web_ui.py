@@ -10,10 +10,12 @@ and MCP server use.
 import asyncio
 import os
 import sys
+from pathlib import Path
 
 import pytest
 from starlette.testclient import TestClient
 
+from ccc_mcp.infra.codex_account import _rate_metrics, _usage_metrics, read_account_usage
 from ccc_mcp.infra.errors import BridgeError
 from ccc_mcp.interfaces.web import create_app
 
@@ -47,12 +49,92 @@ def test_task_status_remains_available_while_project_is_locked(tmp_path, client)
     assert response.json()["brief"]["task_id"] == "TASK-0001"
 
 
+def test_dashboard_shows_actionable_task_without_exposing_raw_executions(
+    tmp_path, client, monkeypatch
+):
+    repo = mkrepo(tmp_path, "dashboard")
+    assert (
+        client.post("/api/projects/add", json={"path": str(repo), "id": "dashboard"}).status_code
+        == 200
+    )
+    bridge = client.app.state.bridge
+    bridge.create_task("dashboard", "Check the parser", ["Tests pass"])
+    original_status = bridge.get_task_status
+    polls = iter((1, 2))
+
+    def changing_status(project_id, task_id):
+        status = original_status(project_id, task_id)
+        status["brief"]["progress"] = {"elapsed_seconds": next(polls)}
+        return status
+
+    monkeypatch.setattr(bridge, "get_task_status", changing_status)
+
+    response = client.get("/api/dashboard")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["task_count"] == data["open_count"] == 1
+    assert len(data["activity"]) == 14
+    assert sum(day["created"] for day in data["activity"]) == 1
+    assert sum(day["completed"] for day in data["activity"]) == 0
+    assert data["usage"]["chatgpt_executions"] == 0
+    assert data["usage"]["unmeasured_native_executions"] == 0
+    assert data["tasks"][0]["brief"]["waiting_on"] == "PM_DECISION"
+    assert data["tasks"][0]["requirement"] == "Check the parser"
+    assert "executions" not in data["tasks"][0]
+    assert "progress" not in data["tasks"][0]["brief"]
+    assert client.get("/api/dashboard").json() == data
+    assert TestClient(client.app).get("/api/dashboard").status_code == 401
+
+
+def test_account_usage_endpoint_is_gated_and_keeps_account_scope(client, monkeypatch):
+    async def account_usage():
+        return {"available": True, "tokens_available": True, "summary": {"lifetimeTokens": 123}}
+
+    monkeypatch.setattr("ccc_mcp.interfaces.web.read_account_usage", account_usage)
+    response = client.get("/api/dashboard/account-usage")
+    assert response.status_code == 200
+    assert response.json()["summary"]["lifetimeTokens"] == 123
+    assert TestClient(client.app).get("/api/dashboard/account-usage").status_code == 401
+
+
+def test_account_usage_filters_unexpected_fields():
+    usage = _usage_metrics(
+        {
+            "summary": {"lifetimeTokens": 123, "secret": "ignore", "peakDailyTokens": -1},
+            "dailyUsageBuckets": [
+                {"startDate": "2026-11-01", "tokens": 42},
+                {"startDate": "2026-11-02", "tokens": True},
+            ],
+        }
+    )
+    assert usage["summary"]["lifetimeTokens"] == 123
+    assert usage["summary"]["peakDailyTokens"] is None
+    assert "secret" not in usage["summary"]
+    assert usage["daily"] == [{"date": "2026-11-01", "tokens": 42}]
+    assert _rate_metrics(
+        {
+            "rateLimits": {
+                "limitId": "codex",
+                "primary": {"usedPercent": 35, "windowDurationMins": 300, "resetsAt": 123},
+            }
+        }
+    ) == [{"name": "codex", "used_percent": 35, "duration_mins": 300, "resets_at": 123}]
+
+
 def test_remove_project_keeps_folder_by_default_and_checks_confirmation(tmp_path, client):
     repo = mkrepo(tmp_path, "removable")
-    assert client.post("/api/projects/add", json={"path": str(repo), "id": "removable"}).status_code == 200
+    assert (
+        client.post("/api/projects/add", json={"path": str(repo), "id": "removable"}).status_code
+        == 200
+    )
     preview = client.get("/api/projects/removable/remove-preview").json()
     assert preview["challenge"] == "REMOVE removable"
     assert "project folder" in preview["description_en"]
+    assert "without an archive" in preview["description_en"]
+    assert "backed up under archives" in preview["description_en_keep_records"]
+    client.app.state.bridge.create_task("removable", "Old task")
+    group = client.post("/api/project-groups", json={"action": "create", "name": "Old group"}).json()["groups"][0]
+    client.post("/api/project-groups", json={"action": "move", "project_id": "removable", "group_id": group["id"]})
     denied = client.post("/api/projects/removable/remove", json={"confirm": "wrong"})
     assert denied.status_code == 400
     assert client.get("/api/projects").json()
@@ -62,8 +144,36 @@ def test_remove_project_keeps_folder_by_default_and_checks_confirmation(tmp_path
     )
     assert result.status_code == 200, result.text
     assert result.json()["files_deleted"] is False
+    assert result.json()["records_retained"] is False
+    assert result.json()["archive"] is None
     assert repo.exists()
     assert client.get("/api/projects").json() == []
+    assert client.post("/api/projects/add", json={"path": str(repo), "id": "removable"}).status_code == 200
+    assert client.get("/api/projects/removable/tasks").json() == []
+    assert client.get("/api/project-groups").json()["assignments"] == {}
+
+
+def test_remove_project_can_explicitly_keep_records(tmp_path, client):
+    repo = mkrepo(tmp_path, "retained")
+    client.post("/api/projects/add", json={"path": str(repo), "id": "retained"})
+    client.app.state.bridge.create_task("retained", "Old task")
+    response = client.post("/api/projects/retained/remove", json={"confirm": "REMOVE retained", "keep_records": True})
+    assert response.status_code == 200, response.text
+    assert response.json()["records_retained"] is True
+    assert (Path(response.json()["archive"]) / "project-metadata").exists()
+    assert client.post("/api/projects/add", json={"path": str(repo), "id": "retained"}).status_code == 200
+    assert client.get("/api/projects/retained/tasks").json() == []
+
+
+def test_remove_project_rejects_non_boolean_keep_records(tmp_path, client):
+    repo = mkrepo(tmp_path, "invalid-retention")
+    client.post("/api/projects/add", json={"path": str(repo), "id": "invalid-retention"})
+    response = client.post(
+        "/api/projects/invalid-retention/remove",
+        json={"confirm": "REMOVE invalid-retention", "keep_records": "false"},
+    )
+    assert response.status_code == 400
+    assert client.get("/api/projects/invalid-retention/tasks").status_code == 200
 
 
 def test_remove_project_delete_folder_requires_separate_challenge(tmp_path, client):
@@ -129,14 +239,13 @@ def test_global_skill_install_and_remove_affects_every_project(tmp_path, client,
         "---\nname: shared-guidance\ndescription: Shared guidance\n---\nFollow this guidance.\n",
         encoding="utf-8",
     )
-    monkeypatch.setattr(
-        skill_registry, "_provider_skill_roots", lambda: [("Codex", provider_root)]
-    )
+    monkeypatch.setattr(skill_registry, "_provider_skill_roots", lambda: [("Codex", provider_root)])
     for project_id in ("first", "second"):
         repo = mkrepo(tmp_path, project_id)
-        assert client.post(
-            "/api/projects/add", json={"path": str(repo), "id": project_id}
-        ).status_code == 200
+        assert (
+            client.post("/api/projects/add", json={"path": str(repo), "id": project_id}).status_code
+            == 200
+        )
 
     discovered = client.get("/api/skills/discover").json()
     selected = next(item for item in discovered if item["id"] == "shared-guidance")
@@ -150,8 +259,7 @@ def test_global_skill_install_and_remove_affects_every_project(tmp_path, client,
     for project_id in ("first", "second"):
         context = client.get(f"/api/projects/{project_id}/context").json()
         assert any(
-            skill["id"] == "shared-guidance"
-            for skill in context["content"]["available_skills"]
+            skill["id"] == "shared-guidance" for skill in context["content"]["available_skills"]
         )
 
     path = "/api/skills/shared-guidance/remove"
@@ -261,6 +369,33 @@ def test_project_groups_support_bilingual_names_without_changing_assignments(tmp
         "/api/project-groups", json={"action": "create", "name_zh": " ", "name_en": " "}
     )
     assert empty.status_code == 400
+
+
+def test_account_usage_reads_documented_app_server_metrics(tmp_path, monkeypatch):
+    server = tmp_path / "codex"
+    server.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, sys\n"
+        "for line in sys.stdin:\n"
+        "    request = json.loads(line)\n"
+        "    if request.get('id') == 1:\n"
+        "        result = {'userAgent': 'fake'}\n"
+        "    elif request.get('id') == 2:\n"
+        "        result = {'summary': {'lifetimeTokens': 1200}, 'dailyUsageBuckets': [{'startDate': '2026-11-01', 'tokens': 80}]}\n"
+        "    elif request.get('id') == 3:\n"
+        "        result = {'rateLimits': {'limitId': 'codex', 'primary': {'usedPercent': 25, 'windowDurationMins': 300, 'resetsAt': 123}}}\n"
+        "    else:\n"
+        "        continue\n"
+        "    print(json.dumps({'id': request['id'], 'result': result}), flush=True)\n",
+        encoding="utf-8",
+    )
+    server.chmod(0o755)
+    monkeypatch.setattr("ccc_mcp.infra.codex_account.shutil.which", lambda name: str(server))
+    data = asyncio.run(read_account_usage(timeout=2))
+    assert data["available"] is True
+    assert data["summary"]["lifetimeTokens"] == 1200
+    assert data["daily"] == [{"date": "2026-11-01", "tokens": 80}]
+    assert data["rate_limits"][0]["used_percent"] == 25
 
 
 def test_project_groups_allow_one_language_and_legacy_rename(tmp_path, client):
@@ -552,7 +687,9 @@ def test_mcp_ui_probes_selected_tools_and_installs_only_the_selected_subset(
     assert client.get("/api/projects/mcp-demo/mcp").json()["installed"] == {}
 
 
-def test_mcp_ui_lists_venv_executable_and_installs_after_tool_selection(tmp_path, client, monkeypatch):
+def test_mcp_ui_lists_venv_executable_and_installs_after_tool_selection(
+    tmp_path, client, monkeypatch
+):
     from ccc_mcp.adapters import mcp_servers
 
     repo = mkrepo(tmp_path, "mcp-venv-repo")
@@ -565,19 +702,22 @@ def test_mcp_ui_lists_venv_executable_and_installs_after_tool_selection(tmp_path
     monkeypatch.setattr(mcp_servers, "client_config_files", lambda root=None: [])
 
     probes = []
+
     def probe(command, args):
         probes.append(command)
         return [{"name": "search", "description": "Search", "read_only": True}]
 
     monkeypatch.setattr(
-        mcp_servers, "probe_tools",
+        mcp_servers,
+        "probe_tools",
         probe,
     )
 
     listed = client.get("/api/projects/mcp-venv/mcp")
     assert listed.status_code == 200
     candidate = next(
-        item for item in listed.json()["discovered"]
+        item
+        for item in listed.json()["discovered"]
         if item["name"] == "codebase-memory-mcp" and item["command"] == str(binary)
     )
     assert listed.json()["installed"] == {}

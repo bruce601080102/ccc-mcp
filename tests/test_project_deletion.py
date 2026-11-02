@@ -1,3 +1,4 @@
+import json
 import sqlite3
 from pathlib import Path
 
@@ -97,13 +98,38 @@ def test_remove_keeps_directory_and_allows_id_reuse(bridge, human):
     result = bridge.remove_project_local("demo")
     assert result["removed"] is True
     assert result["files_deleted"] is False
-    assert result["archive"]
+    assert result["records_retained"] is False
+    assert result["archive"] is None
+    assert not list((bridge.home / "archives").glob("demo-removed-*"))
+    assert not list((bridge.home / ".removal-staging").glob("demo-*"))
+    assert not (Path(root) / ".ccc-mcp").exists()
     assert (Path(root) / "app.py").exists()
     assert "demo" not in {p["id"] for p in bridge.list_projects()}
     assert bridge.store.one("SELECT 1 FROM projects WHERE id='demo'") is None
     again = bridge.register_project(root, "demo")
     assert again["id"] == "demo"
     assert bridge.list_tasks("demo") == []
+    assert bridge.get_project_access("demo")["mode"] == "read-only"
+
+
+def test_remove_can_keep_records_only_when_explicitly_selected(bridge, human):
+    root = Path(bridge.project("demo")["root"])
+    bridge.create_task("demo", "Old task")
+    result = bridge.remove_project_local("demo", keep_records=True)
+    assert result["records_retained"] is True
+    archive = Path(result["archive"])
+    assert (archive / "bridge.sqlite3").exists()
+    assert (archive / "project-metadata").exists()
+    assert not (root / ".ccc-mcp").exists()
+    bridge.register_project(root, "demo")
+    assert bridge.list_tasks("demo") == []
+
+
+def test_remove_delete_files_can_keep_metadata_in_archive(bridge, human):
+    root = Path(bridge.project("demo")["root"])
+    result = bridge.remove_project_local("demo", delete_files=True, keep_records=True)
+    assert not root.exists()
+    assert (Path(result["archive"]) / "project-metadata").exists()
 
 
 def test_remove_with_delete_files_removes_only_selected_root(bridge, human, tmp_path):
@@ -112,6 +138,8 @@ def test_remove_with_delete_files_removes_only_selected_root(bridge, human, tmp_
     sibling.mkdir()
     result = bridge.remove_project_local("demo", delete_files=True)
     assert result["files_deleted"] is True
+    assert result["archive"] is None
+    assert not list((bridge.home / ".removal-staging").glob("demo-*"))
     assert not root.exists()
     assert sibling.exists()
     assert "demo" not in {p["id"] for p in bridge.list_projects()}
@@ -145,8 +173,6 @@ def test_remove_rejects_directory_containing_another_registered_project(bridge, 
 
 
 def test_cli_project_remove_keeps_folder_by_default(bridge, human):
-    import json
-
     from typer.testing import CliRunner
 
     from ccc_mcp.interfaces.cli import app
@@ -157,7 +183,20 @@ def test_cli_project_remove_keeps_folder_by_default(bridge, human):
     )
     assert result.exit_code == 0, result.output
     assert json.loads(result.output)["files_deleted"] is False
+    assert json.loads(result.output)["archive"] is None
     assert root.exists()
+
+
+def test_cli_project_remove_keep_records_flag(bridge, human):
+    from typer.testing import CliRunner
+
+    from ccc_mcp.interfaces.cli import app
+
+    result = CliRunner().invoke(
+        app, ["--home", str(bridge.home), "project", "remove", "demo", "--keep-records"]
+    )
+    assert result.exit_code == 0, result.output
+    assert Path(json.loads(result.output)["archive"]).is_dir()
 
 
 def test_remove_missing_project_root_does_not_recreate_it(bridge, human):

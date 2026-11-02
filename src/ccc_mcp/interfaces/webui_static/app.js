@@ -99,7 +99,12 @@
     const overlay = document.createElement("div");
     overlay.id = "modal-overlay";
     overlay.className = "modal-overlay";
-    const fieldsHtml = (fields || []).map((f, i) => `
+    const fieldsHtml = (fields || []).map((f, i) => f.type === "checkbox" ? `
+      <div class="field">
+        <div class="checkbox-row"><input type="checkbox" id="mf-${i}" ${f.checked ? "checked" : ""} /><label for="mf-${i}">${esc(f.label)}</label></div>
+        ${f.hint ? `<div class="hint">${esc(f.hint)}</div>` : ""}
+      </div>
+    ` : `
       <div class="field">
         <label for="mf-${i}">${esc(f.label)}</label>
         <input type="text" id="mf-${i}" placeholder="${esc(f.placeholder || "")}" value="${esc(f.value || "")}" autocomplete="off" />
@@ -124,7 +129,7 @@
     document.getElementById("modal-confirm").addEventListener("click", async () => {
       const confirm = document.getElementById("modal-confirm");
       if (confirm.disabled) return;
-      const values = (fields || []).map((_, i) => document.getElementById("mf-" + i).value);
+      const values = (fields || []).map((f, i) => f.type === "checkbox" ? document.getElementById("mf-" + i).checked : document.getElementById("mf-" + i).value);
       confirm.disabled = true;
       confirm.setAttribute("aria-busy", "true");
       try {
@@ -139,19 +144,26 @@
     });
     const first = overlay.querySelector("input");
     if (first) first.focus();
+    return overlay;
   }
 
-  function confirmTextModal({ title, description, challenge, confirmLabel, onConfirm }) {
-    showModal({
+  function confirmTextModal({ title, description, challenge, confirmLabel, onConfirm, checkbox }) {
+    const overlay = showModal({
       title,
       body: description,
-      fields: [{ label: `${UI.translate("Type")} ${challenge} ${UI.translate("to confirm")}`, placeholder: challenge }],
+      fields: [
+        { label: `${UI.translate("Type")} ${challenge} ${UI.translate("to confirm")}`, placeholder: challenge },
+        ...(checkbox ? [{ type: "checkbox", label: checkbox.label, hint: checkbox.hint }] : []),
+      ],
       confirmLabel: confirmLabel || "Confirm",
       danger: true,
-      onSubmit: async ([typed]) => {
+      onSubmit: async ([typed, checked]) => {
         if (typed !== challenge) throw new Error(UI.translate("Confirmation text did not match."));
-        await onConfirm(typed);
+        await onConfirm(typed, Boolean(checked));
       },
+    });
+    if (checkbox?.descriptionWhenChecked) overlay.querySelector("#mf-1").addEventListener("change", (event) => {
+      overlay.querySelector(".body").textContent = event.target.checked ? checkbox.descriptionWhenChecked : description;
     });
   }
 
@@ -169,13 +181,15 @@
     }
     if (parts[0] === "connect") return { view: "connect" };
     if (parts[0] === "global-skills") return { view: "global-skills" };
-    return { view: "dashboard" };
+    if (parts[0] === "dashboard") return { view: "dashboard" };
+    return { view: "projects" };
   }
 
   function navTo(path) { location.hash = path; }
 
   const ICON = {
     projects: `<svg class="icon" viewBox="0 0 16 16"><path d="M1.5 4.5a1 1 0 0 1 1-1h3l1.2 1.5H13.5a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1v-7.5Z"/></svg>`,
+    dashboard: `<svg class="icon" viewBox="0 0 16 16"><path d="M2 13.5h12M3.5 11V8M7.5 11V4M11.5 11V6"/><path d="M3.5 8h2v3h-2zM7.5 4h2v7h-2zM11.5 6h2v5h-2z"/></svg>`,
     overview: `<svg class="icon" viewBox="0 0 16 16"><path d="M2 8.5 8 3l6 5.5"/><path d="M3.5 7.5V13a.5.5 0 0 0 .5.5h3v-4h2v4h3a.5.5 0 0 0 .5-.5V7.5"/></svg>`,
     tasks: `<svg class="icon" viewBox="0 0 16 16"><path d="M3 4.5h10M3 8h10M3 11.5h6"/></svg>`,
     settings: `<svg class="icon" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.1"/><path d="M8 2v1.6M8 12.4V14M13.3 5.3l-1.3.8M4 9.9l-1.3.8M14 8h-1.6M3.6 8H2M13.3 10.7l-1.3-.8M4 6.1l-1.3-.8"/></svg>`,
@@ -268,7 +282,8 @@
     root.innerHTML = `
       <div class="sidebar">
         <div class="brand"><span class="mark">C</span><span>ccc-mcp<small>CONTROL CENTER</small></span></div>
-        <a class="nav-item ${currentRoute.view === "dashboard" ? "active" : ""}" href="#/">${ICON.projects}All projects</a>
+        <a class="nav-item ${currentRoute.view === "projects" ? "active" : ""}" href="#/">${ICON.projects}All projects</a>
+        <a class="nav-item ${currentRoute.view === "dashboard" ? "active" : ""}" href="#/dashboard">${ICON.dashboard}Command center</a>
         <a class="nav-item ${currentRoute.view === "global-skills" ? "active" : ""}" href="#/global-skills">${ICON.skills}Global Skills</a>
         ${projectNav}
         <div class="nav-group-label">&nbsp;</div>
@@ -307,18 +322,186 @@
     return `<span class="pill neutral">${UI.translate("read-only")}</span>`;
   }
 
-  async function renderDashboard() {
+  const TERMINAL_STATES = new Set(["COMPLETED", "CANCELLED", "REJECTED"]);
+  const WAITING_LABELS = {
+    DISPATCH_RETRY_NEEDED: "Dispatch needs retry",
+    PM_CLARIFICATION_DECISION: "Clarification decision needed",
+    CHATGPT_HANDOFF_PENDING: "ChatGPT handoff pending",
+    PM_REFINEMENT: "Context review needed",
+    USER_APPROVAL: "Approval needed",
+    PM_DECISION: "Decision needed",
+    BLOCKED: "Worker blocked",
+    FAILED: "Execution failed",
+    AGENT_RUNNING: "Agent running",
+  };
+
+  function dashboardTestPill(tests, finished) {
+    if (!tests?.executed_by_host) return finished ? `<span class="dashboard-evidence muted">${esc(UI.translate("No host test evidence"))}</span>` : "";
+    if (tests.no_tests_collected) return `<span class="pill warning">${esc(UI.translate("No tests collected"))}</span>`;
+    return tests.passed
+      ? `<span class="pill positive">${esc(UI.translate("Host tests passed"))}</span>`
+      : `<span class="pill negative">${esc(UI.translate("Host tests failed"))}</span>`;
+  }
+
+  function dashboardTaskRow(task) {
+    const brief = task.brief || {};
+    const waiting = brief.waiting_on || task.state;
+    const label = WAITING_LABELS[waiting] || task.state;
+    const finished = TERMINAL_STATES.has(task.state);
+    const tone = waiting === "AGENT_RUNNING" ? "accent"
+      : waiting === "COMPLETED" ? "positive"
+      : waiting === "CANCELLED" || waiting === "REJECTED" ? "neutral"
+      : waiting === "FAILED" || waiting === "BLOCKED" ? "negative" : "warning";
+    const detail = brief.error || (waiting === "AGENT_RUNNING"
+      ? [brief.agent, brief.role].filter(Boolean).join(" · ")
+      : finished ? brief.summary || "" : brief.next_action || "");
+    const link = `#/p/${encodeURIComponent(task.project_id)}/tasks/${encodeURIComponent(task.task_id)}`;
+    return `<a class="dashboard-task" href="${link}">
+      <span class="dashboard-task-main">
+        <span class="dashboard-task-meta"><strong data-no-i18n>${esc(task.project_id)}</strong><span class="mono">${esc(task.task_id)}</span></span>
+        <span class="dashboard-task-title" data-no-i18n>${esc(task.requirement)}</span>
+        ${detail ? `<span class="dashboard-task-detail" data-no-i18n>${esc(detail)}</span>` : ""}
+      </span>
+      <span class="dashboard-task-status"><span class="pill ${tone}">${esc(UI.translate(label))}</span>${dashboardTestPill(brief.tests, finished)}</span>
+    </a>`;
+  }
+
+  function dashboardActivityChart(activity) {
+    const points = activity || [];
+    const highest = Math.max(1, ...points.map((day) => Math.max(day.created, day.completed)));
+    const top = Math.max(3, Math.ceil(highest / 3) * 3);
+    const base = 218;
+    const chartHeight = 170;
+    const step = 600 / Math.max(points.length, 1);
+    const grid = [0, 1, 2, 3].map((index) => {
+      const y = base - index * chartHeight / 3;
+      return `<line x1="32" y1="${y}" x2="640" y2="${y}" class="dashboard-chart-grid" />
+        <text x="24" y="${y + 4}" text-anchor="end" class="dashboard-chart-label">${Math.round(top * index / 3)}</text>`;
+    }).join("");
+    const bars = points.map((day, index) => {
+      const x = 36 + index * step;
+      const createdHeight = day.created ? Math.max(4, day.created / top * chartHeight) : 0;
+      const completedHeight = day.completed ? Math.max(4, day.completed / top * chartHeight) : 0;
+      const date = new Date(`${day.date}T00:00:00Z`).toLocaleDateString(UI.getLocale(), { month: "numeric", day: "numeric", timeZone: "UTC" });
+      return `<rect x="${x}" y="${base - createdHeight}" width="11" height="${createdHeight}" rx="2" class="dashboard-bar-created"><title>${esc(`${date}: ${day.created} ${UI.translate("Started")}`)}</title></rect>
+        <rect x="${x + 14}" y="${base - completedHeight}" width="11" height="${completedHeight}" rx="2" class="dashboard-bar-completed"><title>${esc(`${date}: ${day.completed} ${UI.translate("Completed")}`)}</title></rect>
+        ${index % 3 === 0 ? `<text x="${x + 13}" y="244" text-anchor="middle" class="dashboard-chart-label">${esc(date)}</text>` : ""}`;
+    }).join("");
+    const empty = points.every((day) => !day.created && !day.completed)
+      ? `<text x="335" y="126" text-anchor="middle" class="dashboard-chart-empty-label">${esc(UI.translate("No task activity in this period."))}</text>` : "";
+    return `<svg class="dashboard-activity-chart" viewBox="0 0 650 260" role="img" aria-label="${esc(UI.translate("Tasks started and completed over the last 14 days"))}">${grid}${bars}${empty}</svg>`;
+  }
+
+  function dashboardStatusChart(attention, running) {
+    const blocked = attention.filter((task) => ["BLOCKED", "FAILED"].includes(task.brief.waiting_on)).length;
+    const waiting = attention.length - blocked;
+    const total = attention.length + running.length;
+    const blockedAngle = total ? blocked / total * 360 : 0;
+    const waitingAngle = total ? (blocked + waiting) / total * 360 : 0;
+    return `<div class="dashboard-status-chart">
+      <div class="dashboard-donut${total ? "" : " empty"}" style="--blocked-angle:${blockedAngle}deg;--waiting-angle:${waitingAngle}deg" role="img" aria-label="${esc(`${total} ${UI.translate("Open tasks")}: ${blocked} ${UI.translate("Blocked or failed")}, ${waiting} ${UI.translate("Waiting for action")}, ${running.length} ${UI.translate("Agents running")}`)}">
+        <div class="dashboard-donut-hole"><strong class="num">${total}</strong><span>${esc(UI.translate("Open tasks"))}</span></div>
+      </div>
+      <div class="dashboard-status-legend">
+        <div><i class="blocked"></i><span>${esc(UI.translate("Blocked or failed"))}</span><strong class="num">${blocked}</strong></div>
+        <div><i class="waiting"></i><span>${esc(UI.translate("Waiting for action"))}</span><strong class="num">${waiting}</strong></div>
+        <div><i class="running"></i><span>${esc(UI.translate("Agents running"))}</span><strong class="num">${running.length}</strong></div>
+      </div>
+    </div>`;
+  }
+
+  function dashboardProjectLoad(projects, openTasks) {
+    const rows = projects.map((project) => ({
+      id: project.id,
+      count: openTasks.filter((task) => task.project_id === project.id).length,
+    })).sort((a, b) => b.count - a.count || a.id.localeCompare(b.id)).slice(0, 6);
+    const max = Math.max(1, ...rows.map((row) => row.count));
+    return rows.length ? `<div class="dashboard-project-load">${rows.map((row) => `
+      <a href="#/p/${encodeURIComponent(row.id)}/tasks" class="dashboard-load-row">
+        <span class="dashboard-load-name" data-no-i18n>${esc(row.id)}</span><span class="dashboard-load-track"><span style="width:${row.count / max * 100}%"></span></span><strong class="num">${row.count}</strong>
+      </a>`).join("")}</div>` : `<div class="dashboard-empty">${esc(UI.translate("No projects yet. Add an existing folder or create a new one."))}</div>`;
+  }
+
+  let accountUsageCache = null, accountUsageAt = 0, accountUsagePending = null;
+
+  function dashboardAccountUsage(data) {
+    const number = new Intl.NumberFormat(UI.getLocale());
+    if (!data?.available) return `<div class="dashboard-account-empty">${esc(UI.translate("Account usage is unavailable. Sign in to Codex with ChatGPT to show account token activity and plan limits."))}</div>`;
+    const total = data.tokens_available ? data.summary?.lifetimeTokens : null;
+    const daily = (data.daily || []).slice(-14);
+    const max = Math.max(1, ...daily.map((row) => row.tokens));
+    const chart = daily.length ? `<div class="dashboard-account-chart" role="img" aria-label="${esc(UI.translate("Daily account token activity"))}">${daily.map((row) => `<div class="dashboard-account-day" title="${esc(row.date)} · ${number.format(row.tokens)}"><span style="height:${Math.max(3, row.tokens / max * 100)}%"></span></div>`).join("")}</div>` : `<div class="dashboard-account-no-chart">${esc(UI.translate("Daily token history is unavailable."))}</div>`;
+    const windows = (data.rate_limits || []).map((row) => `<div class="dashboard-account-limit"><div><strong>${esc(row.name)}</strong><span>${row.duration_mins ? esc(`${row.duration_mins} ${UI.translate("minutes")}`) : ""}</span><b class="num">${number.format(row.used_percent)}%</b></div><div class="dashboard-account-limit-track"><span style="width:${row.used_percent}%"></span></div></div>`).join("");
+    return `<div class="dashboard-account-grid">
+      <div class="dashboard-account-total"><span>${esc(UI.translate("Account lifetime tokens"))}</span><strong class="num">${total === null ? "—" : number.format(total)}</strong><small>${esc(UI.translate("ChatGPT account total; no Chat, Codex, or project breakdown."))}</small></div>
+      <div class="dashboard-account-history"><span>${esc(UI.translate("Daily account token activity"))}</span>${chart}</div>
+      <div class="dashboard-account-limits"><span>${esc(UI.translate("Plan usage windows"))}</span>${windows || `<div class="dashboard-account-no-chart">${esc(UI.translate("Plan limits are unavailable."))}</div>`}</div>
+    </div>`;
+  }
+
+  function loadDashboardAccountUsage(gen) {
+    const target = document.getElementById("dashboard-account-usage");
+    if (!target) return;
+    if (!accountUsageCache || Date.now() - accountUsageAt > 60000) {
+      if (!accountUsagePending) accountUsagePending = api("/dashboard/account-usage").catch(() => ({ available: false })).then((data) => {
+        accountUsageCache = data; accountUsageAt = Date.now(); accountUsagePending = null; return data;
+      });
+    }
+    const pending = accountUsagePending || Promise.resolve(accountUsageCache);
+    pending.then((data) => { if (!stale(gen) && target.isConnected) target.innerHTML = dashboardAccountUsage(data); });
+  }
+
+  function dashboardUsagePanel(usage) {
+    const data = usage || {};
+    const providers = data.providers || [];
+    const number = new Intl.NumberFormat(UI.getLocale());
+    const field = (provider, name) => {
+      const observed = provider.fields?.[name];
+      return observed?.executions ? number.format(observed.total) : "—";
+    };
+    const card = (name, label, extras) => {
+      const provider = providers.find((item) => item.provider === name) || { executions: 0, fields: {} };
+      return `<div class="dashboard-usage-provider">
+        <div class="dashboard-usage-provider-head"><strong>${esc(label)}</strong><span>${number.format(provider.executions)} ${esc(UI.translate("measured runs"))}</span></div>
+        <div class="dashboard-token-pair">
+          <div><strong class="num">${field(provider, "input_tokens")}</strong><span>${esc(UI.translate("Input tokens"))}</span></div>
+          <div><strong class="num">${field(provider, "output_tokens")}</strong><span>${esc(UI.translate("Output tokens"))}</span></div>
+        </div>
+        <div class="dashboard-token-extras">${extras.map(([key, title]) => `<span>${esc(UI.translate(title))} <strong class="num">${field(provider, key)}</strong></span>`).join("")}</div>
+      </div>`;
+    };
+    return `<div class="dashboard-usage-grid">
+      ${card("codex", "Codex CLI", [["cached_input_tokens", "Cached input"], ["reasoning_output_tokens", "Reasoning output"]])}
+      ${card("claude", "Claude Code CLI", [["cache_read_input_tokens", "Cache read"], ["cache_creation_input_tokens", "Cache creation"]])}
+    </div>
+    <div class="dashboard-usage-coverage"><span>${number.format(data.unmeasured_native_executions || 0)} ${esc(UI.translate("native runs without token data"))}</span><span>${number.format(data.chatgpt_executions || 0)} ${esc(UI.translate("ChatGPT runs without per-run token data"))}</span></div>
+    <p class="dashboard-usage-note">${esc(UI.translate("CLI values cover this workspace only. Account values above cover the signed-in ChatGPT account; never add them together."))}</p>`;
+  }
+
+  function renderDashboard() { return renderWorkspace(true); }
+  function renderProjects() { return renderWorkspace(false); }
+
+  async function renderWorkspace(isDashboard) {
     const gen = renderGen;
-    layout(`<div class="empty">Loading projects…</div>`);
-    let projects = [], organization = { groups: [], assignments: {} };
+    layout(`<div class="empty">${esc(UI.translate("Loading projects…"))}</div>`);
+    let projects = [], organization = { groups: [], assignments: {} }, snapshot = { tasks: [], open_count: 0 };
     try {
-      [projects, organization] = await Promise.all([api("/projects"), api("/project-groups")]);
+      if (isDashboard) [projects, snapshot] = await Promise.all([api("/projects"), api("/dashboard")]);
+      else [projects, organization] = await Promise.all([api("/projects"), api("/project-groups")]);
     } catch (err) {
       if (!stale(gen)) errorView(err);
       return;
     }
     if (stale(gen)) return;
     const writable = projects.filter((p) => p.access.mode === "read-write").length;
+    const attention = snapshot.tasks.filter((t) => !TERMINAL_STATES.has(t.state) && t.brief.waiting_on !== "AGENT_RUNNING");
+    const running = snapshot.tasks.filter((t) => t.brief.waiting_on === "AGENT_RUNNING");
+    const recent = snapshot.tasks.filter((t) => TERMINAL_STATES.has(t.state)).slice(0, 8);
+    const openTasks = [...attention, ...running];
+    const queue = [...attention].sort((a, b) => Number(["BLOCKED", "FAILED"].includes(b.brief.waiting_on)) - Number(["BLOCKED", "FAILED"].includes(a.brief.waiting_on))).concat(running);
+    const activity = snapshot.activity || [];
+    const completedWeek = activity.slice(-7).reduce((total, day) => total + day.completed, 0);
+    const startedWeek = activity.slice(-7).reduce((total, day) => total + day.created, 0);
     const groups = organization.groups || [];
     const assignments = organization.assignments || {};
     const groupName = (group) => group[UI.getLocale() === "zh-TW" ? "name_zh" : "name_en"] || group.name;
@@ -358,35 +541,81 @@
         <div class="project-list" data-drop-group="${esc(groupId)}">${members.length ? members.map(row).join("") : `<div class="group-empty">${esc(UI.translate("Drag projects here, or use Move to on a card."))}</div>`}</div>
       </section>`;
     };
-    layout(`
-      <div class="title-row">
-        <div><h1>Projects</h1><div class="sub">Every project registered with this ccc-mcp home.</div></div>
-        <div class="title-actions">
-          <button class="btn" id="btn-group">${esc(UI.translate("New group"))}</button>
-          <button class="btn" id="btn-add">${ICON.projects}Add existing folder</button>
-          <button class="btn primary" id="btn-create">Create new project</button>
+    const dashboardHtml = isDashboard ? `
+      <header class="dashboard-command">
+        <div class="dashboard-command-copy">
+          <div class="dashboard-eyebrow"><span class="status-dot on"></span>${esc(UI.translate("LOCAL WORKSPACE"))}<span class="dashboard-eyebrow-separator">/</span>${projects.length} ${esc(UI.translate("Projects"))}</div>
+          <h1>${esc(UI.translate("Command center"))}</h1>
+          <p>${esc(UI.translate("A live view of delivery, blockers, and verified outcomes across your projects."))}</p>
         </div>
+        <div class="dashboard-command-signal"><span>${esc(UI.translate("REQUIRES ACTION"))}</span><strong class="num">${attention.length}</strong><small>${esc(UI.translate("tasks waiting on a decision or recovery"))}</small></div>
+      </header>
+      <div class="dashboard-metrics" aria-label="${esc(UI.translate("Workflow summary"))}">
+        <div class="dashboard-metric critical"><span>${esc(UI.translate("Needs attention"))}</span><strong class="num">${attention.length}</strong><small>${esc(UI.translate("Decisions and blockers"))}</small></div>
+        <div class="dashboard-metric live"><span>${esc(UI.translate("Agents running"))}</span><strong class="num">${running.length}</strong><small>${esc(UI.translate("Active executions"))}</small></div>
+        <div class="dashboard-metric"><span>${esc(UI.translate("Completed in 7 days"))}</span><strong class="num">${completedWeek}</strong><small>${startedWeek} ${esc(UI.translate("started in the same period"))}</small></div>
+        <div class="dashboard-metric"><span>${esc(UI.translate("Open tasks"))}</span><strong class="num">${snapshot.open_count}</strong><small>${projects.length} ${esc(UI.translate("Projects"))} · ${writable} ${esc(UI.translate("read-write"))}</small></div>
       </div>
-      ${projects.length ? `
-        <div class="kpi-strip">
-          <div class="kpi"><div class="v num">${projects.length}</div><div class="l">Projects</div></div>
-          <div class="kpi"><div class="v num">${writable}</div><div class="l">Read-write</div></div>
-          <div class="kpi"><div class="v num">${projects.length - writable}</div><div class="l">Read-only</div></div>
-        </div>
-      ` : ""}
+      <div class="dashboard-grid">
+        <section class="dashboard-panel dashboard-panel-wide">
+          <div class="dashboard-panel-head"><div><span class="dashboard-panel-kicker">01 / ${esc(UI.translate("THROUGHPUT"))}</span><h2>${esc(UI.translate("14-day activity"))}</h2><p>${esc(UI.translate("Tasks started and completed each day (UTC)."))}</p></div><div class="dashboard-chart-key"><span><i class="created"></i>${esc(UI.translate("Started"))}</span><span><i class="completed"></i>${esc(UI.translate("Completed"))}</span></div></div>
+          ${dashboardActivityChart(activity)}
+        </section>
+        <section class="dashboard-panel">
+          <div class="dashboard-panel-head"><div><span class="dashboard-panel-kicker">02 / ${esc(UI.translate("CURRENT STATE"))}</span><h2>${esc(UI.translate("Open task mix"))}</h2><p>${esc(UI.translate("Where active work is waiting now."))}</p></div></div>
+          ${dashboardStatusChart(attention, running)}
+        </section>
+      </div>
+      <section class="dashboard-panel dashboard-usage">
+        <div class="dashboard-panel-head"><div><span class="dashboard-panel-kicker">03 / ${esc(UI.translate("TOKEN TELEMETRY"))}</span><h2>${esc(UI.translate("Token usage and plan limits"))}</h2><p>${esc(UI.translate("Account activity and this workspace's CLI records use different scopes."))}</p></div></div>
+        <div id="dashboard-account-usage" class="dashboard-account-usage">${esc(UI.translate("Loading account usage…"))}</div>
+        <div class="dashboard-usage-subhead">${esc(UI.translate("This workspace · CLI runs"))}</div>
+        ${dashboardUsagePanel(snapshot.usage)}
+      </section>
+      <div class="dashboard-grid dashboard-operations">
+        <section class="dashboard-panel dashboard-panel-wide">
+          <div class="dashboard-panel-head"><div><span class="dashboard-panel-kicker">04 / ${esc(UI.translate("OPERATIONS"))}</span><h2>${esc(UI.translate("Action queue"))}</h2><p>${esc(UI.translate("Blocked work first, then decisions and active agents."))}</p></div><strong class="dashboard-panel-count num">${queue.length}</strong></div>
+          ${queue.length ? `<div class="dashboard-task-list dashboard-queue">${queue.map(dashboardTaskRow).join("")}</div>` : `<div class="dashboard-empty">${esc(UI.translate("Nothing needs attention right now."))}</div>`}
+        </section>
+        <section class="dashboard-panel">
+          <div class="dashboard-panel-head"><div><span class="dashboard-panel-kicker">05 / ${esc(UI.translate("PROJECT LOAD"))}</span><h2>${esc(UI.translate("Work by project"))}</h2><p>${esc(UI.translate("Open tasks in the six busiest projects."))}</p></div></div>
+          ${dashboardProjectLoad(projects, openTasks)}
+        </section>
+      </div>
+      <section class="dashboard-panel dashboard-outcomes">
+        <div class="dashboard-panel-head"><div><span class="dashboard-panel-kicker">06 / ${esc(UI.translate("VERIFICATION"))}</span><h2>${esc(UI.translate("Recent outcomes"))}</h2><p>${esc(UI.translate("Finished work and host test evidence, shown separately."))}</p></div></div>
+        ${recent.length ? `<div class="dashboard-task-list">${recent.map(dashboardTaskRow).join("")}</div>` : `<div class="dashboard-empty">${esc(UI.translate("No finished tasks yet."))}</div>`}
+      </section>
+    ` : "";
+    const projectsHtml = isDashboard ? "" : `
+      <div class="title-row">
+        <div><h1>${esc(UI.translate("Projects"))}</h1><div class="sub">${esc(UI.translate("Every project registered with this ccc-mcp home."))}</div></div>
+        <div class="title-actions"><button class="btn" id="btn-group">${esc(UI.translate("New group"))}</button><button class="btn" id="btn-add">${ICON.projects}${esc(UI.translate("Add existing folder"))}</button><button class="btn primary" id="btn-create">${esc(UI.translate("Create new project"))}</button></div>
+      </div>
+      ${projects.length ? `<div class="kpi-strip">
+        <div class="kpi"><div class="v num">${projects.length}</div><div class="l">${esc(UI.translate("Projects"))}</div></div>
+        <div class="kpi"><div class="v num">${writable}</div><div class="l">${esc(UI.translate("Read-write"))}</div></div>
+        <div class="kpi"><div class="v num">${projects.length - writable}</div><div class="l">${esc(UI.translate("Read-only"))}</div></div>
+      </div>` : ""}
       ${projects.length || groups.length ? groups.map(section).join("") + section(null, groups.length) : `<div class="empty">No projects yet. Add an existing folder or create a new one.</div>`}
-    `);
+    `;
+    layout(isDashboard ? dashboardHtml : projectsHtml);
+    if (isDashboard) {
+      loadDashboardAccountUsage(gen);
+      watchForChanges(gen, () => Promise.all([api("/projects"), api("/dashboard")]), renderDashboard);
+      return;
+    }
     document.getElementById("btn-add").addEventListener("click", openAddProjectModal);
     document.getElementById("btn-create").addEventListener("click", openCreateProjectModal);
     document.getElementById("btn-group").addEventListener("click", () => showModal({
       title: "New group", body: "Group projects on this device without changing their folders or settings.",
       fields: groupFields(null), confirmLabel: "Create", onSubmit: async (values) => {
         await api("/project-groups", { method: "POST", body: { action: "create", ...saveGroupNames(values) } });
-        renderDashboard();
+        renderProjects();
       },
     }));
     const update = async (body) => {
-      try { await api("/project-groups", { method: "POST", body }); renderDashboard(); }
+      try { await api("/project-groups", { method: "POST", body }); renderProjects(); }
       catch (err) { toast(err.message, true); }
     };
     document.querySelectorAll(".project-move").forEach((select) => select.addEventListener("change", () => update({ action: "move", project_id: select.dataset.projectId, group_id: select.value })));
@@ -394,14 +623,14 @@
       const group = groups.find((g) => g.id === btn.dataset.groupRename);
       showModal({ title: "Rename group", body: "Set the names shown for each interface language.", fields: groupFields(group), confirmLabel: "Save", onSubmit: async (values) => {
         await api("/project-groups", { method: "POST", body: { action: "rename", group_id: group.id, ...saveGroupNames(values) } });
-        renderDashboard();
+        renderProjects();
       } });
     }));
     document.querySelectorAll("[data-group-delete]").forEach((btn) => btn.addEventListener("click", () => {
       const group = groups.find((g) => g.id === btn.dataset.groupDelete);
       showModal({ title: "Delete group", body: "Projects in this group will become ungrouped. No project files are deleted.", confirmLabel: "Delete group", danger: true, onSubmit: async () => {
         await api("/project-groups", { method: "POST", body: { action: "delete", group_id: group.id } });
-        renderDashboard();
+        renderProjects();
       } });
     }));
     for (const direction of ["up", "down"]) document.querySelectorAll(`[data-group-${direction}]`).forEach((btn) => btn.addEventListener("click", () => {
@@ -424,7 +653,7 @@
         if (projects.some((p) => p.id === projectId)) update({ action: "move", project_id: projectId, group_id: target.dataset.dropGroup });
       });
     });
-    watchForChanges(gen, () => Promise.all([api("/projects"), api("/project-groups")]), renderDashboard);
+    watchForChanges(gen, () => Promise.all([api("/projects"), api("/project-groups")]), renderProjects);
   }
 
   async function browseFolder(path) {
@@ -612,7 +841,7 @@
         <div class="section-row">
           <div class="section-label">
             <div class="t">Remove from ccc-mcp</div>
-            <div class="d">Removes this project from the list and archives its ccc-mcp history. You can register the ID again. Choose whether to keep or delete the folder.</div>
+            <div class="d">Removes this project and clears its ccc-mcp records by default. Choose whether to keep the folder; select Keep records in the confirmation if you need an archive.</div>
           </div>
           <div class="section-panel">
             <div class="project-remove-actions">
@@ -678,12 +907,18 @@
           description: UI.getLocale() === "en" ? preview.description_en : preview.description,
           challenge: preview.challenge,
           confirmLabel: deleteFiles ? "Delete folder and remove" : "Remove from list",
-          onConfirm: async (typed) => {
+          checkbox: {
+            label: "Keep ccc-mcp records in an archive",
+            hint: "Off by default. The archive includes the full ccc-mcp database; re-registering this ID still starts with empty records.",
+            descriptionWhenChecked: UI.getLocale() === "en" ? preview.description_en_keep_records : preview.description_keep_records,
+          },
+          onConfirm: async (typed, keepRecords) => {
             const result = await api(`/projects/${encodeURIComponent(id)}/remove`, {
-              method: "POST", body: { confirm: typed, delete_files: deleteFiles },
+              method: "POST", body: { confirm: typed, delete_files: deleteFiles, keep_records: keepRecords },
             });
             if (result.cleanup_error) {
-              toast(`${UI.translate("Project removed, but folder cleanup failed. Remaining path:")} ${result.remaining_path}`, true);
+              const paths = result.remaining_paths || [result.remaining_path];
+              toast(`${UI.translate("Project removed, but cleanup failed. Remaining path:")} ${paths.join(", ")}`, true);
             } else if (result.directory_was_missing) {
               toast("Project removed; the folder was already missing.");
             } else {
@@ -1834,7 +2069,8 @@
     if (r.view === "docs") return renderDocs();
     if (r.view === "connect") return renderConnect();
     if (r.view === "global-skills") return renderGlobalSkills();
-    if (!r.project) return renderDashboard();
+    if (r.view === "dashboard") return renderDashboard();
+    if (!r.project) return renderProjects();
     if (r.view === "tasks" && r.sub) return renderTaskDetail();
     if (r.view === "tasks") return renderTasksList();
     if (r.view === "settings") return renderSettings();

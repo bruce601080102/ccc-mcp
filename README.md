@@ -109,7 +109,8 @@ The console's main pages:
 
 | Page | What you can do |
 | --- | --- |
-| **Projects** | Create projects, add existing folders, and organize groups; enable or revoke write access after adding a project. |
+| **Command center** | Track 14-day task activity, the open-task mix, project load, native CLI token usage, and recent outcomes with host test evidence. When Codex is signed in with ChatGPT, the console also reads account-wide token activity and plan usage windows from the local Codex App Server. Account totals cannot be attributed to an individual Chat, Codex run, or ccc-mcp project. |
+| **All projects** | Create projects, add existing folders, organize groups, and manage write access. |
 | **Settings** | Set the profile, providers and roles, report language, test command, and Meeting Mode. |
 | **Tasks / Context** | Inspect stages, waiting reasons, execution history, usage and CLI invocation evidence, raw results, and shared context. |
 | **Connect** | Connect ChatGPT with an OpenAI Platform Tunnel ID and runtime API key; inspect status and logs. |
@@ -119,7 +120,7 @@ The console's main pages:
 
 In **Skills & MCP**, inspect tools, choose which ones this project may use, invoke enabled tools with JSON arguments, and view recent MCP calls. Globally installed MCP servers also appear there, but still require the CLI to remove. The sidebar's interface language is separate from each project's report language. **Connect** can remember a runtime API key on this device (`~/.ccc-mcp/tunnel/credentials.json`, readable only by your OS account); stored keys are never returned to the browser. Enabling write, clearing history, and deleting require typed confirmation. See [reliability and security](docs/en/7-reliability-and-security.md#web-console) for details.
 
-On **Projects**, create named groups, move cards with the dropdown or drag-and-drop, and reorder groups. This only changes local console organization (`<home>/ui/project_groups.json`), not project paths or settings. **Connect** can save multiple named profiles, including different keys for the same Tunnel ID; select a saved profile and click Connect to use it. One Tunnel connection runs at a time.
+On **All projects**, create named groups, move project cards with the dropdown or drag-and-drop, and reorder groups. This only changes local console organization (`<home>/ui/project_groups.json`), not project paths or settings. **Connect** can save multiple named profiles, including different keys for the same Tunnel ID; select a saved profile and click Connect to use it. One Tunnel connection runs at a time.
 
 ## CLI: automation and advanced use
 
@@ -158,7 +159,7 @@ Read the numbered documents in order for a full setup. The two language trees us
 
 Continuous write authorization — granted via `project authorize`, `project add --write`/`project create --write`, or the web console's "Enable write" — permits ccc-mcp to modify that project and run its configured test command. Dependency installation can execute package scripts, so review dependency changes as part of the diff. Codex runs in its configured sandbox. Claude Code has a restricted tool policy, but does **not** yet have an equivalent OS-enforced sandbox; use a least-privileged OS account for it.
 
-To remove a project from `project list` while keeping its folder, use `ccc-mcp project remove <id>` (or the web console's **Remove, keep folder** action). This archives ccc-mcp history and lets you register the same ID again. Add `--delete-files` only when you also want to permanently delete the project's directory; the CLI and web console require a separate typed confirmation. Running executions must finish or be cancelled first. `project delete` is different: it permanently retires the ID and preserves historical records and files. See [reliability and security](docs/en/7-reliability-and-security.md) for the full guarantee.
+To remove a project from `project list` while keeping its folder, use `ccc-mcp project remove <id>` (or the web console's **Remove, keep folder** action). This clears ccc-mcp records by default; registering the same ID again starts with empty records. Add `--delete-files` to delete the project folder too, or `--keep-records` to retain an archive of the old records. The web console offers the same **Keep records** checkbox in either removal flow. The CLI and web console require typed confirmation, and running executions must finish or be cancelled first. `project delete` is different: it permanently retires the ID and preserves historical records and files. See [reliability and security](docs/en/7-reliability-and-security.md) for the full guarantee.
 
 ## Development
 

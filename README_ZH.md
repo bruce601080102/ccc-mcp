@@ -109,7 +109,8 @@ ccc-mcp ui
 
 | 頁面 | 可做的事 |
 | --- | --- |
-| **所有專案** | 建立專案、加入既有資料夾、整理群組；新增後可啟用或撤銷寫入授權。 |
+| **工作戰情中心** | 查看 14 天任務趨勢、未結任務分布、各專案工作量與原生 CLI 回報的 Token；檢查行動佇列和主機測試證據。若 Codex 使用 ChatGPT 帳戶登入，也會透過本機 Codex App Server 顯示帳戶 Token 活動與方案用量視窗；帳戶總量無法歸因到個別 Chat、Codex 執行或 ccc-mcp 專案。 |
+| **所有專案** | 建立專案、加入既有資料夾、整理群組，並管理寫入授權。 |
 | **設定** | 調整 profile、provider／角色、報告語言、測試命令與 Meeting Mode。 |
 | **任務／脈絡** | 查看階段、等待原因、執行紀錄、usage／CLI 呼叫證據、原始結果與共用 Context。 |
 | **連線** | 使用 OpenAI Platform Tunnel 的 ID 與 runtime API key 連到 ChatGPT，查看連線狀態與 log。 |
@@ -119,7 +120,7 @@ ccc-mcp ui
 
 在 **Skills 與 MCP** 頁可檢查工具、勾選此專案允許使用的工具、以 JSON 參數呼叫已授權工具，並查看最近的 MCP 呼叫紀錄。全域安裝的 MCP server 也會顯示於此，但仍須用 CLI 移除。側邊欄可切換介面語言，這項瀏覽器偏好與專案報告語言分開。**連線**頁可選擇將金鑰記住在這台裝置上（`~/.ccc-mcp/tunnel/credentials.json`，只開放本機帳號讀取）；金鑰儲存後不會再回傳給瀏覽器。啟用寫入、清除歷史和刪除等操作都需要輸入確認文字；詳見[可靠性與安全邊界](docs/ch/7-reliability-and-security.md#web-控制台)。
 
-**專案**頁可建立自訂群組，透過下拉選單或拖放移動專案卡片，並調整群組順序；分類只儲存在本機 `<home>/ui/project_groups.json`，不更動專案路徑或設定。**連線**頁可儲存多筆具名稱的設定，同一 Tunnel ID 也能存不同金鑰；選取設定後按「連線」即可切換，但同時間只執行一組 Tunnel 連線。
+**所有專案**頁可建立自訂群組，透過下拉選單或拖放移動專案卡片，並調整群組順序；分類只儲存在本機 `<home>/ui/project_groups.json`，不更動專案路徑或設定。**連線**頁可儲存多筆具名稱的設定，同一 Tunnel ID 也能存不同金鑰；選取設定後按「連線」即可切換，但同時間只執行一組 Tunnel 連線。
 
 ## CLI：自動化與進階操作
 
@@ -159,7 +160,7 @@ ccc-mcp --project hello-demo context show
 
 持續寫入授權——不論是透過 `project authorize`、`project add --write`／`project create --write`，或 Web 控制台的「啟用寫入」——都允許 ccc-mcp 修改該專案並執行設定的測試命令。相依套件安裝可能執行 package script，因此相依變更也必須納入 diff 審閱。Codex 依設定的 sandbox 執行；Claude Code 雖有限制工具政策，但尚未有同等的 OS 強制 sandbox，應以最低權限的 OS 帳戶執行。
 
-只想從 `project list` 移除專案？執行 `ccc-mcp project remove <id>`，預設保留原資料夾，封存 ccc-mcp 歷史後仍可重用該 ID。確定連原資料夾也要永久刪除時，才加上 `--delete-files`；兩種模式會要求不同的確認文字，執行中的 Agent 任務必須先結束或取消。`project delete` 是另一種操作：永久註銷 ID、保留原資料夾及歷史證據，不可重用。完整說明見[可靠性與安全邊界](docs/ch/7-reliability-and-security.md)。
+只想從 `project list` 移除專案？執行 `ccc-mcp project remove <id>`，預設保留原資料夾並清除 ccc-mcp 紀錄；相同 ID 重新註冊後會從空白紀錄開始。加上 `--delete-files` 才會連資料夾一起刪除；加上 `--keep-records` 才會封存舊紀錄。Web 控制台的兩種移除方式也都有「保留紀錄」勾選項。兩種資料夾處理方式會要求不同的確認文字，執行中的 Agent 任務必須先結束或取消。`project delete` 是另一種操作：永久註銷 ID、保留原資料夾及歷史證據，不可重用。完整說明見[可靠性與安全邊界](docs/ch/7-reliability-and-security.md)。
 
 ## 開發
 
