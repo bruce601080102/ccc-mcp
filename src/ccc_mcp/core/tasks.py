@@ -500,7 +500,7 @@ class TaskHub:
             )
         ]
 
-    def dashboard_snapshot(self):
+    def dashboard_snapshot(self, usage_window="1d"):
         """A read-only cross-project view for the local console.
 
         Every unfinished task is included so an old blocker cannot disappear behind
@@ -554,6 +554,14 @@ class TaskHub:
                     "brief": brief,
                 }
             )
+        usage_windows = {
+            "5m": timedelta(minutes=5), "15m": timedelta(minutes=15),
+            "1h": timedelta(hours=1), "1d": timedelta(days=1),
+            "1w": timedelta(weeks=1), "1mo": timedelta(days=30),
+        }
+        if usage_window not in usage_windows:
+            raise BridgeError("Unknown usage window")
+        usage_since = datetime.now(UTC) - usage_windows[usage_window]
         token_fields = {
             "codex": ("input_tokens", "output_tokens", "cached_input_tokens", "reasoning_output_tokens"),
             "claude": ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"),
@@ -565,10 +573,12 @@ class TaskHub:
         unmeasured_native = 0
         chatgpt_executions = 0
         for row in self.store.all(
-            "SELECT project_id,agent,adapter,result FROM agent_executions "
+            "SELECT project_id,agent,adapter,result,finished FROM agent_executions "
             "WHERE status NOT IN ('QUEUED','RUNNING') AND adapter IN ('real','interactive')"
         ):
             if row["project_id"] not in visible_projects:
+                continue
+            if not row["finished"] or datetime.fromisoformat(row["finished"].replace("Z", "+00:00")) < usage_since:
                 continue
             if row["agent"] == "chatgpt" and row["adapter"] == "interactive":
                 chatgpt_executions += 1
@@ -607,6 +617,7 @@ class TaskHub:
                 "providers": list(providers.values()),
                 "unmeasured_native_executions": unmeasured_native,
                 "chatgpt_executions": chatgpt_executions,
+                "window": usage_window,
             },
             "tasks": tasks,
         }
@@ -961,6 +972,7 @@ class TaskHub:
         elif role in {"SD", "RD", "SD/RD"}:
             test_evidence = self.run_configured_test_command(project_id, task_id)
             result["test_evidence"] = test_evidence
+            self.maybe_auto_evaluate(pointer["source_execution_id"], after_tests=True)
             instruction = "Review the implementation and verify reported evidence. " + (
                 f"Host-executed test command {'passed' if test_evidence.get('passed') else 'FAILED'}: "
                 f"{' '.join(test_evidence['command'])}."

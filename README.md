@@ -69,6 +69,7 @@ The UI runs on local `127.0.0.1` and stops with Ctrl+C. [See every console page]
 | **ChatGPT Chat as the coding agent** | ChatGPT can read and edit an authorized local project, then continue the work in the same conversation. No Codex or Claude Code installation is required for `chatgpt-only`. |
 | **A recoverable workflow** | Run `SA → SD/RD → REVIEW` with versioned shared Context and saved execution records. Resume a task in another chat from the project’s `.ccc-mcp` data. |
 | **Host-side verification** | Install declared dependencies, run pytest, and retain host-observed results, exit codes when available, diffs, reports, and review evidence. |
+| **Traceable execution evaluation** | The optional evaluation engine turns host tests, diffs, and lint findings into versioned reports. Quality scores are paired with evidence coverage; missing signals are never silently treated as perfect. Evaluate and inspect results from the task page. |
 | **Skills, including MCP-oriented Skills** | Install reusable `SKILL.md` guidance, including nested supporting files. Choose global Skills in the UI so every project and role can use them. A Skill can guide an agent to use an MCP tool after that server is installed. |
 | **MCP servers and tools** | Discover local MCP servers, install one for a project, select which tools the project may use, and call them from ChatGPT. For example, `codebase-memory-mcp` can provide repository structure and code relationships. Skills guide the workflow; MCP tools supply live capabilities. |
 | **One local control center** | Manage projects, permissions, connections, global Skills, per-project MCP tools, tasks, and Context from `ccc-mcp ui`. The CLI remains available for scripts and advanced use. |
@@ -109,12 +110,14 @@ The console's main pages:
 
 | Page | What you can do |
 | --- | --- |
-| **Command center** | Track 14-day task activity, the open-task mix, project load, native CLI token usage, and recent outcomes with host test evidence. When Codex is signed in with ChatGPT, the console also reads account-wide token activity and plan usage windows from the local Codex App Server. Account totals cannot be attributed to an individual Chat, Codex run, or ccc-mcp project. |
+| **Command center** | Track task activity, blockers, project load, and agent evaluation history. Filter this workspace's CLI token records from five minutes to one month; see Codex plan-window remaining percentages and reset times. Enable Claude quota sync in the UI to show its official five-hour and seven-day remaining percentages from Claude Code's status-line data. The page checks local data every five minutes while open. Account-wide lifetime tokens are separate and cannot be attributed to a Chat, Codex run, or ccc-mcp project. |
 | **All projects** | Create projects, add existing folders, organize groups, and manage write access. |
 | **Settings** | Set the profile, providers and roles, report language, test command, and Meeting Mode. |
 | **Tasks / Context** | Inspect stages, waiting reasons, execution history, usage and CLI invocation evidence, raw results, and shared context. |
 | **Connect** | Connect ChatGPT with an OpenAI Platform Tunnel ID and runtime API key; inspect status and logs. |
 | **Global Skills** | Select local Claude Code or Codex Skills to install for every project and role; inspect or remove installed Skills. |
+
+Claude quota sync is opt-in: open **Command center → Usage and remaining allowance → Enable Claude quota sync**. It adds a small wrapper to your Claude Code user `statusLine` setting and preserves and runs an existing status line. The usage snapshot in the local ccc-mcp home contains only reported percentages, reset times, and observation time; separate installation metadata retains the previous status-line setting for restoration. Open an interactive Claude Code session and receive one response to populate the values; Claude Code supplies these fields only after an API response. The dashboard checks the local snapshot every five minutes, labels older observations, and removes expired windows. **Disable Claude quota sync** restores the previous setting and deletes the local snapshot. This does not call Claude's model or read its login credentials. See [Anthropic's status-line field documentation](https://code.claude.com/docs/en/statusline).
 | **Skills & MCP** | View shared Skills; discover, install, and manage local stdio MCP servers and their tools for one project. |
 | **Documentation** | Read the bundled English and Traditional Chinese guides inside the console. |
 

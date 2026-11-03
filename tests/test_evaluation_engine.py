@@ -188,7 +188,9 @@ def test_unaddressed_review_finding_is_not_treated_as_a_real_defect(bridge, huma
     report = bridge.evaluate_task("demo", task_id, role="REVIEW", force=True)[0]
     kinds = {d["kind"]: d["resolution_status"] for d in report["disagreements"]}
     assert "review_finding_confirmed" not in kinds
-    assert report["scoring_details"]["features"]["false_review_findings"] == 1
+    features = report["scoring_details"]["features"]
+    assert features["false_review_findings"] == 0
+    assert features["review_findings_needing_verification"] == 1
 
 
 # --- 5. cross-role disagreement is recorded --------------------------------------
@@ -211,8 +213,8 @@ def test_scope_mismatch_between_sa_plan_and_diff_is_recorded(bridge, human):
 
 # --- 6/7. reputation: correct math, no double counting ---------------------------
 
-def test_reputation_reliability_and_dedup(bridge, human):
-    task_id = start_task(bridge, full_suite=True)
+def test_reputation_reliability_and_dedup(bridge, human, monkeypatch):
+    task_id = start_task(bridge, acceptance=["Implement the change"], full_suite=True)
     implementation_id = advance_to_implementation(bridge, task_id)
     worktree, review1_id = send_back_for_revision(bridge, task_id, implementation_id)
     round2_id = redo_round(
@@ -233,12 +235,22 @@ def test_reputation_reliability_and_dedup(bridge, human):
         (success + 1) / (success + failure + 2), abs=1e-4
     )
 
+    from ccc_mcp.evaluation_engine import quality_scorer
+
+    original_score = quality_scorer.score
+    monkeypatch.setattr(
+        quality_scorer, "score",
+        lambda *args: {**original_score(*args), "task_status": "FAILED"},
+    )
     bridge.reevaluate_execution("demo", task_id, review2["execution_id"])
     ledger_rows = bridge.store.one(
         "SELECT COUNT(*) AS n FROM reputation_events WHERE source_execution_id=?",
         (review2["execution_id"],),
     )["n"]
     assert ledger_rows == 1
+    corrected = next(r for r in bridge.get_agent_reliability(role="REVIEW") if r["role"] == "REVIEW")
+    assert corrected["verified_success"] == 0
+    assert corrected["verified_failure"] == 1
     versions = bridge.get_task_evaluations("demo", task_id, role="REVIEW")
     assert [v["version"] for v in versions] == [1, 2]
 

@@ -97,6 +97,43 @@ def test_account_usage_endpoint_is_gated_and_keeps_account_scope(client, monkeyp
     assert TestClient(client.app).get("/api/dashboard/account-usage").status_code == 401
 
 
+def test_claude_quota_controls_are_token_gated(client, monkeypatch):
+    expected = {"enabled": True, "windows": [{"name": "5-hour", "used_percent": 42}]}
+    monkeypatch.setattr("ccc_mcp.interfaces.web.read_claude_usage", lambda home: expected)
+    monkeypatch.setattr("ccc_mcp.interfaces.web.enable_claude_usage", lambda home: expected)
+    monkeypatch.setattr("ccc_mcp.interfaces.web.disable_claude_usage", lambda home: {"enabled": False})
+    assert client.get("/api/dashboard/claude-usage").json() == expected
+    assert client.post("/api/dashboard/claude-usage/enable").json() == expected
+    assert client.post("/api/dashboard/claude-usage/disable").json() == {"enabled": False}
+    unauthenticated = TestClient(client.app)
+    assert unauthenticated.get("/api/dashboard/claude-usage").status_code == 401
+    assert unauthenticated.post("/api/dashboard/claude-usage/enable").status_code == 401
+
+
+def test_dashboard_period_and_evaluation_controls_are_available_in_ui(tmp_path, client):
+    repo = mkrepo(tmp_path, "evaluation-ui")
+    assert client.post("/api/projects/add", json={"path": str(repo), "id": "evaluation-ui"}).status_code == 200
+    task_id = client.app.state.bridge.create_task("evaluation-ui", "Check evidence")["id"]
+    assert client.get("/api/dashboard?usage_window=15m").json()["usage"]["window"] == "15m"
+    assert client.get("/api/dashboard?usage_window=invalid").status_code == 400
+    base = f"/api/projects/evaluation-ui/tasks/{task_id}"
+    assert client.get(f"{base}/evaluations").json() == []
+    assert client.post(f"{base}/evaluate", json={}).status_code == 400
+    enabled = client.post(
+        "/api/projects/evaluation-ui/config/evaluation-engine",
+        json={
+            "enabled": True, "auto_evaluate": False,
+            "weights": {"SA": {"requirement": 0.8, "review": 0.2}},
+        },
+    )
+    assert enabled.status_code == 200
+    settings = client.get("/api/projects/evaluation-ui/settings").json()
+    assert settings["evaluation_weights"]["SA"]["requirement"] == 0.8
+    assert client.post(f"{base}/evaluate", json={}).json() == []
+    assert client.get("/api/dashboard/reliability").json() == []
+    assert TestClient(client.app).get(f"{base}/evaluations").status_code == 401
+
+
 def test_account_usage_filters_unexpected_fields():
     usage = _usage_metrics(
         {

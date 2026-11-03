@@ -5,6 +5,7 @@ automatic role resolves to the chatgpt provider.
 """
 
 import sys
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -51,6 +52,7 @@ def test_chatgpt_only_profile_completes_full_three_role_relay(bridge, human):
     bridge.configure_profile("demo", "chatgpt-only")
     bridge.authorize_project_local("demo")
     bridge.configure_test_command("demo", [sys.executable, "-c", "print('ok')"])
+    bridge.configure_evaluation_engine("demo", True, auto_evaluate=True)
 
     started = bridge.start_project_request("demo", "Implement a change")
     task_id = started["workstream"]["id"]
@@ -59,6 +61,7 @@ def test_chatgpt_only_profile_completes_full_three_role_relay(bridge, human):
         "agent": "chatgpt", "role": "SA", "adapter": "interactive",
     }
     bridge.submit_agent_report("demo", sa_execution, report(context_updates=["SA analysis"]))
+    assert [r["role"] for r in bridge.get_task_evaluations("demo", task_id)] == ["SA"]
 
     advanced = bridge.advance_project(
         "demo", pending_patch(bridge, sa_execution), "Implement the approved change"
@@ -71,10 +74,15 @@ def test_chatgpt_only_profile_completes_full_three_role_relay(bridge, human):
     bridge.submit_agent_report(
         "demo", implementation_execution, report(context_updates=["Implemented hello.py"])
     )
+    assert not any(r["role"] == "SD/RD" for r in bridge.get_task_evaluations("demo", task_id))
 
     reviewed = bridge.advance_project("demo", pending_patch(bridge, implementation_execution))
     assert reviewed["test_evidence"]["executed_by_host"] is True
     assert reviewed["test_evidence"]["passed"] is True
+    implementation_evaluation = next(
+        r for r in bridge.get_task_evaluations("demo", task_id) if r["role"] == "SD/RD"
+    )
+    assert implementation_evaluation["scoring_details"]["features"]["host_tests_executed"] is True
     review_execution = reviewed["next_execution"]["execution_id"]
     assert execution_row(bridge, review_execution) == {
         "agent": "chatgpt", "role": "REVIEW", "adapter": "interactive",
@@ -92,6 +100,12 @@ def test_chatgpt_only_profile_completes_full_three_role_relay(bridge, human):
     assert all(item["invocation"]["source"] == "chatgpt_web" for item in usage)
     dashboard_usage = bridge.dashboard_snapshot()["usage"]
     assert dashboard_usage["chatgpt_executions"] == 3
+    bridge.store.execute(
+        "UPDATE agent_executions SET finished=? WHERE id=?",
+        ((datetime.now(UTC) - timedelta(hours=2)).isoformat(), sa_execution),
+    )
+    assert bridge.dashboard_snapshot("1h")["usage"]["chatgpt_executions"] == 2
+    assert bridge.dashboard_snapshot("1d")["usage"]["chatgpt_executions"] == 3
     assert all(item["executions"] == 0 for item in dashboard_usage["providers"])
     assert (
         Path(bridge.project("demo")["root"]) / "hello.py"

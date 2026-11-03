@@ -69,6 +69,7 @@ UI 只在本機 `127.0.0.1` 提供服務，按 Ctrl+C 停止。[查看控制台�
 | **ChatGPT Chat 寫本機程式** | 在對話中讓 ChatGPT 讀取、修改已授權專案，接著執行測試；`chatgpt-only` 不需要安裝 Codex 或 Claude Code。 |
 | **可接續的工作流** | 以 `SA → SD/RD → REVIEW` 處理任務，保存版本化共用 Context 與執行紀錄；在另一個聊天室從專案內的 `.ccc-mcp` 資料接續。 |
 | **主機實際驗證** | 安裝宣告的相依套件、執行 pytest，保存主機回傳的結果、可取得的 exit code、diff、報告與審查證據。 |
+| **可追溯的執行評估** | 選用評估引擎會將主機測試、diff 與靜態檢查整理成逐次評估報告；品質分數同時顯示證據覆蓋率，缺資料不會假裝成滿分。可在任務頁評估、檢查來源並保留重新評估版本。 |
 | **Skills，包含 MCP 型 Skill** | 安裝可重複使用的 `SKILL.md` 工作指引，支援多層目錄的補充檔案；在 UI 選擇全域 Skills，提供所有專案及角色使用。Skill 可引導 Agent 呼叫已另外安裝的 MCP 工具。 |
 | **MCP Server 與工具** | 探索本機 MCP Server，為專案安裝並勾選允許使用的工具，再由 ChatGPT 呼叫。例如使用 `codebase-memory-mcp` 分析程式架構與關聯。Skill 提供工作方法，MCP 工具提供即時能力。 |
 | **一個本機控制中心** | 用 `ccc-mcp ui` 管理專案、權限、連線、全域 Skills、各專案 MCP 工具、任務及脈絡；CLI 仍可供腳本與進階操作使用。 |
@@ -109,12 +110,14 @@ ccc-mcp ui
 
 | 頁面 | 可做的事 |
 | --- | --- |
-| **工作戰情中心** | 查看 14 天任務趨勢、未結任務分布、各專案工作量與原生 CLI 回報的 Token；檢查行動佇列和主機測試證據。若 Codex 使用 ChatGPT 帳戶登入，也會透過本機 Codex App Server 顯示帳戶 Token 活動與方案用量視窗；帳戶總量無法歸因到個別 Chat、Codex 執行或 ccc-mcp 專案。 |
+| **工作戰情中心** | 查看任務趨勢、卡點、各專案工作量與 Agent 評估紀錄。可按 5 分鐘至 1 個月篩選此工作空間的 CLI Token 用量；Codex 方案視窗顯示剩餘百分比與重置時間。可在 UI 啟用 Claude 額度同步，從 Claude Code 官方狀態列資料顯示 5 小時與 7 天剩餘百分比。開啟頁面時每 5 分鐘檢查本機資料。帳戶歷史 Token 總量另列，無法歸因到個別 Chat、Codex 執行或 ccc-mcp 專案。 |
 | **所有專案** | 建立專案、加入既有資料夾、整理群組，並管理寫入授權。 |
 | **設定** | 調整 profile、provider／角色、報告語言、測試命令與 Meeting Mode。 |
 | **任務／脈絡** | 查看階段、等待原因、執行紀錄、usage／CLI 呼叫證據、原始結果與共用 Context。 |
 | **連線** | 使用 OpenAI Platform Tunnel 的 ID 與 runtime API key 連到 ChatGPT，查看連線狀態與 log。 |
 | **全域 Skills** | 勾選要安裝給所有專案及角色的本機 Claude Code／Codex Skills，並查看或移除已安裝項目。 |
+
+Claude 額度同步須自行啟用：開啟**工作戰情中心 → 用量與剩餘額度 → 啟用 Claude 額度同步**。它會在 Claude Code 使用者層級的 `statusLine` 設定加上本機擷取程式；若原本有狀態列，會保留並照常執行。用量快照只含額度百分比、重置時間與觀測時間；另存原狀態列設定供停用時還原，不讀取 Claude 登入憑證或對話。開啟互動式 Claude Code 並收到一次回覆後，Claude 才會提供額度欄位。戰情中心每 5 分鐘檢查本機快照，標示過時觀測並隱藏已重置的視窗。按**停用 Claude 額度同步**會還原原設定並刪除快照；同步本身不會呼叫模型。詳見 [Anthropic 狀態列欄位文件](https://code.claude.com/docs/en/statusline)。
 | **Skills 與 MCP** | 查看共用 Skills；替單一專案探索、安裝及管理本機 stdio MCP server 與其可用工具。 |
 | **文件** | 在控制台內閱讀隨套件安裝的繁中與英文指南。 |
 

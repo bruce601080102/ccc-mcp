@@ -65,7 +65,7 @@ def _run_ruff(worktree, paths):
         return None, "changed Python files no longer exist in the worktree"
     try:
         result = subprocess.run(
-            [ruff, "check", "--output-format=json", *existing],
+            [ruff, "check", "--extend-select=S", "--ignore=S101", "--output-format=json", *existing],
             cwd=worktree, capture_output=True, timeout=_RUFF_TIMEOUT_SECONDS,
             stdin=subprocess.DEVNULL, shell=False, check=False,
         )

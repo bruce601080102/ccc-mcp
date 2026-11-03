@@ -1,11 +1,10 @@
 """Agent reliability per (agent, model, role, task_type), Beta-Bernoulli (brief #5).
 
-Counts live in an append-only `reputation_events` ledger, one row per execution ever
-counted — never a mutable counter — keyed UNIQUE on source_execution_id so
-re-evaluating the same execution can never double-count (brief's test #7). reliability
-is always `(success + 1) / (success + failure + 2)` recomputed from that ledger, the
-same "derive it from an append-only table, never store a running total" pattern
-storage.py already uses for meeting_clarifications' rounds_used.
+The append-only `reputation_events` ledger preserves the first verified outcome for
+audit. The displayed reliability is computed from each execution's LATEST immutable
+evaluation version, so a corrected re-evaluation replaces its earlier classification
+without double-counting. No mutable counter is stored. The estimate is always
+`(success + 1) / (success + failure + 2)`.
 
 Only PASSED/FAILED task_status outcomes are ever recorded — NEEDS_VERIFICATION and
 INSUFFICIENT_EVIDENCE are explicitly never counted (brief's test #3/#6: "未驗證的判斷
@@ -62,20 +61,29 @@ def query(store, *, agent=None, role=None, task_type=None, low_sample_threshold=
     """Aggregated reliability rows, one per (agent, model, role, task_type) that has at
     least one recorded outcome; REVIEW rows also carry precision from the latest
     evaluation per source_execution_id (never double-counting a re-evaluated round)."""
-    clauses, args = [], []
-    for column, value in (("agent", agent), ("role", role), ("task_type", task_type)):
-        if value is not None:
-            clauses.append(f"{column}=?")
-            args.append(value)
-    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     rows = store.all(
-        f"SELECT agent,model,role,task_type,outcome FROM reputation_events {where}", args
+        "SELECT agent,model,role,task_type,source_execution_id,version,task_status "
+        "FROM evaluations"
     )
-    groups = {}
+    latest = {}
     for row in rows:
+        key = row["source_execution_id"]
+        if key not in latest or row["version"] > latest[key]["version"]:
+            latest[key] = row
+    groups = {}
+    for row in latest.values():
+        if agent is not None and row["agent"] != agent:
+            continue
+        if role is not None and row["role"] != role:
+            continue
+        if task_type is not None and row["task_type"] != task_type:
+            continue
+        outcome = outcome_for(row["task_status"])
+        if outcome is None:
+            continue
         key = (row["agent"], row["model"], row["role"], row["task_type"])
         bucket = groups.setdefault(key, {"success": 0, "failure": 0})
-        bucket[row["outcome"]] += 1
+        bucket[outcome] += 1
     review_precision = _review_precision(store, agent=agent, task_type=task_type)
     results = []
     for (agent_name, model, role_name, task_type_name), bucket in groups.items():

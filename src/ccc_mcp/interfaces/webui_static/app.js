@@ -422,33 +422,79 @@
       </a>`).join("")}</div>` : `<div class="dashboard-empty">${esc(UI.translate("No projects yet. Add an existing folder or create a new one."))}</div>`;
   }
 
+  const USAGE_WINDOWS = ["5m", "15m", "1h", "1d", "1w", "1mo"];
+  let dashboardUsageWindow = (() => {
+    try { return USAGE_WINDOWS.includes(localStorage.getItem("ccc_usage_window")) ? localStorage.getItem("ccc_usage_window") : "1d"; }
+    catch (e) { return "1d"; }
+  })();
   let accountUsageCache = null, accountUsageAt = 0, accountUsagePending = null;
 
-  function dashboardAccountUsage(data) {
+  function dashboardAccountUsage(data, providers, claudeUsage) {
     const number = new Intl.NumberFormat(UI.getLocale());
-    if (!data?.available) return `<div class="dashboard-account-empty">${esc(UI.translate("Account usage is unavailable. Sign in to Codex with ChatGPT to show account token activity and plan limits."))}</div>`;
-    const total = data.tokens_available ? data.summary?.lifetimeTokens : null;
-    const daily = (data.daily || []).slice(-14);
+    const codex = providers?.codex || {};
+    const claude = providers?.claude || {};
+    const status = (item) => !item.installed ? "CLI not installed" : item.logged_in ? "Signed in" : "Sign in required";
+    const renderWindows = (rows) => (rows || []).map((row) => {
+      const remaining = Math.max(0, 100 - row.used_percent);
+      const reset = row.resets_at ? new Date(row.resets_at * 1000).toLocaleString(UI.getLocale()) : "—";
+      return `<div class="quota-window"><div><strong>${esc(UI.translate(row.name))}</strong><span>${row.duration_mins ? esc(`${row.duration_mins} ${UI.translate("minutes")}`) : ""}</span><b class="num">${number.format(remaining)}% ${esc(UI.translate("remaining"))}</b></div><div class="quota-track" role="meter" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${remaining}" aria-label="${esc(UI.translate(row.name))} ${esc(UI.translate("remaining"))}"><span style="width:${remaining}%"></span></div><small>${esc(UI.translate("Resets"))}: ${esc(reset)}</small></div>`;
+    }).join("");
+    const windows = renderWindows(data?.rate_limits);
+    const claudeWindows = renderWindows(claudeUsage?.windows);
+    const claudeUpdated = claudeUsage?.captured_at ? new Date(claudeUsage.captured_at * 1000).toLocaleString(UI.getLocale()) : "";
+    const claudeState = claudeUsage?.backend_outdated
+      ? `<div class="quota-unavailable"><strong>${esc(UI.translate("Console restart required"))}</strong><span>${esc(UI.translate("This page has newer Claude controls than the running ccc-mcp server. Restart ccc-mcp ui and open its new URL."))}</span></div>`
+      : claudeUsage?.enabled
+      ? `${claudeWindows || `<div class="quota-unavailable"><strong>${esc(UI.translate("Waiting for Claude usage"))}</strong><span>${esc(UI.translate("Open Claude Code in a terminal with your subscription. The status line supplies limits after its first response; then click Check now."))}</span></div>`}
+         ${claudeUpdated ? `<p class="quota-source ${claudeUsage.stale ? "stale" : ""}">${esc(UI.translate(claudeUsage.stale ? "Last observed · may be stale" : "Observed from Claude Code"))}: ${esc(claudeUpdated)}</p>` : ""}
+         <div class="quota-actions"><button class="btn small ghost" data-claude-usage-action="refresh">${esc(UI.translate("Check now"))}</button><button class="btn small ghost" data-claude-usage-action="disable">${esc(UI.translate("Disable Claude quota sync"))}</button></div>`
+      : `<div class="quota-unavailable"><strong>${esc(UI.translate("Claude quota sync is off"))}</strong><span>${esc(UI.translate("Read official 5-hour and 7-day plan limits from Claude Code's status line. No credentials or prompts are collected."))}</span></div>
+         <button class="btn small quota-action" data-claude-usage-action="enable">${esc(UI.translate("Enable Claude quota sync"))}</button>`;
+    const total = data?.tokens_available ? data.summary?.lifetimeTokens : null;
+    const days = dashboardUsageWindow === "1mo" ? 30 : dashboardUsageWindow === "1w" ? 7 : dashboardUsageWindow === "1d" ? 1 : 0;
+    const daily = days ? (data?.daily || []).slice(-days) : [];
     const max = Math.max(1, ...daily.map((row) => row.tokens));
-    const chart = daily.length ? `<div class="dashboard-account-chart" role="img" aria-label="${esc(UI.translate("Daily account token activity"))}">${daily.map((row) => `<div class="dashboard-account-day" title="${esc(row.date)} · ${number.format(row.tokens)}"><span style="height:${Math.max(3, row.tokens / max * 100)}%"></span></div>`).join("")}</div>` : `<div class="dashboard-account-no-chart">${esc(UI.translate("Daily token history is unavailable."))}</div>`;
-    const windows = (data.rate_limits || []).map((row) => `<div class="dashboard-account-limit"><div><strong>${esc(row.name)}</strong><span>${row.duration_mins ? esc(`${row.duration_mins} ${UI.translate("minutes")}`) : ""}</span><b class="num">${number.format(row.used_percent)}%</b></div><div class="dashboard-account-limit-track"><span style="width:${row.used_percent}%"></span></div></div>`).join("");
-    return `<div class="dashboard-account-grid">
-      <div class="dashboard-account-total"><span>${esc(UI.translate("Account lifetime tokens"))}</span><strong class="num">${total === null ? "—" : number.format(total)}</strong><small>${esc(UI.translate("ChatGPT account total; no Chat, Codex, or project breakdown."))}</small></div>
-      <div class="dashboard-account-history"><span>${esc(UI.translate("Daily account token activity"))}</span>${chart}</div>
-      <div class="dashboard-account-limits"><span>${esc(UI.translate("Plan usage windows"))}</span>${windows || `<div class="dashboard-account-no-chart">${esc(UI.translate("Plan limits are unavailable."))}</div>`}</div>
-    </div>`;
+    const chart = daily.length ? `<div class="dashboard-account-chart" role="img" aria-label="${esc(UI.translate("Daily account token activity"))}">${daily.map((row) => `<div class="dashboard-account-day" title="${esc(row.date)} · ${number.format(row.tokens)}"><span style="height:${Math.max(3, row.tokens / max * 100)}%"></span></div>`).join("")}</div>` : `<p class="dashboard-account-no-chart">${esc(UI.translate(days ? "Daily account history is unavailable." : "Account history has daily resolution; choose one day or longer."))}</p>`;
+    return `<div class="quota-grid">
+      <div class="quota-provider"><div class="quota-provider-head"><strong>Codex</strong><span>${esc(UI.translate(status(codex)))}</span></div><p>${esc(UI.translate("ChatGPT account plan window · all Codex activity"))}</p>${windows || `<div class="quota-unavailable">${esc(UI.translate("Remaining quota unavailable. Sign in with ChatGPT in Codex."))}</div>`}</div>
+      <div class="quota-provider"><div class="quota-provider-head"><strong>Claude Code</strong><span>${esc(UI.translate(status(claude)))}</span></div><p>${esc(UI.translate("Claude plan allowance"))}</p>${claudeState}</div>
+    </div><details class="account-history"><summary>${esc(UI.translate("Account-wide token history"))} · ${total === null ? "—" : number.format(total)} ${esc(UI.translate("lifetime tokens"))}</summary><p>${esc(UI.translate("This is the signed-in ChatGPT account across apps and all time. It cannot be attributed to this workspace, and is not a remaining allowance."))}</p>${chart}</details>`;
   }
 
-  function loadDashboardAccountUsage(gen) {
+  function loadDashboardAccountUsage(gen, force=false) {
     const target = document.getElementById("dashboard-account-usage");
     if (!target) return;
-    if (!accountUsageCache || Date.now() - accountUsageAt > 60000) {
-      if (!accountUsagePending) accountUsagePending = api("/dashboard/account-usage").catch(() => ({ available: false })).then((data) => {
-        accountUsageCache = data; accountUsageAt = Date.now(); accountUsagePending = null; return data;
-      });
+    if (force || !accountUsageCache || Date.now() - accountUsageAt > 300000) {
+      if (!accountUsagePending) accountUsagePending = Promise.all([
+        api("/dashboard/account-usage").catch(() => ({ available: false })),
+        api("/connect/providers").catch(() => ({ providers: {} })),
+        api("/dashboard/claude-usage").catch((err) => ({
+          enabled: false, windows: [], backend_outdated: err.status === 404 || err.status === 405,
+        })),
+      ]).then(([data, providerData, claudeUsage]) => {
+        accountUsageCache = { data, providers: providerData.providers || {}, claudeUsage }; accountUsageAt = Date.now(); accountUsagePending = null; return accountUsageCache;
+      }).catch((err) => { accountUsagePending = null; throw err; });
     }
     const pending = accountUsagePending || Promise.resolve(accountUsageCache);
-    pending.then((data) => { if (!stale(gen) && target.isConnected) target.innerHTML = dashboardAccountUsage(data); });
+    pending.then((value) => {
+      if (stale(gen) || !target.isConnected) return;
+      target.innerHTML = dashboardAccountUsage(value.data, value.providers, value.claudeUsage);
+      target.querySelectorAll("[data-claude-usage-action]").forEach((button) => button.addEventListener("click", async (event) => {
+        const button = event.currentTarget;
+        button.disabled = true;
+        try {
+          if (button.dataset.claudeUsageAction !== "refresh")
+            await api(`/dashboard/claude-usage/${button.dataset.claudeUsageAction}`, { method: "POST" });
+          accountUsageCache = null;
+          loadDashboardAccountUsage(gen, true);
+        } catch (err) {
+          toast(UI.translate(err.status === 404 || err.status === 405
+            ? "This console is running an older backend. Restart ccc-mcp ui and open the new URL."
+            : err.message), true);
+          button.disabled = false;
+        }
+      }));
+    }).catch((err) => toast(err.message, true));
   }
 
   function dashboardUsagePanel(usage) {
@@ -470,12 +516,28 @@
         <div class="dashboard-token-extras">${extras.map(([key, title]) => `<span>${esc(UI.translate(title))} <strong class="num">${field(provider, key)}</strong></span>`).join("")}</div>
       </div>`;
     };
-    return `<div class="dashboard-usage-grid">
+    return `<p class="usage-scope">${esc(UI.translate("Only completed ccc-mcp CLI executions in the selected period. This excludes Codex or Claude work outside this workspace."))}</p><div class="dashboard-usage-grid">
       ${card("codex", "Codex CLI", [["cached_input_tokens", "Cached input"], ["reasoning_output_tokens", "Reasoning output"]])}
       ${card("claude", "Claude Code CLI", [["cache_read_input_tokens", "Cache read"], ["cache_creation_input_tokens", "Cache creation"]])}
     </div>
     <div class="dashboard-usage-coverage"><span>${number.format(data.unmeasured_native_executions || 0)} ${esc(UI.translate("native runs without token data"))}</span><span>${number.format(data.chatgpt_executions || 0)} ${esc(UI.translate("ChatGPT runs without per-run token data"))}</span></div>
-    <p class="dashboard-usage-note">${esc(UI.translate("CLI values cover this workspace only. Account values above cover the signed-in ChatGPT account; never add them together."))}</p>`;
+    <p class="dashboard-usage-note">${esc(UI.translate("Cache fields are shown separately and may already be included in the provider's input total. Do not add them to the account history or each other."))}</p>`;
+  }
+
+  function dashboardReliability(rows) {
+    if (!rows?.length) return `<div class="dashboard-empty">${esc(UI.translate("No evaluated executions yet. Enable evaluation in project settings, then evaluate a task."))}</div>`;
+    return `<div class="reliability-list">${rows.slice(0, 8).map((row) => `<div class="reliability-row"><div><strong>${esc(row.agent)} · ${esc(row.role)}</strong><small>${esc(row.model || "")} · ${esc(row.task_type)}</small></div><strong class="num">${Math.round(row.reliability_score * 100)}%</strong><span>${esc(row.sample_count)} ${esc(UI.translate("evaluated outcomes"))}${row.low_sample ? ` · ${esc(UI.translate("small sample"))}` : ""}</span></div>`).join("")}</div><p class="dashboard-usage-note">${esc(UI.translate("Rule-based outcome history, not an independent benchmark or calibrated confidence score."))}</p>`;
+  }
+
+  async function loadDashboardReliability(gen) {
+    const target = document.getElementById("dashboard-reliability");
+    if (!target) return;
+    try {
+      const rows = await api("/dashboard/reliability");
+      if (!stale(gen) && target.isConnected) target.innerHTML = dashboardReliability(rows);
+    } catch (err) {
+      if (!stale(gen) && target.isConnected) target.textContent = err.message;
+    }
   }
 
   function renderDashboard() { return renderWorkspace(true); }
@@ -486,7 +548,7 @@
     layout(`<div class="empty">${esc(UI.translate("Loading projects…"))}</div>`);
     let projects = [], organization = { groups: [], assignments: {} }, snapshot = { tasks: [], open_count: 0 };
     try {
-      if (isDashboard) [projects, snapshot] = await Promise.all([api("/projects"), api("/dashboard")]);
+      if (isDashboard) [projects, snapshot] = await Promise.all([api("/projects"), api(`/dashboard?usage_window=${dashboardUsageWindow}`)]);
       else [projects, organization] = await Promise.all([api("/projects"), api("/project-groups")]);
     } catch (err) {
       if (!stale(gen)) errorView(err);
@@ -567,10 +629,15 @@
         </section>
       </div>
       <section class="dashboard-panel dashboard-usage">
-        <div class="dashboard-panel-head"><div><span class="dashboard-panel-kicker">03 / ${esc(UI.translate("TOKEN TELEMETRY"))}</span><h2>${esc(UI.translate("Token usage and plan limits"))}</h2><p>${esc(UI.translate("Account activity and this workspace's CLI records use different scopes."))}</p></div></div>
+        <div class="dashboard-panel-head"><div><h2>${esc(UI.translate("Usage and remaining allowance"))}</h2><p>${esc(UI.translate("Plan windows come from the account; the time filter applies to workspace CLI records and available daily history."))}</p></div><div class="usage-window-picker" role="group" aria-label="${esc(UI.translate("Workspace CLI period"))}">${USAGE_WINDOWS.map((window) => `<button class="usage-window-button ${dashboardUsageWindow === window ? "active" : ""}" data-usage-window="${window}" aria-pressed="${dashboardUsageWindow === window}">${esc(UI.translate(window))}</button>`).join("")}</div></div>
+        <p class="quota-refresh-note">${esc(UI.translate("This page checks every five minutes. Claude limits update when Claude Code receives a response."))}</p>
         <div id="dashboard-account-usage" class="dashboard-account-usage">${esc(UI.translate("Loading account usage…"))}</div>
-        <div class="dashboard-usage-subhead">${esc(UI.translate("This workspace · CLI runs"))}</div>
-        ${dashboardUsagePanel(snapshot.usage)}
+        <div class="dashboard-usage-subhead">${esc(UI.translate("This workspace · CLI runs"))} · ${esc(UI.translate(dashboardUsageWindow))}</div>
+        <div id="dashboard-cli-usage">${dashboardUsagePanel(snapshot.usage)}</div>
+      </section>
+      <section class="dashboard-panel dashboard-outcomes">
+        <div class="dashboard-panel-head"><div><h2>${esc(UI.translate("Evidence and agent reliability"))}</h2><p>${esc(UI.translate("Verified task outcomes grouped by agent and role. Open a task to inspect the evidence behind a score."))}</p></div></div>
+        <div id="dashboard-reliability">${esc(UI.translate("Loading…"))}</div>
       </section>
       <div class="dashboard-grid dashboard-operations">
         <section class="dashboard-panel dashboard-panel-wide">
@@ -602,7 +669,23 @@
     layout(isDashboard ? dashboardHtml : projectsHtml);
     if (isDashboard) {
       loadDashboardAccountUsage(gen);
-      watchForChanges(gen, () => Promise.all([api("/projects"), api("/dashboard")]), renderDashboard);
+      loadDashboardReliability(gen);
+      document.querySelectorAll("[data-usage-window]").forEach((button) => button.addEventListener("click", () => {
+        dashboardUsageWindow = button.dataset.usageWindow;
+        try { localStorage.setItem("ccc_usage_window", dashboardUsageWindow); } catch (e) {}
+        renderDashboard();
+      }));
+      trackTimer(setInterval(async () => {
+        if (stale(gen)) return;
+        loadDashboardAccountUsage(gen, true);
+        loadDashboardReliability(gen);
+        try {
+          const fresh = await api(`/dashboard?usage_window=${dashboardUsageWindow}`);
+          const target = document.getElementById("dashboard-cli-usage");
+          if (!stale(gen) && target) target.innerHTML = dashboardUsagePanel(fresh.usage);
+        } catch (e) {}
+      }, 300000));
+      watchForChanges(gen, () => Promise.all([api("/projects"), api(`/dashboard?usage_window=${dashboardUsageWindow}`)]), renderDashboard);
       return;
     }
     document.getElementById("btn-add").addEventListener("click", openAddProjectModal);
@@ -1028,13 +1111,24 @@
     return `${esc(UI.translate(label))} · <span class="mono">${esc(deps.manifest || "")}</span>${deps.reason ? ` · ${esc(deps.reason)}` : ""}`;
   }
 
+  function evaluationReport(row) {
+    const score = row.quality_score === null ? "—" : `${row.quality_score}/100`;
+    const coverage = Math.round((row.evidence_coverage || 0) * 100);
+    const sub = row.scoring_details?.sub_scores || {};
+    const dims = Object.entries(row.scoring_details?.weights || {}).map(([name]) => `<span>${esc(UI.translate(name))}: <strong>${sub[name] === null || sub[name] === undefined ? "—" : Math.round(sub[name])}</strong></span>`).join("");
+    return `<article class="evaluation-report"><div class="evaluation-report-top"><div><strong>${esc(row.role)} · ${esc(row.agent)}</strong><small>${esc(row.evaluation_timestamp)} · v${esc(row.version)} · ${esc(row.trigger)}</small></div><span class="pill ${row.task_status === "PASSED" ? "positive" : row.task_status === "FAILED" ? "negative" : "warning"}">${esc(UI.translate(row.task_status))}</span></div><div class="evaluation-measures"><span><strong class="num">${esc(score)}</strong>${esc(UI.translate("Quality from available signals"))}</span><span><strong class="num">${coverage}%</strong>${esc(UI.translate("Evidence coverage"))}</span></div><div class="evaluation-dimensions">${dims}</div><details><summary>${esc(UI.translate("Evidence and disagreements"))} · ${esc((row.evidence || []).length)} / ${esc((row.disagreements || []).length)}</summary><pre class="mono">${esc(JSON.stringify({ evidence: row.evidence, disagreements: row.disagreements, features: row.scoring_details?.features }, null, 2))}</pre></details><button class="btn small" data-reevaluate="${esc(row.source_execution_id)}">${esc(UI.translate("Re-evaluate execution"))}</button></article>`;
+  }
+
   async function renderTaskDetail() {
     const gen = renderGen;
     const route = parseRoute();
     const id = route.project, taskId = route.sub;
     layout(`<div class="empty">Loading…</div>`);
-    let status;
-    try { status = await api(`/projects/${encodeURIComponent(id)}/tasks/${encodeURIComponent(taskId)}`); }
+    let status, settings, evaluations;
+    const taskBase = `/projects/${encodeURIComponent(id)}/tasks/${encodeURIComponent(taskId)}`;
+    try { [status, settings, evaluations] = await Promise.all([
+      api(taskBase), api(`/projects/${encodeURIComponent(id)}/settings`), api(`${taskBase}/evaluations`),
+    ]); }
     catch (err) { if (!stale(gen)) errorView(err); return; }
     if (stale(gen)) return;
     const brief = status.brief || {};
@@ -1071,6 +1165,10 @@
         <div class="t" style="font-weight:500; margin-bottom:8px">Requirement</div>
         <div class="muted">${esc(status.requirement || "—")}</div>
       </div>
+      <section class="section evaluation-section">
+        <div class="evaluation-section-head"><div><h2>${esc(UI.translate("Evaluation and evidence"))}</h2><p>${esc(UI.translate("Rule-based signals from saved reports, diffs, host tests and lint. Scores never change the task state."))}</p></div>${settings.editable?.evaluation_engine?.enabled ? `<button class="btn primary" id="task-evaluate">${esc(UI.translate("Evaluate latest executions"))}</button>` : `<button class="btn" id="task-enable-evaluation">${esc(UI.translate("Enable evaluation"))}</button>`}</div>
+        ${evaluations.length ? `<div class="evaluation-list">${evaluations.slice().reverse().map(evaluationReport).join("")}</div>` : `<div class="dashboard-empty">${esc(UI.translate("No evaluations for this task yet."))}</div>`}
+      </section>
       <div class="section">
         <div class="tabs" role="tablist">
           <button class="tab active" data-tab="usage" role="tab" aria-selected="true">Usage &amp; CLI evidence</button>
@@ -1079,6 +1177,24 @@
         <div id="task-tab-body"><div class="empty">Loading…</div></div>
       </div>
     `);
+    document.getElementById("task-enable-evaluation")?.addEventListener("click", async () => {
+      try {
+        await api(`/projects/${encodeURIComponent(id)}/config/evaluation-engine`, { method: "POST", body: { enabled: true, auto_evaluate: settings.editable?.evaluation_engine?.auto_evaluate || false } });
+        toast("Evaluation enabled."); renderTaskDetail();
+      } catch (err) { toast(err.message, true); }
+    });
+    document.getElementById("task-evaluate")?.addEventListener("click", async () => {
+      try {
+        const reports = await api(`${taskBase}/evaluate`, { method: "POST", body: {} });
+        toast(reports.length ? "Evaluations saved." : "Latest executions were already evaluated."); renderTaskDetail();
+      } catch (err) { toast(err.message, true); }
+    });
+    document.querySelectorAll("[data-reevaluate]").forEach((button) => button.addEventListener("click", async () => {
+      try {
+        await api(`${taskBase}/reevaluate`, { method: "POST", body: { execution_id: button.dataset.reevaluate } });
+        toast("New evaluation version saved."); renderTaskDetail();
+      } catch (err) { toast(err.message, true); }
+    }));
     const tabCache = {};
     const tabBody = document.getElementById("task-tab-body");
     async function loadTab(name) {
@@ -1134,6 +1250,8 @@
     `).join("");
     const mm = overview.editable.meeting_mode || {};
     const ee = overview.editable.evaluation_engine || {};
+    const scoringRoles = ["SA", "SD/RD", "REVIEW"];
+    const scoreWeightRows = scoringRoles.map((role) => `<fieldset class="score-weight-role"><legend>${esc(role)}</legend>${Object.entries(overview.evaluation_weights?.[role] || {}).map(([dimension, weight]) => `<label>${esc(UI.translate(dimension))}<input type="number" min="0" max="100" step="0.1" data-score-role="${role}" data-score-dimension="${dimension}" value="${esc(Math.round(weight * 1000) / 10)}" /><span>%</span></label>`).join("")}</fieldset>`).join("");
     const runtime = overview.editable.runtime || {};
     layout(`
       <div class="title-row"><div><h1>Settings</h1><div class="sub">${esc(id)} · ${UI.translate("profile")}: ${esc(overview.profile)}</div></div></div>
@@ -1222,7 +1340,7 @@
       </div>
       <div class="section">
         <div class="section-row">
-          <div class="section-label"><div class="t">Evaluation Engine</div><div class="d">Evidence-weighted quality scoring of completed SA/SD/RD/REVIEW executions — rule-based, never a new LLM call. Never affects the task's own state; run it from ccc-mcp task evaluate.</div></div>
+          <div class="section-label"><div class="t">Evaluation Engine</div><div class="d">Score saved execution evidence without another model call. Open a task to evaluate, inspect, or re-evaluate it.</div></div>
           <div class="section-panel">
             <div class="checkbox-row">
               <input type="checkbox" id="ee-enabled" ${ee.enabled ? "checked" : ""} />
@@ -1232,6 +1350,7 @@
               <input type="checkbox" id="ee-auto" ${ee.auto_evaluate ? "checked" : ""} />
               <label for="ee-auto" style="margin:0">Auto-evaluate after every successful role execution</label>
             </div>
+            <details class="score-settings"><summary>${esc(UI.translate("Advanced scoring settings"))}</summary><p>${esc(UI.translate("Weights within each role must total 100%. These affect new evaluation versions only."))}</p>${scoreWeightRows}</details>
             <button class="btn small" id="save-evaluation-engine">Save</button>
           </div>
         </div>
@@ -1333,8 +1452,19 @@
       const enabled = document.getElementById("ee-enabled").checked;
       const autoEvaluate = document.getElementById("ee-auto").checked;
       try {
+        const weights = {};
+        for (const role of scoringRoles) {
+          weights[role] = {};
+          document.querySelectorAll(`[data-score-role="${role}"]`).forEach((field) => {
+            weights[role][field.dataset.scoreDimension] = Number(field.value) / 100;
+          });
+          const total = Object.values(weights[role]).reduce((sum, value) => sum + value, 0);
+          if (Object.values(weights[role]).some((value) => !Number.isFinite(value) || value < 0) || Math.abs(total - 1) > 0.01) throw new Error(`${role}: ${UI.translate("weights must total 100%")}`);
+        }
+        weights.SD = weights["SD/RD"];
+        weights.RD = weights["SD/RD"];
         await api(`/projects/${encodeURIComponent(id)}/config/evaluation-engine`, {
-          method: "POST", body: { enabled, auto_evaluate: autoEvaluate },
+          method: "POST", body: { enabled, auto_evaluate: autoEvaluate, weights },
         });
         toast("Evaluation Engine settings saved.");
       } catch (err) { toast(err.message, true); }

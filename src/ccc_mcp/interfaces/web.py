@@ -44,6 +44,8 @@ from ..adapters.tunnel_client import (
     tunnel_client_path,
 )
 from ..adapters.ui_groups import change_project_groups, project_groups
+from ..evaluation_engine.config import validated_role_weights
+from ..infra.claude_usage import disable_claude_usage, enable_claude_usage, read_claude_usage
 from ..infra.codex_account import read_account_usage
 from ..infra.errors import BridgeError
 from ..service import CCCMCP
@@ -197,12 +199,30 @@ async def list_projects(request: Request):
 
 @endpoint
 async def dashboard(request: Request):
-    return JSONResponse(await run(bridge_of(request).dashboard_snapshot))
+    return JSONResponse(await run(
+        bridge_of(request).dashboard_snapshot,
+        request.query_params.get("usage_window", "1d"),
+    ))
 
 
 @endpoint
 async def dashboard_account_usage(request: Request):
     return JSONResponse(await read_account_usage())
+
+
+@endpoint
+async def dashboard_claude_usage(request: Request):
+    return JSONResponse(await run(read_claude_usage, bridge_of(request).home))
+
+
+@endpoint
+async def dashboard_claude_usage_enable(request: Request):
+    return JSONResponse(await run(enable_claude_usage, bridge_of(request).home))
+
+
+@endpoint
+async def dashboard_claude_usage_disable(request: Request):
+    return JSONResponse(await run(disable_claude_usage, bridge_of(request).home))
 
 
 @endpoint
@@ -390,6 +410,9 @@ async def clear_history(request: Request):
 async def get_settings(request: Request):
     bridge = bridge_of(request)
     result = await run(bridge.provider_overview, request.path_params["project_id"])
+    result["evaluation_weights"] = validated_role_weights(
+        result["editable"].get("evaluation_engine", {}).get("weights")
+    )
     return JSONResponse(result)
 
 
@@ -484,6 +507,8 @@ async def set_evaluation_engine(request: Request):
         request.path_params["project_id"],
         body.get("enabled"),
         body.get("auto_evaluate"),
+        body.get("weights"),
+        body.get("low_sample_threshold"),
     )
     return JSONResponse(result)
 
@@ -523,6 +548,46 @@ async def task_usage(request: Request):
         bridge.get_task_usage, request.path_params["project_id"], request.path_params["task_id"]
     )
     return JSONResponse(result)
+
+
+@endpoint
+async def task_evaluations(request: Request):
+    bridge = bridge_of(request)
+    return JSONResponse(await run(
+        bridge.get_task_evaluations,
+        request.path_params["project_id"], request.path_params["task_id"],
+    ))
+
+
+@endpoint
+async def task_evaluate(request: Request):
+    bridge = bridge_of(request)
+    body = await _body(request)
+    return JSONResponse(await run(
+        bridge.evaluate_task,
+        request.path_params["project_id"], request.path_params["task_id"],
+        body.get("role"), body.get("task_type", "general"), body.get("force", False),
+    ))
+
+
+@endpoint
+async def task_reevaluate(request: Request):
+    bridge = bridge_of(request)
+    body = await _body(request)
+    execution_id = body.get("execution_id")
+    if not isinstance(execution_id, str) or not execution_id:
+        raise BridgeError("execution_id is required")
+    return JSONResponse(await run(
+        bridge.reevaluate_execution,
+        request.path_params["project_id"], request.path_params["task_id"],
+        execution_id, body.get("task_type", "general"),
+    ))
+
+
+@endpoint
+async def agent_reliability(request: Request):
+    bridge = bridge_of(request)
+    return JSONResponse(await run(bridge.get_agent_reliability))
 
 
 @endpoint
@@ -922,6 +987,10 @@ ROUTES = [
     Route("/api/projects", list_projects, methods=["GET"]),
     Route("/api/dashboard", dashboard, methods=["GET"]),
     Route("/api/dashboard/account-usage", dashboard_account_usage, methods=["GET"]),
+    Route("/api/dashboard/claude-usage", dashboard_claude_usage, methods=["GET"]),
+    Route("/api/dashboard/claude-usage/enable", dashboard_claude_usage_enable, methods=["POST"]),
+    Route("/api/dashboard/claude-usage/disable", dashboard_claude_usage_disable, methods=["POST"]),
+    Route("/api/dashboard/reliability", agent_reliability, methods=["GET"]),
     Route("/api/project-groups", get_project_groups, methods=["GET"]),
     Route("/api/project-groups", update_project_groups, methods=["POST"]),
     Route("/api/projects/add", add_project, methods=["POST"]),
@@ -968,6 +1037,9 @@ ROUTES = [
     Route("/api/projects/{project_id}/tasks/{task_id}", task_status, methods=["GET"]),
     Route("/api/projects/{project_id}/tasks/{task_id}/result", task_result, methods=["GET"]),
     Route("/api/projects/{project_id}/tasks/{task_id}/usage", task_usage, methods=["GET"]),
+    Route("/api/projects/{project_id}/tasks/{task_id}/evaluations", task_evaluations, methods=["GET"]),
+    Route("/api/projects/{project_id}/tasks/{task_id}/evaluate", task_evaluate, methods=["POST"]),
+    Route("/api/projects/{project_id}/tasks/{task_id}/reevaluate", task_reevaluate, methods=["POST"]),
     Route("/api/projects/{project_id}/tasks/{task_id}/approvals", task_approvals, methods=["GET"]),
     Route("/api/projects/{project_id}/tasks/{task_id}/meeting", task_meeting, methods=["GET"]),
     Route("/api/projects/{project_id}/tasks/{task_id}/handoff", task_handoff, methods=["GET"]),

@@ -57,7 +57,7 @@ class EvaluationHub:
         """Global across every project on this home (see evaluation_service.get_reliability)."""
         return evaluation_service.get_reliability(self, agent=agent, role=role, task_type=task_type)
 
-    def maybe_auto_evaluate(self, execution_id):
+    def maybe_auto_evaluate(self, execution_id, after_tests=False):
         """Call once, right after finish_execution returns for ANY execution (worker.py,
         alongside advance_meeting_clarification/advance_score_round) — a no-op unless
         evaluation_engine.auto_evaluate is on for this project. Never lets an evaluation
@@ -76,7 +76,15 @@ class EvaluationHub:
             return
         if not settings["enabled"] or not settings["auto_evaluate"]:
             return
+        if row["role"] in {"SD", "RD", "SD/RD"} and not after_tests:
+            # Implementation tests are run at the following PM handoff. Do not
+            # attach a previous round's test result to this execution.
+            return
         try:
+            if self.store.one(
+                "SELECT 1 FROM evaluations WHERE source_execution_id=?", (execution_id,)
+            ):
+                return
             evaluation_service.evaluate_execution(
                 self, row["project_id"], row["task_id"], execution_id,
                 task_type="general", trigger="auto",

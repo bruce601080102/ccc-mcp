@@ -674,7 +674,9 @@ class ConfigurationHub:
             settings["meeting_mode"] = self._validated_meeting_mode(updated)
             return self._save_settings(project_id, settings)
 
-    def configure_evaluation_engine(self, project_id, enabled, auto_evaluate=None):
+    def configure_evaluation_engine(
+        self, project_id, enabled, auto_evaluate=None, weights=None, low_sample_threshold=None
+    ):
         """Default off (both enabled and auto_evaluate); omitted auto_evaluate keeps
         whatever is already configured, mirroring configure_meeting_mode."""
         with self.lock(project_id):
@@ -685,6 +687,10 @@ class ConfigurationHub:
                 "enabled": enabled,
                 "auto_evaluate": current["auto_evaluate"] if auto_evaluate is None else auto_evaluate,
             }
+            if weights is not None:
+                updated["weights"] = weights
+            if low_sample_threshold is not None:
+                updated["low_sample_threshold"] = low_sample_threshold
             settings["evaluation_engine"] = validated_evaluation_engine(updated)
             return self._save_settings(project_id, settings)
 

@@ -174,12 +174,12 @@ CREATE TRIGGER IF NOT EXISTS evaluations_no_update BEFORE UPDATE ON evaluations
  BEGIN SELECT RAISE(ABORT, 'Evaluation history is immutable; re-evaluate to add a new version'); END;
 CREATE TRIGGER IF NOT EXISTS evaluations_no_delete BEFORE DELETE ON evaluations
  BEGIN SELECT RAISE(ABORT, 'Evaluation history is immutable'); END;
--- Agent reliability ledger (evaluation_engine/reputation_tracker.py): one row per
--- execution ever counted toward a Beta-Bernoulli reliability estimate.
+-- Agent reliability audit ledger (evaluation_engine/reputation_tracker.py): one row
+-- for the first verified outcome of each execution. The displayed estimate uses
+-- each execution's latest evaluation version so a later correction takes effect.
 -- source_execution_id is UNIQUE so re-evaluating the same execution (a new
--- `evaluations` version) can never double-count it — reliability is always derived as
--- COUNT(*) grouped by outcome over this table, never a mutable running total, the same
--- pattern meeting_clarifications' rounds_used already uses.
+-- `evaluations` version) can never double-count its first outcome. Neither this ledger
+-- nor the versioned evaluations store a mutable running total.
 CREATE TABLE IF NOT EXISTS reputation_events (
  id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
  task_id TEXT NOT NULL, role TEXT NOT NULL, agent TEXT NOT NULL, model TEXT,

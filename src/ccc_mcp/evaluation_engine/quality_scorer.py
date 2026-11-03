@@ -21,7 +21,7 @@ concerns, since "write code"/"security" don't apply to a read-only role:
 from .models import INSUFFICIENT_EVIDENCE, NEEDS_VERIFICATION, PASSED, TASK_FAILED
 
 IMPLEMENTATION_ROLES = {"SD", "RD", "SD/RD"}
-_EVIDENCE_COVERAGE_FLOOR = 0.34
+_EVIDENCE_COVERAGE_FLOOR = 0.60
 
 
 def _clamp(value):
@@ -66,8 +66,8 @@ def _review_score(role, features):
         verified = features["verified_review_findings"]
         false = features["false_review_findings"]
         if verified + false == 0:
-            needs_revision = features["review_needs_revision"]
-            return 100.0 if needs_revision is False else None
+            # An empty finding list cannot establish review precision.
+            return None
         return _clamp(100 * verified / (verified + false))
     needs_revision = features["review_needs_revision"]
     if needs_revision is None:

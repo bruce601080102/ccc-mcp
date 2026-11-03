@@ -14,3 +14,4 @@ dist/
 npm
 /Recording_*.mp4
 /docs/assets/source/
+.DS_Store

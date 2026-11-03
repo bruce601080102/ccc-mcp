@@ -98,10 +98,6 @@ def detect(bundle):
         touched_later = set()
         for later_diff in bundle.get("later_diffs", []):
             touched_later |= set(diffs.touched_files(later_diff))
-        host_ultimately_passed = bool(
-            (bundle.get("test_result") or {}).get("executed_by_host")
-            and (bundle.get("test_result") or {}).get("passed")
-        )
         for finding in review_report["findings"]:
             paths = _review_finding_paths(finding)
             if not paths:
@@ -118,21 +114,22 @@ def detect(bundle):
                         resolution_status=CONFIRMED,
                     )
                 )
-            elif host_ultimately_passed:
-                review_tally["false"] += 1
+            else:
+                # A passing test suite cannot disprove a finding about a path it
+                # may never exercise. Keep this unresolved rather than lowering
+                # REVIEW's precision from absence of a later edit.
+                review_tally["needs_verification"] += 1
                 disagreements.append(
                     disagreement(
-                        kind="review_finding_unaddressed",
+                        kind="review_finding_unresolved",
                         description=(
                             f"REVIEW finding {finding!r} was never touched by a later round, "
-                            "and the task still passed host tests."
+                            "so its correctness remains unverified."
                         ),
                         roles=["REVIEW"],
-                        evidence_refs=["CHANGES.diff", "TEST-RESULT.md"],
+                        evidence_refs=["CHANGES.diff"],
                         resolution_status=NEEDS_VERIFICATION,
                     )
                 )
-            else:
-                review_tally["needs_verification"] += 1
 
     return {"disagreements": disagreements, "review_tally": review_tally}
