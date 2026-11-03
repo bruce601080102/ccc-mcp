@@ -445,7 +445,7 @@
     const claudeState = claudeUsage?.backend_outdated
       ? `<div class="quota-unavailable"><strong>${esc(UI.translate("Console restart required"))}</strong><span>${esc(UI.translate("This page has newer Claude controls than the running ccc-mcp server. Restart ccc-mcp ui and open its new URL."))}</span></div>`
       : claudeUsage?.enabled
-      ? `${claudeWindows || `<div class="quota-unavailable"><strong>${esc(UI.translate("Waiting for Claude usage"))}</strong><span>${esc(UI.translate("Open Claude Code in a terminal with your subscription. The status line supplies limits after its first response; then click Check now."))}</span></div>`}
+      ? `${claudeWindows || `<div class="quota-unavailable"><strong>${esc(UI.translate("Waiting for Claude usage"))}</strong><span>${esc(UI.translate("Run claude yourself in a terminal, not through ccc-mcp dispatch, which skips your settings file. After its first reply, click Check now."))}</span></div>`}
          ${claudeUpdated ? `<p class="quota-source ${claudeUsage.stale ? "stale" : ""}">${esc(UI.translate(claudeUsage.stale ? "Last observed · may be stale" : "Observed from Claude Code"))}: ${esc(claudeUpdated)}</p>` : ""}
          <div class="quota-actions"><button class="btn small ghost" data-claude-usage-action="refresh">${esc(UI.translate("Check now"))}</button><button class="btn small ghost" data-claude-usage-action="disable">${esc(UI.translate("Disable Claude quota sync"))}</button></div>`
       : `<div class="quota-unavailable"><strong>${esc(UI.translate("Claude quota sync is off"))}</strong><span>${esc(UI.translate("Read official 5-hour and 7-day plan limits from Claude Code's status line. No credentials or prompts are collected."))}</span></div>
@@ -1238,20 +1238,60 @@
     if (stale(gen)) return;
     const roles = overview.editable.roles || {};
     const providers = Object.keys(overview.available_providers || {});
-    const roleRows = Object.keys(roles).map((role) => `
-      <div class="kv-row">
-        <span class="k">${esc(role)}</span>
-        <span class="v">
-          <select data-role="${esc(role)}" class="role-select">
-            ${providers.map((p) => `<option value="${esc(p)}" ${roles[role].provider === p ? "selected" : ""}>${esc(p)}</option>`).join("")}
-          </select>
-        </span>
-      </div>
-    `).join("");
+    const effortOptions = (provider, current) => {
+      const list = overview.available_providers?.[provider] || [];
+      return `<option value="">${esc(UI.translate("CLI default"))}</option>` +
+        list.map((e) => `<option value="${esc(e)}" ${current === e ? "selected" : ""}>${esc(e)}</option>`).join("");
+    };
+    const roleRows = Object.keys(roles).map((role) => {
+      const cfg = roles[role] || {};
+      const isChatgpt = cfg.provider === "chatgpt";
+      return `<div class="role-config-row" data-role="${esc(role)}">
+        <div class="role-config-title" data-no-i18n>${esc(role)}</div>
+        <div class="role-config-fields">
+          <div class="field"><label>${esc(UI.translate("Provider"))}</label><select class="role-field" data-field="provider">${providers.map((p) => `<option value="${esc(p)}" ${cfg.provider === p ? "selected" : ""}>${esc(p)}</option>`).join("")}</select></div>
+          <div class="field"><label>${esc(UI.translate("Model"))}</label><input type="text" class="role-field" data-field="model" value="${esc(cfg.model || "")}" placeholder="${esc(UI.translate("CLI default"))}" ${isChatgpt ? "disabled" : ""} /></div>
+          <div class="field"><label>${esc(UI.translate("Effort"))}</label><select class="role-field" data-field="effort" ${isChatgpt ? "disabled" : ""}>${effortOptions(cfg.provider, cfg.effort)}</select></div>
+          <div class="field"><label>${esc(UI.translate("Quota fallback"))}</label><select class="role-field" data-field="quota_fallback"><option value="" ${!cfg.quota_fallback ? "selected" : ""}>${esc(UI.translate("None"))}</option>${providers.map((p) => `<option value="${esc(p)}" ${cfg.quota_fallback === p ? "selected" : ""}>${esc(p)}</option>`).join("")}</select></div>
+        </div>
+      </div>`;
+    }).join("");
     const mm = overview.editable.meeting_mode || {};
     const ee = overview.editable.evaluation_engine || {};
     const scoringRoles = ["SA", "SD/RD", "REVIEW"];
-    const scoreWeightRows = scoringRoles.map((role) => `<fieldset class="score-weight-role"><legend>${esc(role)}</legend>${Object.entries(overview.evaluation_weights?.[role] || {}).map(([dimension, weight]) => `<label>${esc(UI.translate(dimension))}<input type="number" min="0" max="100" step="0.1" data-score-role="${role}" data-score-dimension="${dimension}" value="${esc(Math.round(weight * 1000) / 10)}" /><span>%</span></label>`).join("")}</fieldset>`).join("");
+    const DIMENSION_HELP = {
+      test: "Whether the host actually ran the tests, and whether they passed.",
+      requirement: "How closely the code changes match the plan SA approved.",
+      code_quality: "Issues found by static analysis (ruff) in the changed code.",
+      security: "Security issues found in the changed code.",
+      review: "Findings and disagreements from cross-role review.",
+    };
+    const scoreDimensionLegend = `<div class="score-dimension-legend"><div class="t">${esc(UI.translate("What each dimension means"))}</div>${Object.entries(DIMENSION_HELP).map(([dimension, help]) => `<div class="score-dimension-legend-row"><span class="score-weight-dot" style="background:var(--dim-${dimension})"></span><strong>${esc(UI.translate(dimension))}</strong><span>${esc(UI.translate(help))}</span></div>`).join("")}</div>`;
+    const SCORE_PRESETS = {
+      "SA": {
+        default: { requirement: 0.70, review: 0.30 },
+        review: { requirement: 0.40, review: 0.60 },
+      },
+      "SD/RD": {
+        default: { test: 0.40, requirement: 0.25, code_quality: 0.15, security: 0.10, review: 0.10 },
+        test: { test: 0.60, requirement: 0.15, code_quality: 0.10, security: 0.05, review: 0.10 },
+        security: { test: 0.30, requirement: 0.15, code_quality: 0.15, security: 0.35, review: 0.05 },
+      },
+      "REVIEW": {
+        default: { test: 0.40, requirement: 0.30, review: 0.30 },
+        test: { test: 0.60, requirement: 0.20, review: 0.20 },
+        review: { test: 0.25, requirement: 0.25, review: 0.50 },
+      },
+    };
+    const SCORE_PRESET_LABELS = { default: "Default", test: "Test-focused", security: "Security-focused", review: "Review-focused" };
+    const scoreWeightRows = scoringRoles.map((role) => {
+      const entries = Object.entries(overview.evaluation_weights?.[role] || {});
+      const pct = (weight) => Math.round(weight * 100);
+      const bar = entries.map(([dimension, weight]) => `<span class="seg" style="width:${pct(weight)}%;background:var(--dim-${dimension})" title="${esc(UI.translate(dimension))} ${pct(weight)}%"></span>`).join("");
+      const rows = entries.map(([dimension, weight]) => `<div class="score-weight-row"><span class="score-weight-dot" style="background:var(--dim-${dimension})"></span><span class="score-weight-label">${esc(UI.translate(dimension))}</span><input type="range" min="0" max="100" step="1" class="score-weight-slider" style="accent-color:var(--dim-${dimension})" data-score-role="${role}" data-score-dimension="${dimension}" value="${pct(weight)}" aria-label="${esc(UI.translate(dimension))} ${esc(role)}" /><output class="score-weight-value">${pct(weight)}%</output></div>`).join("");
+      const presets = Object.keys(SCORE_PRESETS[role] || {}).map((presetId) => `<button type="button" class="btn small ghost" data-score-preset-role="${role}" data-score-preset="${presetId}">${esc(UI.translate(SCORE_PRESET_LABELS[presetId]))}</button>`).join("");
+      return `<div class="score-weight-role"><div class="score-weight-role-head"><div class="score-weight-role-title" data-no-i18n>${esc(role)}</div><div class="score-weight-presets">${presets}</div></div><div class="score-weight-bar" data-role="${esc(role)}">${bar}</div><div class="score-weight-sliders">${rows}</div></div>`;
+    }).join("");
     const runtime = overview.editable.runtime || {};
     layout(`
       <div class="title-row"><div><h1>Settings</h1><div class="sub">${esc(id)} · ${UI.translate("profile")}: ${esc(overview.profile)}</div></div></div>
@@ -1266,7 +1306,7 @@
       </div>
       <div class="section">
         <div class="section-row">
-          <div class="section-label"><div class="t">Roles</div><div class="d">Provider assigned to each workflow role.</div></div>
+          <div class="section-label"><div class="t">Roles</div><div class="d">Provider, model, effort and quota fallback for each workflow role.</div></div>
           <div class="section-panel">${roleRows}</div>
         </div>
       </div>
@@ -1350,21 +1390,45 @@
               <input type="checkbox" id="ee-auto" ${ee.auto_evaluate ? "checked" : ""} />
               <label for="ee-auto" style="margin:0">Auto-evaluate after every successful role execution</label>
             </div>
-            <details class="score-settings"><summary>${esc(UI.translate("Advanced scoring settings"))}</summary><p>${esc(UI.translate("Weights within each role must total 100%. These affect new evaluation versions only."))}</p>${scoreWeightRows}</details>
+            <details class="score-settings"><summary>${esc(UI.translate("Advanced scoring settings"))}</summary><p>${esc(UI.translate("Not sure? Pick a preset below each role. Want to fine-tune instead? Drag a slider - the others adjust automatically so each role always totals 100%. Changes only affect new evaluation versions."))}</p>${scoreDimensionLegend}${scoreWeightRows}</details>
             <button class="btn small" id="save-evaluation-engine">Save</button>
           </div>
         </div>
       </div>
     `, { narrow: true });
-    document.querySelectorAll(".role-select").forEach((sel) => {
-      sel.addEventListener("change", async () => {
+    document.querySelectorAll(".role-config-row").forEach((row) => {
+      const role = row.dataset.role;
+      const providerSel = row.querySelector('[data-field="provider"]');
+      const modelInput = row.querySelector('[data-field="model"]');
+      const effortSel = row.querySelector('[data-field="effort"]');
+      const fallbackSel = row.querySelector('[data-field="quota_fallback"]');
+      const save = async () => {
         try {
           await api(`/projects/${encodeURIComponent(id)}/config/role`, {
-            method: "POST", body: { role: sel.dataset.role, provider: sel.value },
+            method: "POST",
+            body: {
+              role,
+              provider: providerSel.value,
+              model: modelInput.value.trim() || null,
+              effort: effortSel.value || null,
+              quota_fallback: fallbackSel.value || null,
+            },
           });
           toast("Role updated.");
         } catch (err) { toast(err.message, true); }
+      };
+      providerSel.addEventListener("change", () => {
+        const isChatgpt = providerSel.value === "chatgpt";
+        modelInput.disabled = isChatgpt;
+        effortSel.disabled = isChatgpt;
+        if (isChatgpt) modelInput.value = "";
+        const list = overview.available_providers?.[providerSel.value] || [];
+        const keep = list.includes(effortSel.value) ? effortSel.value : "";
+        effortSel.innerHTML = `<option value="">${esc(UI.translate("CLI default"))}</option>` +
+          list.map((e) => `<option value="${esc(e)}" ${keep === e ? "selected" : ""}>${esc(e)}</option>`).join("");
+        save();
       });
+      [modelInput, effortSel, fallbackSel].forEach((el) => el.addEventListener("change", save));
     });
     document.querySelectorAll("[data-profile]").forEach((btn) => {
       btn.addEventListener("click", async () => {
@@ -1447,6 +1511,35 @@
         });
         toast("Meeting Mode saved.");
       } catch (err) { toast(err.message, true); }
+    });
+    scoringRoles.forEach((role) => {
+      const sliders = Array.from(document.querySelectorAll(`.score-weight-slider[data-score-role="${role}"]`));
+      const bar = document.querySelector(`.score-weight-bar[data-role="${role}"]`);
+      const syncVisuals = () => {
+        sliders.forEach((slider) => { slider.nextElementSibling.textContent = `${slider.value}%`; });
+        if (bar) bar.querySelectorAll(".seg").forEach((seg, i) => { seg.style.width = `${sliders[i].value}%`; });
+      };
+      sliders.forEach((slider) => slider.addEventListener("input", () => {
+        const newValue = Math.max(0, Math.min(100, Number(slider.value)));
+        const others = sliders.filter((s) => s !== slider);
+        const oldOthersTotal = others.reduce((sum, s) => sum + Number(s.value), 0);
+        const remaining = 100 - newValue;
+        if (others.length) {
+          const shares = oldOthersTotal > 0
+            ? others.map((s) => Number(s.value) * remaining / oldOthersTotal)
+            : others.map(() => remaining / others.length);
+          const rounded = shares.map((v) => Math.round(v));
+          rounded[rounded.length - 1] += remaining - rounded.reduce((a, b) => a + b, 0);
+          others.forEach((s, i) => { s.value = Math.max(0, Math.min(100, rounded[i])); });
+        }
+        syncVisuals();
+      }));
+      document.querySelectorAll(`[data-score-preset-role="${role}"]`).forEach((button) => button.addEventListener("click", () => {
+        const weights = (SCORE_PRESETS[role] || {})[button.dataset.scorePreset];
+        if (!weights) return;
+        sliders.forEach((slider) => { slider.value = Math.round((weights[slider.dataset.scoreDimension] || 0) * 100); });
+        syncVisuals();
+      }));
     });
     document.getElementById("save-evaluation-engine").addEventListener("click", async () => {
       const enabled = document.getElementById("ee-enabled").checked;

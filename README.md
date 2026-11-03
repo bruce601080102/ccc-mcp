@@ -74,6 +74,19 @@ The UI runs on local `127.0.0.1` and stops with Ctrl+C. [See every console page]
 | **MCP servers and tools** | Discover local MCP servers, install one for a project, select which tools the project may use, and call them from ChatGPT. For example, `codebase-memory-mcp` can provide repository structure and code relationships. Skills guide the workflow; MCP tools supply live capabilities. |
 | **One local control center** | Manage projects, permissions, connections, global Skills, per-project MCP tools, tasks, and Context from `ccc-mcp ui`. The CLI remains available for scripts and advanced use. |
 
+## How execution evaluation works
+
+The evaluation engine (opt-in, off by default) scores a completed SA/SD/RD/REVIEW execution from evidence that is already saved — the host-run test result, the execution's diff, and `ruff` static analysis — **with no additional LLM call and no extra token cost**. It never asks an Agent whether its own work passed, and never treats one Agent's agreement with another as proof of correctness.
+
+Two numbers are reported separately, on purpose:
+
+- **`quality_score`** is the weighted average of only the sub-scores that actually have evidence behind them, using the role's configured weights (test/requirement/code-quality/security/review — editable per role, with one-click presets, in the web console's settings page).
+- **`evidence_coverage`** is the share of that role's weight budget those sub-scores actually cover. A `quality_score` of 100 with 70% coverage means "everything we could check looked perfect, but we could only check 70% of what this role is normally judged on" — not "100% confidence."
+
+A small set of hard rules decides `task_status` separately from the weighted score: a failing acceptance test, or a test suite that never ran, can never read as `PASSED`, no matter how high the weighted average is. A Beta-Bernoulli reputation tracker (`ccc-mcp reputation`) keeps per-agent/model/role/task-type reliability across every project, with wide, explicit uncertainty while sample sizes are small — never a confident number from too little data.
+
+See [Technical reference](docs/en/10-technical-reference.md#evaluation-engine) for the exact formulas and data model.
+
 ## Proof: three selected SWE-bench Verified cases
 
 Using **ChatGPT-only**, ccc-mcp resolved three selected [SWE-bench Verified](https://www.swebench.com/) Astropy instances after iterative repair. Each has a local run of the official evaluation harness reporting `resolved: true`:

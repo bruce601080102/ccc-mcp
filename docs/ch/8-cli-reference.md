@@ -79,6 +79,18 @@ ccc-mcp --project demo-app config role REVIEW chatgpt
 
 `config meeting-mode on|off [--min-rounds N] [--max-rounds N] [--escalation ask-user|auto-pm]` 開關[第 4 步](4-workflow.md#5a-meeting-modesdrd-動工前先問一輪預設關閉)描述的 SD/RD↔SA 澄清對話，預設關閉，`max_rounds` 硬上限 5，`--escalation` 預設為 `ask-user`。解決升級給 PM 的澄清沒有對應 CLI 指令（`resolve_clarification` 是給 PM／ChatGPT 呼叫的 MCP 工具）——跟 `advance_project`／`propose_context_patch`／`commit_context_patch` 一樣都沒有 CLI 版本。
 
+## 評估引擎指令
+
+```text
+ccc-mcp --project demo-app config evaluation-engine on|off [--auto-evaluate|--manual-only]
+ccc-mcp --project demo-app task evaluate [TASK_ID] [--role ROLE] [--task-type 標籤] [--force]
+ccc-mcp --project demo-app task evaluations [TASK_ID] [--role ROLE]
+ccc-mcp --project demo-app task reevaluate TASK_ID EXECUTION_ID [--task-type 標籤]
+ccc-mcp reputation [--agent PROVIDER] [--role ROLE] [--task-type 標籤]
+```
+
+`config evaluation-engine` 預設關閉；開啟後 `task evaluate` 會對這個任務每個角色最新一次成功執行做一次證據導向評分（純規則運算，不呼叫 LLM），已評過的執行預設會跳過，加 `--force` 才會強制重新評估（保留舊版本，不覆蓋）。`task evaluations` 是唯讀列表，含每次重新評估保留的舊版本。`task reevaluate` 強制重新評估一個指定的 `EXECUTION_ID`（用 `task evaluations` 查）。`reputation` 唯讀、跨所有專案，依 agent／模型／角色／任務類型統計 Beta-Bernoulli 可靠度，只計入已驗證的 `PASSED`／`FAILED`；樣本數太少時 `low_sample` 會是 `true`，`REVIEW` 角色另外附上 `review_precision`（`review_recall` 永遠是 `null`，因為沒有完整缺陷真值集合可以老實算出 Recall）。`quality_score`／`evidence_coverage` 的確切公式見[技術參考](10-technical-reference.md#評估引擎)。
+
 ## 現在輪到誰、下一步該貼什麼？
 
 只想快速看一眼時：
