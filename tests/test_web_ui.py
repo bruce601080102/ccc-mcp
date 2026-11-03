@@ -584,6 +584,15 @@ def test_config_endpoints_round_trip(tmp_path, client):
     assert settings["editable"]["meeting_mode"]["enabled"] is True
     assert settings["editable"]["meeting_mode"]["max_rounds"] == 2
 
+    resp = client.post(
+        "/api/projects/demo10/config/evaluation-engine",
+        json={"enabled": True, "auto_evaluate": True},
+    )
+    assert resp.status_code == 200
+    settings = client.get("/api/projects/demo10/settings").json()
+    assert settings["editable"]["evaluation_engine"]["enabled"] is True
+    assert settings["editable"]["evaluation_engine"]["auto_evaluate"] is True
+
 
 # --- Tasks (read-only) --------------------------------------------------------
 

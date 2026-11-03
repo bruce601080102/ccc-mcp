@@ -177,6 +177,7 @@ def test_provider_overview_separates_editable_from_read_only(bridge, human):
 
     assert set(overview["editable"]) == {
         "roles", "language", "test_command", "context_token_budget", "meeting_mode", "runtime",
+        "evaluation_engine",
     }
     assert overview["read_only_status"]["project_access"]["mode"] == "read-write"
     assert overview["available_providers"]["codex"]

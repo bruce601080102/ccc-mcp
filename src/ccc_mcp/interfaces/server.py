@@ -292,6 +292,25 @@ def create_server(
         return await call(bridge.get_task_usage, project_id, resolved)
 
     @server.tool(annotations=readonly)
+    async def get_task_evaluations(
+        project_id: str, task_id: str | None = None, role: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Read this task's Evaluation Engine reports (evidence-weighted quality_score,
+        task_status, disagreements) — including every kept re-evaluation version.
+        Never affects the task's own state; empty unless evaluate_task was called."""
+        resolved = task_id or await call(bridge.project_workstream_task, project_id)
+        return await call(bridge.get_task_evaluations, project_id, resolved, role)
+
+    @server.tool(annotations=readonly)
+    async def get_agent_reliability(
+        agent: str | None = None, role: str | None = None, task_type: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Read Beta-Bernoulli reliability across every project on this home, grouped by
+        agent/model/role/task_type — only ever from verified PASSED/FAILED evaluations.
+        low_sample is true when there isn't yet enough history to trust the number."""
+        return await call(bridge.get_agent_reliability, agent, role, task_type)
+
+    @server.tool(annotations=readonly)
     async def get_approval_status(project_id: str, task_id: str) -> list[dict[str, Any]]:
         """Read approval records; this tool cannot grant approval."""
         return await call(bridge.get_approval_status, project_id, task_id)
@@ -479,6 +498,31 @@ def create_server(
             result["meeting_mode_notice"] = result["workflow"]["meeting_mode_notice"]
             result["action_required"] = result["workflow"]["action_required"]
             return result
+
+        @server.tool(annotations=mutation)
+        async def evaluate_task(
+            project_id: str, task_id: str | None = None, role: str | None = None,
+            task_type: str = "general",
+        ) -> list[dict[str, Any]]:
+            """Score the latest successful execution of every role on this task from
+            already-durable evidence (rule-based arithmetic; never a new LLM call).
+            Requires evaluation_engine enabled (`ccc-mcp config evaluation-engine on`).
+            Skips a role already evaluated for its latest execution; use
+            reevaluate_execution to force a fresh version of one specific execution.
+            Never changes the task's own state — purely a side record."""
+            resolved = task_id or await call(bridge.project_workstream_task, project_id)
+            return await call(bridge.evaluate_task, project_id, resolved, role, task_type)
+
+        @server.tool(annotations=mutation)
+        async def reevaluate_execution(
+            project_id: str, task_id: str, execution_id: str, task_type: str = "general"
+        ) -> dict[str, Any]:
+            """Force a fresh Evaluation Engine pass over one specific execution — kept
+            as a new version, never overwriting the previous one. Find execution_id via
+            get_task_evaluations or get_task_result."""
+            return await call(
+                bridge.reevaluate_execution, project_id, task_id, execution_id, task_type
+            )
 
         @server.tool(annotations=mutation)
         async def create_managed_project(

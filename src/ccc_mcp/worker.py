@@ -182,6 +182,10 @@ def run_execution(bridge, execution_id):
             # auto_advance_low_risk; SA, failures, test problems, and requests for a
             # decision remain pending for PM review.
             bridge.auto_advance_low_risk(execution_id)
+            # Outside finish_execution's own lock too; a no-op unless the project opted
+            # into evaluation_engine.auto_evaluate (default off). Never raises past this
+            # point (see EvaluationHub.maybe_auto_evaluate).
+            bridge.maybe_auto_evaluate(execution_id)
         except AgentCancelled as exc:
             bridge.finish_execution(
                 execution_id, error=str(exc), state="CANCELLED", extras={"invocation": audit}

@@ -746,6 +746,42 @@ def config_meeting_mode(
 
 
 @config_app.command(
+    "evaluation-engine",
+    help=t(
+        "預設關閉：開啟後可用 `ccc-mcp task evaluate` 對已完成的 SA/SD/RD/REVIEW 執行"
+        "做證據導向評分（規則運算，不呼叫 LLM）。--auto-evaluate 額外在每次角色執行成功後"
+        "自動評估一次；省略時維持現有設定。評估結果從不影響任務本身的狀態機，純粹是旁側紀錄。"
+        "例如：ccc-mcp config evaluation-engine on --auto-evaluate",
+        "Off by default: once on, `ccc-mcp task evaluate` scores a completed SA/SD/RD/"
+        "REVIEW execution from evidence (rule-based arithmetic, no LLM call). "
+        "--auto-evaluate additionally evaluates automatically after every successful "
+        "role execution; omit to keep the current setting. Evaluation results never "
+        "affect the task's own state machine — purely a side record. "
+        "Example: ccc-mcp config evaluation-engine on --auto-evaluate",
+    ),
+)
+def config_evaluation_engine(
+    ctx: typer.Context,
+    enabled: Annotated[str, typer.Argument(help=t("on 或 off", "on or off"))],
+    auto_evaluate: Annotated[
+        bool | None,
+        typer.Option(
+            "--auto-evaluate/--manual-only",
+            help=t(
+                "是否在每次角色執行成功後自動評估；省略時維持現有設定",
+                "Whether to auto-evaluate after every successful role execution; omit to keep the current setting",
+            ),
+        ),
+    ] = None,
+):
+    if enabled not in {"on", "off"}:
+        raise BridgeError(t("請輸入 on 或 off", "Enter on or off"))
+    output(
+        bridge(ctx).configure_evaluation_engine(project_id(ctx), enabled == "on", auto_evaluate)
+    )
+
+
+@config_app.command(
     "role",
     help=t(
         "指定一個角色使用哪個 provider，並可選擇 model/effort/額度備援；每次呼叫會整組取代"
@@ -1340,6 +1376,49 @@ def task_preflight(ctx: typer.Context, task_id: Annotated[str | None, typer.Argu
 
 
 @task_app.command(
+    "evaluate",
+    help=t(
+        "需先 `config evaluation-engine on`。對這個任務每個角色最新一次成功執行做一次"
+        "證據導向評分（規則運算，不呼叫 LLM）；用 --role 只評一個角色。已評過的執行預設"
+        "會跳過，加 --force 強制重新評估（保留舊版本，不覆蓋）。",
+        "Requires `config evaluation-engine on` first. Scores the latest successful "
+        "execution of every role on this task from evidence (rule-based arithmetic, no "
+        "LLM call); use --role to score only one. An already-evaluated execution is "
+        "skipped by default — pass --force to re-evaluate (kept as a new version, "
+        "never overwriting the old one).",
+    ),
+)
+def task_evaluate(
+    ctx: typer.Context,
+    task_id: Annotated[str | None, typer.Argument()] = None,
+    role: Annotated[str | None, typer.Option(help=t("只評一個角色", "Evaluate only one role"))] = None,
+    task_type: Annotated[
+        str, typer.Option("--task-type", help=t("自訂任務類型標籤，用於可靠度分組", "A task-type label, used to group reliability stats"))
+    ] = "general",
+    force: Annotated[bool, typer.Option(help=t("強制重新評估", "Force re-evaluation"))] = False,
+):
+    service, project = bridge(ctx), project_id(ctx)
+    output(service.evaluate_task(project, task_id, role=role, task_type=task_type, force=force))
+
+
+@task_app.command(
+    "evaluations",
+    help=t(
+        "唯讀：列出這個任務已有的評估報告（含每次重新評估保留的舊版本）；用 --role 篩選。",
+        "Read-only: list this task's evaluation reports so far, including every kept "
+        "re-evaluation version; use --role to filter.",
+    ),
+)
+def task_evaluations(
+    ctx: typer.Context,
+    task_id: Annotated[str | None, typer.Argument()] = None,
+    role: Annotated[str | None, typer.Option(help=t("只看一個角色", "Only one role"))] = None,
+):
+    service, project = bridge(ctx), project_id(ctx)
+    output(service.get_task_evaluations(project, task_id, role=role))
+
+
+@task_app.command(
     "dispatch",
     help=t(
         "低階操作：手動派工單一角色，不經過 advance_project 的自動流程。"
@@ -1523,6 +1602,52 @@ def reject(
     reason: Annotated[str, typer.Option()],
 ):
     output(bridge(ctx).reject_local(project_id(ctx), task_id, plan, reason))
+
+
+@task_app.command(
+    "reevaluate",
+    help=t(
+        "需先 `config evaluation-engine on`。強制重新評估一次特定執行（execution_id），"
+        "保留舊版本，不覆蓋——用 `task evaluations` 查 execution_id。",
+        "Requires `config evaluation-engine on` first. Force a fresh evaluation of one "
+        "specific execution (execution_id) — kept as a new version, never overwriting "
+        "the old one. Find execution_id via `task evaluations`.",
+    ),
+)
+def task_reevaluate(
+    ctx: typer.Context,
+    task_id: str,
+    execution_id: str,
+    task_type: Annotated[
+        str, typer.Option("--task-type", help=t("自訂任務類型標籤", "A task-type label"))
+    ] = "general",
+):
+    service, project = bridge(ctx), project_id(ctx)
+    output(service.reevaluate_execution(project, task_id, execution_id, task_type=task_type))
+
+
+@app.command(
+    "reputation",
+    help=t(
+        "唯讀，跨所有專案：依 agent/model/role/task_type 統計 Beta-Bernoulli 可靠度"
+        "（只計入已驗證的 PASSED/FAILED，從不計入 NEEDS_VERIFICATION/INSUFFICIENT_EVIDENCE）。"
+        "樣本數太少時 low_sample 會是 true。REVIEW 角色另外附上 review_precision；"
+        "review_recall 永遠是 null（沒有完整缺陷真值集合，不宣稱算得出 Recall）。",
+        "Read-only, across every project: Beta-Bernoulli reliability grouped by "
+        "agent/model/role/task_type (only ever counts verified PASSED/FAILED outcomes, "
+        "never NEEDS_VERIFICATION/INSUFFICIENT_EVIDENCE). low_sample is true when the "
+        "sample size is still too small to trust. REVIEW rows also carry "
+        "review_precision; review_recall is always null — no ground-truth defect set "
+        "exists to honestly claim Recall from.",
+    ),
+)
+def reputation_show(
+    ctx: typer.Context,
+    agent: Annotated[str | None, typer.Option(help=t("只看一個 provider", "Only one provider"))] = None,
+    role: Annotated[str | None, typer.Option(help=t("只看一個角色", "Only one role"))] = None,
+    task_type: Annotated[str | None, typer.Option("--task-type", help=t("只看一個任務類型", "Only one task type"))] = None,
+):
+    output(bridge(ctx).get_agent_reliability(agent=agent, role=role, task_type=task_type))
 
 
 @task_app.command(

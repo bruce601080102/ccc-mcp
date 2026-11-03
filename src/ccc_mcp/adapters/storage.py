@@ -156,6 +156,40 @@ CREATE INDEX IF NOT EXISTS idx_meeting_clarifications_project_task
  ON meeting_clarifications(project_id, task_id, round);
 CREATE TRIGGER IF NOT EXISTS meeting_clarifications_no_delete BEFORE DELETE ON meeting_clarifications
  BEGIN SELECT RAISE(ABORT, 'Meeting Mode clarification history is immutable'); END;
+-- Evaluation Engine (evaluation_engine/*, wired in core/evaluation.py): one row per
+-- evaluate_task/evaluate_execution call, append-only and versioned per
+-- source_execution_id (never UPDATEd) so re-evaluating a round keeps its full history
+-- instead of overwriting it, mirroring context_versions' own immutability.
+CREATE TABLE IF NOT EXISTS evaluations (
+ id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
+ task_id TEXT NOT NULL, role TEXT NOT NULL, agent TEXT NOT NULL, model TEXT,
+ task_type TEXT NOT NULL, source_execution_id TEXT NOT NULL REFERENCES agent_executions(id),
+ version INTEGER NOT NULL, trigger TEXT NOT NULL,
+ quality_score REAL, evidence_coverage REAL NOT NULL, task_status TEXT NOT NULL,
+ scoring_details TEXT NOT NULL, evidence TEXT NOT NULL, disagreements TEXT NOT NULL,
+ schema_version TEXT NOT NULL, created TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_evaluations_project_task ON evaluations(project_id, task_id, role);
+CREATE INDEX IF NOT EXISTS idx_evaluations_execution ON evaluations(source_execution_id, version);
+CREATE TRIGGER IF NOT EXISTS evaluations_no_update BEFORE UPDATE ON evaluations
+ BEGIN SELECT RAISE(ABORT, 'Evaluation history is immutable; re-evaluate to add a new version'); END;
+CREATE TRIGGER IF NOT EXISTS evaluations_no_delete BEFORE DELETE ON evaluations
+ BEGIN SELECT RAISE(ABORT, 'Evaluation history is immutable'); END;
+-- Agent reliability ledger (evaluation_engine/reputation_tracker.py): one row per
+-- execution ever counted toward a Beta-Bernoulli reliability estimate.
+-- source_execution_id is UNIQUE so re-evaluating the same execution (a new
+-- `evaluations` version) can never double-count it — reliability is always derived as
+-- COUNT(*) grouped by outcome over this table, never a mutable running total, the same
+-- pattern meeting_clarifications' rounds_used already uses.
+CREATE TABLE IF NOT EXISTS reputation_events (
+ id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
+ task_id TEXT NOT NULL, role TEXT NOT NULL, agent TEXT NOT NULL, model TEXT,
+ task_type TEXT NOT NULL, source_execution_id TEXT NOT NULL UNIQUE REFERENCES agent_executions(id),
+ outcome TEXT NOT NULL, created TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_reputation_events_lookup ON reputation_events(agent, role, task_type);
+CREATE TRIGGER IF NOT EXISTS reputation_events_no_update BEFORE UPDATE ON reputation_events
+ BEGIN SELECT RAISE(ABORT, 'Reputation ledger is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS reputation_events_no_delete BEFORE DELETE ON reputation_events
+ BEGIN SELECT RAISE(ABORT, 'Reputation ledger is immutable'); END;
 """
 
 

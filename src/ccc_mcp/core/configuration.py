@@ -8,6 +8,7 @@ from ..adapters.agents import ADAPTERS, CodexAdapter
 from ..adapters.agents.base import native_executable, operator_policy
 from ..adapters.git import git
 from ..adapters.runtime import RUNTIMES, resolve_runtime, validate_runtime
+from ..evaluation_engine.config import DEFAULT_EVALUATION_ENGINE, validated_evaluation_engine
 from ..infra.config import cli_language, metadata_name
 from ..infra.errors import BridgeError, PermissionDenied
 from ..infra.security import atomic_write, canonical, redact, reject_secrets, safe_path
@@ -256,6 +257,8 @@ class ConfigurationHub:
             )
         if "meeting_mode" in document:
             updated["meeting_mode"] = self._validated_meeting_mode(document["meeting_mode"])
+        if "evaluation_engine" in document:
+            updated["evaluation_engine"] = validated_evaluation_engine(document["evaluation_engine"])
         if "runtime" in document:
             updated["runtime"] = validate_runtime(document["runtime"])
         return updated
@@ -365,6 +368,9 @@ class ConfigurationHub:
             # Merge (not replace) so a project saved before `escalation` existed still
             # reads a complete dict instead of KeyError-ing downstream.
             "meeting_mode": {**DEFAULT_MEETING_MODE, **settings.get("meeting_mode", {})},
+            # Off by default (brief #4 "預設關閉自動評估"); merge for the same reason
+            # as meeting_mode above.
+            "evaluation_engine": {**DEFAULT_EVALUATION_ENGINE, **settings.get("evaluation_engine", {})},
         }
 
     def _save_settings(self, project_id, settings):
@@ -513,6 +519,7 @@ class ConfigurationHub:
                 "runtime": settings["runtime"],
                 "context_token_budget": settings["context_token_budget"],
                 "meeting_mode": settings["meeting_mode"],
+                "evaluation_engine": settings["evaluation_engine"],
             },
             "read_only_status": {
                 "project_access": settings["project_access"],
@@ -665,6 +672,20 @@ class ConfigurationHub:
                 ),
             }
             settings["meeting_mode"] = self._validated_meeting_mode(updated)
+            return self._save_settings(project_id, settings)
+
+    def configure_evaluation_engine(self, project_id, enabled, auto_evaluate=None):
+        """Default off (both enabled and auto_evaluate); omitted auto_evaluate keeps
+        whatever is already configured, mirroring configure_meeting_mode."""
+        with self.lock(project_id):
+            settings = self.get_project_settings(project_id)
+            current = settings.get("evaluation_engine", DEFAULT_EVALUATION_ENGINE)
+            updated = {
+                **current,
+                "enabled": enabled,
+                "auto_evaluate": current["auto_evaluate"] if auto_evaluate is None else auto_evaluate,
+            }
+            settings["evaluation_engine"] = validated_evaluation_engine(updated)
             return self._save_settings(project_id, settings)
 
     # --- MCP servers: global (no --project) or one project's own -------------------

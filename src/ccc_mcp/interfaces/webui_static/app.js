@@ -1133,6 +1133,7 @@
       </div>
     `).join("");
     const mm = overview.editable.meeting_mode || {};
+    const ee = overview.editable.evaluation_engine || {};
     const runtime = overview.editable.runtime || {};
     layout(`
       <div class="title-row"><div><h1>Settings</h1><div class="sub">${esc(id)} · ${UI.translate("profile")}: ${esc(overview.profile)}</div></div></div>
@@ -1216,6 +1217,22 @@
               <input type="text" id="mm-max" value="${esc(mm.max_rounds)}" />
             </div>
             <button class="btn small" id="save-meeting-mode">Save</button>
+          </div>
+        </div>
+      </div>
+      <div class="section">
+        <div class="section-row">
+          <div class="section-label"><div class="t">Evaluation Engine</div><div class="d">Evidence-weighted quality scoring of completed SA/SD/RD/REVIEW executions — rule-based, never a new LLM call. Never affects the task's own state; run it from ccc-mcp task evaluate.</div></div>
+          <div class="section-panel">
+            <div class="checkbox-row">
+              <input type="checkbox" id="ee-enabled" ${ee.enabled ? "checked" : ""} />
+              <label for="ee-enabled" style="margin:0">Enabled</label>
+            </div>
+            <div class="checkbox-row" style="margin-top:8px">
+              <input type="checkbox" id="ee-auto" ${ee.auto_evaluate ? "checked" : ""} />
+              <label for="ee-auto" style="margin:0">Auto-evaluate after every successful role execution</label>
+            </div>
+            <button class="btn small" id="save-evaluation-engine">Save</button>
           </div>
         </div>
       </div>
@@ -1310,6 +1327,16 @@
           method: "POST", body: { enabled, max_rounds: isNaN(maxRounds) ? undefined : maxRounds },
         });
         toast("Meeting Mode saved.");
+      } catch (err) { toast(err.message, true); }
+    });
+    document.getElementById("save-evaluation-engine").addEventListener("click", async () => {
+      const enabled = document.getElementById("ee-enabled").checked;
+      const autoEvaluate = document.getElementById("ee-auto").checked;
+      try {
+        await api(`/projects/${encodeURIComponent(id)}/config/evaluation-engine`, {
+          method: "POST", body: { enabled, auto_evaluate: autoEvaluate },
+        });
+        toast("Evaluation Engine settings saved.");
       } catch (err) { toast(err.message, true); }
     });
     watchForChanges(gen, () => api(`/projects/${encodeURIComponent(id)}/settings`), renderSettings);

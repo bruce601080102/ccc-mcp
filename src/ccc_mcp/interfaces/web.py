@@ -475,6 +475,19 @@ async def set_meeting_mode(request: Request):
     return JSONResponse(result)
 
 
+@endpoint
+async def set_evaluation_engine(request: Request):
+    bridge = bridge_of(request)
+    body = await _body(request)
+    result = await run(
+        bridge.configure_evaluation_engine,
+        request.path_params["project_id"],
+        body.get("enabled"),
+        body.get("auto_evaluate"),
+    )
+    return JSONResponse(result)
+
+
 # --- Tasks (read-only) -----------------------------------------------------------
 
 
@@ -934,6 +947,10 @@ ROUTES = [
     Route("/api/projects/{project_id}/config/runtime", set_runtime, methods=["POST"]),
     Route("/api/projects/{project_id}/config/runtime/check", check_runtime, methods=["POST"]),
     Route("/api/projects/{project_id}/config/meeting-mode", set_meeting_mode, methods=["POST"]),
+    Route(
+        "/api/projects/{project_id}/config/evaluation-engine",
+        set_evaluation_engine, methods=["POST"],
+    ),
     Route("/api/projects/{project_id}/context", get_context, methods=["GET"]),
     Route("/api/projects/{project_id}/mcp", list_mcp, methods=["GET"]),
     Route("/api/projects/{project_id}/mcp/probe", probe_mcp, methods=["POST"]),

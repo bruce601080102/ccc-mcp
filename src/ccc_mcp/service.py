@@ -6,12 +6,15 @@ from .core.access import ProjectAccessHub
 from .core.configuration import ConfigurationHub
 from .core.context import ContextHub
 from .core.directedit import DirectEditHub
+from .core.evaluation import EvaluationHub
 from .core.tasks import TaskHub
 from .core.workspace import WorkspaceHub
 from .infra.config import bridge_home
 
 
-class CCCMCP(ConfigurationHub, WorkspaceHub, DirectEditHub, ProjectAccessHub, ContextHub, TaskHub):
+class CCCMCP(
+    ConfigurationHub, WorkspaceHub, DirectEditHub, ProjectAccessHub, ContextHub, TaskHub, EvaluationHub
+):
     """The same application service is used by CLI, MCP and independent workers."""
 
     def __init__(self, home=None):
