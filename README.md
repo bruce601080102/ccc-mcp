@@ -12,7 +12,7 @@
 [![Codex](https://img.shields.io/badge/Codex-Optional-000000?style=flat-square)](docs/en/4-workflow.md)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-Optional-D97757?style=flat-square)](docs/en/4-workflow.md)
 
-ccc-mcp connects ChatGPT Chat to a local coding workspace through MCP, so it can work on an **authorized repository** — making changes, running host-side tests, keeping a resumable task history, and showing you every diff and review result, which a chat window can't do on its own. As a bonus, it runs on your existing ChatGPT plan, with no separately metered model API to set up. **ChatGPT-only is the primary workflow.** Codex and Claude Code are optional providers for teams that want to split roles across tools.
+ccc-mcp connects ChatGPT Chat to a local coding workspace through MCP, so it can work on an **authorized repository**. Its core idea: **don't take an AI's word that the code works — keep local evidence.** Tests are run by the host, not reported by the agent; every diff, test result and review is saved and resumable, which a chat window can't do on its own. As a bonus, it runs on your existing ChatGPT plan, with no separately metered model API to set up. **ChatGPT-only is the primary workflow.** Codex and Claude Code are optional providers for teams that want to split roles across tools.
 
 > [繁體中文 README](README_ZH.md) · [English documentation](docs/en/1-install-and-sign-in.md)
 
@@ -60,15 +60,15 @@ Requires Git and Python 3.11+. In the UI:
 
 The UI runs on local `127.0.0.1` and stops with Ctrl+C. [See every console page](#web-console).
 
-**About tokens and keys:** This workflow uses your existing ChatGPT plan instead of an OpenAI *model* API key and its per-token API billing. [ChatGPT plan limits](https://learn.chatgpt.com/docs/pricing) still apply. The Tunnel connection uses its own runtime API key; [connection setup](docs/en/2-connect-chatgpt.md) explains that key.
+**About tokens and keys:** This workflow uses your existing ChatGPT plan instead of an OpenAI *model* API key and its per-token API billing. [ChatGPT plan limits](https://learn.chatgpt.com/docs/pricing) still apply. ccc-mcp does not claim to use fewer tokens than a single agent: the `SA → SD/RD → REVIEW` workflow adds rounds in exchange for verification, and a per-task token comparison is still being measured. The Tunnel connection uses its own runtime API key; [connection setup](docs/en/2-connect-chatgpt.md) explains that key.
 
 ## What makes ccc-mcp useful
 
 | Capability | What you get |
 | --- | --- |
+| **Evidence, not self-reports** | The host installs declared dependencies and runs pytest itself; an agent saying “tests pass” never counts. Host-observed results, exit codes when available, diffs, reports and review evidence are kept for every round. |
 | **ChatGPT Chat as the coding agent** | ChatGPT can read and edit an authorized local project, then continue the work in the same conversation. No Codex or Claude Code installation is required for `chatgpt-only`. |
 | **A recoverable workflow** | Run `SA → SD/RD → REVIEW` with versioned shared Context and saved execution records. Resume a task in another chat from the project’s `.ccc-mcp` data. |
-| **Host-side verification** | Install declared dependencies, run pytest, and retain host-observed results, exit codes when available, diffs, reports, and review evidence. |
 | **Traceable execution evaluation** | The optional evaluation engine turns host tests, diffs, and lint findings into versioned reports. Quality scores are paired with evidence coverage; missing signals are never silently treated as perfect. Evaluate and inspect results from the task page. |
 | **Skills, including MCP-oriented Skills** | Install reusable `SKILL.md` guidance, including nested supporting files. Choose global Skills in the UI so every project and role can use them. A Skill can guide an agent to use an MCP tool after that server is installed. |
 | **MCP servers and tools** | Discover local MCP servers, install one for a project, select which tools the project may use, and call them from ChatGPT. For example, `codebase-memory-mcp` can provide repository structure and code relationships. Skills guide the workflow; MCP tools supply live capabilities. |

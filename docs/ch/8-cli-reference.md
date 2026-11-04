@@ -87,9 +87,10 @@ ccc-mcp --project demo-app task evaluate [TASK_ID] [--role ROLE] [--task-type �
 ccc-mcp --project demo-app task evaluations [TASK_ID] [--role ROLE]
 ccc-mcp --project demo-app task reevaluate TASK_ID EXECUTION_ID [--task-type 標籤]
 ccc-mcp reputation [--agent PROVIDER] [--role ROLE] [--task-type 標籤]
+ccc-mcp validate-scoring CASES.jsonl [--labels REPORT.json] [--rows]
 ```
 
-`config evaluation-engine` 預設關閉；開啟後 `task evaluate` 會對這個任務每個角色最新一次成功執行做一次證據導向評分（純規則運算，不呼叫 LLM），已評過的執行預設會跳過，加 `--force` 才會強制重新評估（保留舊版本，不覆蓋）。`task evaluations` 是唯讀列表，含每次重新評估保留的舊版本。`task reevaluate` 強制重新評估一個指定的 `EXECUTION_ID`（用 `task evaluations` 查）。`reputation` 唯讀、跨所有專案，依 agent／模型／角色／任務類型統計 Beta-Bernoulli 可靠度，只計入已驗證的 `PASSED`／`FAILED`；樣本數太少時 `low_sample` 會是 `true`，`REVIEW` 角色另外附上 `review_precision`（`review_recall` 永遠是 `null`，因為沒有完整缺陷真值集合可以老實算出 Recall）。`quality_score`／`evidence_coverage` 的確切公式見[技術參考](10-technical-reference.md#評估引擎)。
+`config evaluation-engine` 預設關閉；開啟後 `task evaluate` 會對這個任務每個角色最新一次成功執行做一次證據導向評分（純規則運算，不呼叫 LLM），已評過的執行預設會跳過，加 `--force` 才會強制重新評估（保留舊版本，不覆蓋）。`task evaluations` 是唯讀列表，含每次重新評估保留的舊版本。`task reevaluate` 強制重新評估一個指定的 `EXECUTION_ID`（用 `task evaluations` 查）。`reputation` 唯讀、跨所有專案，依 agent／模型／角色／任務類型統計 Beta-Bernoulli 可靠度，只計入已驗證的 `PASSED`／`FAILED`；樣本數太少時 `low_sample` 會是 `true`，`REVIEW` 角色另外附上 `review_precision`（`review_recall` 永遠是 `null`，因為沒有完整缺陷真值集合可以老實算出 Recall）。`quality_score`／`evidence_coverage` 的確切公式見[技術參考](10-technical-reference.md#評估引擎)。`validate-scoring` 不需要專案：讀入已記錄的案例，與 SWE-bench 風格的 resolved／unresolved 標準答案比對（AUROC、各及格線準確率、誤判通過清單），說明見[技術參考](10-technical-reference.md#用標準答案檢驗評分)。
 
 ## 現在輪到誰、下一步該貼什麼？
 

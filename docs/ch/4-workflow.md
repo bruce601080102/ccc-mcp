@@ -69,6 +69,8 @@ ccc-mcp context source .ccc-mcp/tasks/TASK-0001/executions/EXEC-實際ID/SA-REPO
 
 ## 4. 使用者審閱精確方案
 
+> **這一節只適用於「逐步人工核准模式」**（專案還沒執行 `project authorize`、停留在唯讀模式）。已授權的專案是預設、建議的路徑：PM 以 `advance_project` 自動派出 SD/RD、REVIEW，不需要手動建立 PLAN、不需要在終端機輸入 Task ID 核准，見[建立第一個專案](3-first-project.md)。
+
 先將預期修改範圍、限制、驗收與測試計畫寫入本機 PLAN-A.md：
 
 ```powershell
@@ -95,6 +97,8 @@ ccc-mcp task decision TASK-0001 "新決策內容" "取代原因" --status Supers
 決策追加不會把舊列改掉。SQLite trigger 禁止更新/刪除既有決策與 Context 歷史。當前版本的方案變動或 Context 更新均會使舊核准不再適用，必須再次審閱。
 
 ## 5. SD/RD 在獨立 Worktree 工作
+
+> **這一節同樣只適用於「逐步人工核准模式」。** Worktree 隔離與最後的 `task accept` 驗收，都是未授權專案才使用的流程；已執行 `project authorize` 的專案會自動把 `workspace_mode` 設為 `project`，實作 Agent 直接在原專案修改，REVIEW 通過後自動完成本輪，不經過這裡的核准與驗收步驟。
 
 ```powershell
 ccc-mcp task dispatch TASK-0001 claude SD/RD "依 PLAN-A 實作並保留原始註解" --version 2 --adapter fake

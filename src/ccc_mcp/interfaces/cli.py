@@ -1419,6 +1419,103 @@ def task_evaluations(
 
 
 @task_app.command(
+    "export-cases",
+    help=t(
+        "唯讀：把專案裡有完成實作的任務匯出成 `validate-scoring` 要用的案例檔（JSONL）。"
+        "instance_id 取自需求文字裡的 SWE-bench 編號，找不到就用任務編號；標準答案不含在內。"
+        "例如：ccc-mcp task export-cases --out cases.jsonl",
+        "Read-only: exports every task with a finished implementation round as the "
+        "JSONL cases `validate-scoring` reads. instance_id is the SWE-bench id found in "
+        "the requirement text, else the task id; ground truth is not included. "
+        "Example: ccc-mcp task export-cases --out cases.jsonl",
+    ),
+)
+def task_export_cases(
+    ctx: typer.Context,
+    task_ids: Annotated[
+        list[str] | None, typer.Argument(help=t("只匯出這些任務；省略則全部", "Only these tasks; omit for all"))
+    ] = None,
+    out: Annotated[Path | None, typer.Option(help=t("寫入檔案；省略則印出", "Write to a file; omit to print"))] = None,
+):
+    cases = bridge(ctx).export_scoring_cases(project_id(ctx), task_ids or None)
+    lines = "\n".join(json.dumps(case, ensure_ascii=False) for case in cases)
+    if out:
+        out.write_text(lines + ("\n" if lines else ""), encoding="utf-8")
+        output({"exported": len(cases), "path": str(out)})
+    else:
+        typer.echo(lines)
+
+
+@app.command(
+    "compare-tokens",
+    help=t(
+        "比較 ccc-mcp 與單一 Agent 直接做同一批任務：每解決一題花多少 token、解決率各是多少。"
+        "兩邊各一個 JSONL（instance_id、tokens_total、resolved）；ccc-mcp 那邊可用 "
+        "`task export-cases` 產生。ChatGPT 網頁／MCP 的回合沒有 token 資料，會在結論中註明。",
+        "Compare ccc-mcp with one agent doing the same tasks directly: tokens per resolved "
+        "task and resolve rate for each. One JSONL per side (instance_id, tokens_total, "
+        "resolved); `task export-cases` writes the ccc-mcp side. ChatGPT web/MCP rounds "
+        "report no tokens, which the verdict notes.",
+    ),
+)
+def compare_tokens(
+    ccc_file: Annotated[Path, typer.Argument(help=t("ccc-mcp 那邊的 JSONL", "The ccc-mcp JSONL"))],
+    direct_file: Annotated[Path, typer.Argument(help=t("單一 Agent 那邊的 JSONL", "The direct-agent JSONL"))],
+    ccc_labels: Annotated[Path | None, typer.Option("--ccc-labels", help=t("ccc-mcp 那邊的 SWE-bench 結果", "SWE-bench result for the ccc-mcp side"))] = None,
+    direct_labels: Annotated[Path | None, typer.Option("--direct-labels", help=t("單一 Agent 那邊的 SWE-bench 結果", "SWE-bench result for the direct side"))] = None,
+):
+    from ..evaluation_engine import benchmark
+
+    output(
+        benchmark.compare(
+            benchmark.load_arm(ccc_file),
+            benchmark.load_arm(direct_file),
+            benchmark.load_labels(ccc_labels) if ccc_labels else None,
+            benchmark.load_labels(direct_labels) if direct_labels else None,
+        )
+    )
+
+
+@app.command(
+    "validate-scoring",
+    help=t(
+        "用標準答案檢驗評分準確度：讀入每行一筆的案例檔（diff、本機測試輸出、Agent 報告）"
+        "，用 --labels 指定 SWE-bench 的評測結果（resolved_ids / unresolved_ids），"
+        "輸出 AUROC、各及格線準確度與「PASSED 但沒解決」的誤判率。純規則運算，不呼叫 LLM、"
+        "不需要專案。",
+        "Check scoring accuracy against ground truth: reads a JSONL file of cases (diff, "
+        "local test output, agent report) and, with --labels, a SWE-bench harness result "
+        "(resolved_ids / unresolved_ids). Prints AUROC, accuracy per pass line, and how "
+        "often a PASSED verdict was wrong. Rule-based; no LLM call and no project needed.",
+    ),
+)
+def validate_scoring(
+    cases_file: Annotated[Path, typer.Argument(help=t("案例 JSONL 檔", "Cases JSONL file"))],
+    labels: Annotated[
+        Path | None,
+        typer.Option(
+            "--labels",
+            help=t(
+                "SWE-bench 評測結果 JSON；省略時使用案例內的 resolved 欄位",
+                "SWE-bench result JSON; omit to use each case's own resolved field",
+            ),
+        ),
+    ] = None,
+    rows: Annotated[
+        bool, typer.Option("--rows", help=t("一併輸出每筆案例的分數", "Include per-case scores"))
+    ] = False,
+):
+    from ..evaluation_engine import validation
+
+    summary = validation.validate(
+        validation.load_cases(cases_file), validation.load_labels(labels) if labels else None
+    )
+    if not rows:
+        summary.pop("rows")
+    output(summary)
+
+
+@task_app.command(
     "dispatch",
     help=t(
         "低階操作：手動派工單一角色，不經過 advance_project 的自動流程。"

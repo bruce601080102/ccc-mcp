@@ -1,5 +1,7 @@
 # 11. ccc-mcp MCP — 完整開發規格 V2
 
+> **本文件是專案最初的開發規格（設計背景）**，保留供理解設計理由。其中逐步人工核准、`approve`、Worktree 等流程描述的是早期設計；目前預設的操作方式（專案授權後自動派工）請以第 1–8 章為準。
+
 ## 你的角色
 
 你是一名資深 Python 架構師、MCP Protocol Engineer、Multi-Agent Orchestration Engineer。

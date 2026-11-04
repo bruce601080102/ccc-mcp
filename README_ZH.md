@@ -12,7 +12,7 @@
 [![Codex](https://img.shields.io/badge/Codex-選用-000000?style=flat-square)](docs/ch/4-workflow.md)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-選用-D97757?style=flat-square)](docs/ch/4-workflow.md)
 
-ccc-mcp 透過 MCP，把 ChatGPT Chat 接上你電腦上的開發環境，讓它能在**已授權的本機專案**修改程式、執行主機測試、保留可續接的任務紀錄，並讓你檢查每一次 diff 和審查結果——這些是單純的聊天視窗做不到的事。額外好處是：它直接用你現有的 ChatGPT 方案運作，不必另外申請按 token 計費的模型 API。**主要用法是 ChatGPT-only**；Codex 與 Claude Code 是選用的協作工具。
+ccc-mcp 透過 MCP，把 ChatGPT Chat 接上你電腦上的開發環境，讓它能在**已授權的本機專案**工作。核心想法是：**不要只聽 AI 說程式沒問題，而是留下本機證據。**測試由主機執行、不由 Agent 自己回報；每一次 diff、測試結果與審查都會保存並可接續，這些是單純的聊天視窗做不到的事。額外好處是：它直接用你現有的 ChatGPT 方案運作，不必另外申請按 token 計費的模型 API。**主要用法是 ChatGPT-only**；Codex 與 Claude Code 是選用的協作工具。
 
 > [English README](README.md) · [繁體中文文件](docs/ch/1-install-and-sign-in.md)
 
@@ -60,15 +60,15 @@ ccc-mcp ui
 
 UI 只在本機 `127.0.0.1` 提供服務，按 Ctrl+C 停止。[查看控制台所有頁面](#web-控制台)。
 
-**關於 token 與金鑰：**此工作流使用你現有的 ChatGPT 方案，無須另外申請 OpenAI *模型* API 金鑰，也不產生模型 API 的逐 token 計費；[ChatGPT 方案本身仍有使用限制](https://learn.chatgpt.com/docs/pricing)。Tunnel 連線會使用獨立的 runtime API key，詳見[連線設定](docs/ch/2-connect-chatgpt.md)。
+**關於 token 與金鑰：**此工作流使用你現有的 ChatGPT 方案，無須另外申請 OpenAI *模型* API 金鑰，也不產生模型 API 的逐 token 計費；[ChatGPT 方案本身仍有使用限制](https://learn.chatgpt.com/docs/pricing)。ccc-mcp 並不宣稱比單一 Agent 更省 token：`SA → SD/RD → REVIEW` 流程多了幾輪，換來的是可驗證性；每個任務的 token 比較仍在量測中。Tunnel 連線會使用獨立的 runtime API key，詳見[連線設定](docs/ch/2-connect-chatgpt.md)。
 
 ## 特色一覽
 
 | 能力 | 你可以做什麼 |
 | --- | --- |
+| **證據，不是口頭回報** | 由主機安裝宣告的相依套件並自行執行 pytest；Agent 說「測試通過」不算數。每一輪都保存主機回傳的結果、可取得的 exit code、diff、報告與審查證據。 |
 | **ChatGPT Chat 寫本機程式** | 在對話中讓 ChatGPT 讀取、修改已授權專案，接著執行測試；`chatgpt-only` 不需要安裝 Codex 或 Claude Code。 |
 | **可接續的工作流** | 以 `SA → SD/RD → REVIEW` 處理任務，保存版本化共用 Context 與執行紀錄；在另一個聊天室從專案內的 `.ccc-mcp` 資料接續。 |
-| **主機實際驗證** | 安裝宣告的相依套件、執行 pytest，保存主機回傳的結果、可取得的 exit code、diff、報告與審查證據。 |
 | **可追溯的執行評估** | 選用評估引擎會將主機測試、diff 與靜態檢查整理成逐次評估報告；品質分數同時顯示證據覆蓋率，缺資料不會假裝成滿分。可在任務頁評估、檢查來源並保留重新評估版本。 |
 | **Skills，包含 MCP 型 Skill** | 安裝可重複使用的 `SKILL.md` 工作指引，支援多層目錄的補充檔案；在 UI 選擇全域 Skills，提供所有專案及角色使用。Skill 可引導 Agent 呼叫已另外安裝的 MCP 工具。 |
 | **MCP Server 與工具** | 探索本機 MCP Server，為專案安裝並勾選允許使用的工具，再由 ChatGPT 呼叫。例如使用 `codebase-memory-mcp` 分析程式架構與關聯。Skill 提供工作方法，MCP 工具提供即時能力。 |

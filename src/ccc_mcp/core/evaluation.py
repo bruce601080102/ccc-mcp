@@ -53,6 +53,10 @@ class EvaluationHub:
         resolved = task_id or self.project_workstream_task(project_id)
         return evaluation_service.get_evaluations(self, project_id, resolved, role=role)
 
+    def export_scoring_cases(self, project_id, task_ids=None):
+        """Read-only: the inputs `ccc-mcp validate-scoring` needs, one per task."""
+        return evaluation_service.export_cases(self, project_id, task_ids)
+
     def get_agent_reliability(self, agent=None, role=None, task_type=None):
         """Global across every project on this home (see evaluation_service.get_reliability)."""
         return evaluation_service.get_reliability(self, agent=agent, role=role, task_type=task_type)

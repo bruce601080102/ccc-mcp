@@ -22,6 +22,9 @@ from .models import INSUFFICIENT_EVIDENCE, NEEDS_VERIFICATION, PASSED, TASK_FAIL
 
 IMPLEMENTATION_ROLES = {"SD", "RD", "SD/RD"}
 _EVIDENCE_COVERAGE_FLOOR = 0.60
+# Green tests the agent wrote itself were never independently checked (the
+# astropy__astropy-13398 incident), so they can earn at most this share of the test score.
+_SELF_AUTHORED_TEST_CAP = 70.0
 
 
 def _clamp(value):
@@ -38,7 +41,15 @@ def _test_score(role, features):
         )
         return 0.0 if mismatch else 100.0
     rate = features["test_pass_rate"]
-    return None if rate is None else _clamp(100 * rate)
+    if rate is None:
+        return None
+    if role in IMPLEMENTATION_ROLES and not features["has_changes"]:
+        # Tests that were already green before any edit say nothing about the work done.
+        return None
+    score = _clamp(100 * rate)
+    if role in IMPLEMENTATION_ROLES and features["only_self_authored_tests_passed"]:
+        score = min(score, _SELF_AUTHORED_TEST_CAP)
+    return score
 
 
 def _requirement_score(features):
@@ -102,6 +113,10 @@ def _task_status(role, features, evidence_coverage):
             return NEEDS_VERIFICATION
         if features["host_test_passed"] is False:
             return TASK_FAILED
+        if not features["has_changes"]:
+            # An implementation round that changed nothing has not done the task, however
+            # green the untouched tests are.
+            return NEEDS_VERIFICATION
         status = PASSED
     elif role == "REVIEW":
         needs_revision = features["review_needs_revision"]

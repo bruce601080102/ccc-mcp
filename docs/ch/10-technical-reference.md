@@ -6,6 +6,8 @@
 
 以 Python 建立的 Context Hub 與 MCP 協調層，讓 ChatGPT PM、Codex SA、Claude Code SD/RD 能在沒有彼此聊天歷史的情況下，透過版本化記憶、原始證據與角色交接持續協作。
 
+> **閱讀提示**：本頁完整保留「逐步人工核准」與 Worktree 流程（`task plan`／`approve`／`task accept` 等）的指令參考，這是專案**尚未執行 `project authorize`** 時才走的進階路徑。已授權專案是預設、建議的路徑，PM 會自動派工並讓實作 Agent 直接在原專案修改，不需要逐次手動核准；請從[建立第一個專案](3-first-project.md)與[協作流程](4-workflow.md)開始。
+
 目前為可執行的單機 MVP。核心、Fake Agent、stdio 與 Streamable HTTP 均有自動化測試；真實模型執行與 ChatGPT 帳戶連線需使用者完成官方安裝、登入及權限設定。
 
 ## 安裝（Windows PowerShell）
@@ -81,6 +83,8 @@ ccc-mcp context recover
 `recover` 從資料庫重建文件；來源程式碼已改變的警示仍需重新分析。備份請同時保留 Repository、ccc-mcp home、Worktree；運行中資料庫請用 SQLite backup API，或停止 Worker 後再複製，勿只複製單一 WAL 模式的 db 檔。
 
 ## PM → SA → PM → SD/RD → PM
+
+> 以下是**逐步人工核准模式**的完整手動流程（未授權專案）；已授權專案由 `advance_project` 自動完成這些步驟。
 
 完整可操作範例見[協作流程](4-workflow.md)；快速示範不使用任何真實模型：
 
@@ -186,6 +190,8 @@ ChatGPT 官方網頁的 HTTPS / Secure MCP Tunnel、OAuth 與工作區權限操�
 
 ## 真實 Agent、人工核准與安全邊界
 
+> 其中「人工核准」「Worktree」描述的是逐步人工核准模式；已授權專案改由一次性的 `project authorize` 授予持續寫入權限，不再逐次核准計畫。
+
 從已連線的 ChatGPT 接上真實 Codex SA 與 Claude Code SD/RD，請依[安裝與登入](1-install-and-sign-in.md)操作。`ccc-mcp connect` 會自動尋找已安裝的 codex／claude CLI，不需要另外設定 PATH；重新執行 `ccc-mcp connect tunnel_你的實際ID` 即可重啟 Tunnel。
 
 Codex 與 Claude Code 必須由使用者依官方方式另外安裝並登入。`doctor` 僅查安裝及版本，不宣稱已登入。Adapter 執行前再次檢查 CLI help；缺少必要參數會明確失敗。
@@ -215,6 +221,22 @@ Codex 依角色使用 `read-only` 或 `workspace-write` sandbox 與 JSON Schema�
 舉例：SA 的權重設定是 `{requirement: 0.70, review: 0.30}`，而 SA 的 `review` 子項目設計上永遠是 `null`——目前沒有任何一種 `CONFIRMED` 的分歧類型能歸咎到 SA，硬給一個分數就是捏造。假設 `requirement = 100`，`quality_score = 100`（唯一有證據的那個維度本身的加權平均），但 `evidence_coverage = 0.70`（總權重 1.00 裡只有 0.70），即使品質分數滿分，也只代表查到了 70% 的全貌。
 
 `task_status`（`PASSED`／`TASK_FAILED`／`NEEDS_VERIFICATION`／`INSUFFICIENT_EVIDENCE`）由另一組固定硬規則判斷，加權分數永遠蓋不過它——驗收測試沒過、測試套件根本沒執行、或整體證據覆蓋率太薄，都不可能判成 `PASSED`。`task evaluate`／`task evaluations`／`task reevaluate` 跟網頁控制台的任務頁都用這套結果；`reputation` 另外跨所有專案，依 agent／模型／角色／任務類型算 Beta-Bernoulli 可靠度，樣本數太少時會明確顯示不確定範圍。
+
+### 用標準答案檢驗評分
+
+`ccc-mcp validate-scoring CASES.jsonl [--labels REPORT.json] [--rows]` 回答「分數高是不是真的代表有解決」。`CASES.jsonl` 每行是 ccc-mcp 實際觀察到的一次執行（`instance_id`、Agent 的 `diff`、host 跑的 `test_result`、Agent 的 `report`，可選 `acceptance` 與 ruff 格式的 `static_findings`）；標準答案取自每筆的 `resolved` 欄位，或用 `--labels` 指定 SWE-bench 評測結果（`resolved_ids`／`unresolved_ids`）。它走和正式流程相同的特徵與評分程式，輸出 AUROC（0.5 等於擲硬幣）、各及格線的準確率與精確率，以及「誤判通過」清單：`task_status` 是 `PASSED` 但實際沒解決的案例。純規則運算、不呼叫 LLM、不需要專案。有評分的案例少於 30 筆，或任一類少於 5 筆時，只會標示為冒煙測試，不下結論。產生案例（用 ccc-mcp 去跑 SWE-bench 題目）是另一步，這個工具只負責評判給它的資料。 要從真實執行建立 `CASES.jsonl`，用 `ccc-mcp --project NAME task export-cases [TASK_ID...] [--out cases.jsonl]`：唯讀，每個已完成實作的任務匯出一筆，`instance_id` 取自任務需求文字裡的 SWE-bench 編號（找不到就用任務編號），不含標準答案。
+
+目前已知會被它抓出的弱點與處理：唯一通過的測試是 Agent 自己新寫的（`astropy__astropy-13398` 那種情況）時，過去會拿 100 分。現在對 SD/RD 角色，這種情況的 `test` 子項最高 70 分，所以 `quality_score` 會下降；但其他維度都乾淨時仍可能是 `PASSED`，`validate-scoring` 會繼續把它列為誤判通過。
+
+完全沒有 diff 的實作回合永遠不會是 `PASSED`（會變成 `NEEDS_VERIFICATION`），它的綠燈測試也拿不到 `test` 分數，因為修改之前就已經全綠的測試，無法說明這次做了什麼。
+
+**第一次實測（玩具題庫，不是真的 Agent）。**`tests/toybench.py` 用 6 個單一函式的小任務產生 30 筆案例，每題都有修補看不到的隱藏測試：正確、正確且附自己的測試、錯誤但可見測試全過、錯誤且附一個會過的自寫測試、以及改壞的修補。結果：AUROC 0.67，12 筆「錯誤但可見測試全過」的修補全部被判 `PASSED`（`PASSED` 之中誤判率 50%）；改壞的修補一律 `FAILED`，分數也低於所有正確的修補。也就是說，只靠本機可見測試能抓出「改壞」，但分不出「錯誤卻全綠」和「正確」；自寫測試上限在這份資料上沒有改變 AUROC。修補是手寫的，所以測的是評分規則，不是真實 Agent 會犯哪些錯。
+
+### 與單一 Agent 比較 token 成本
+
+`ccc-mcp compare-tokens CCC.jsonl DIRECT.jsonl [--ccc-labels R.json] [--direct-labels R.json]` 比較 ccc-mcp 與單一 Agent 直接做同一批任務。兩邊各是一個 JSONL，欄位為 `instance_id`、`tokens_total`、`resolved`；ccc-mcp 那邊由 `task export-cases` 產生（`tokens_total` 是 CLI 回報的 input + output token，另有 `usage_complete`）。主要指標是「每解決一題花的 token」：所有花掉的 token（含失敗的嘗試）除以解決題數，並列出各自的解決率，因為便宜必須是建立在仍然做得出來之上。兩邊共同題目少於 20 題時，結論只會標示為冒煙測試。
+
+**限制：**只有原生 CLI 的回合（Codex、Claude Code）會回報 token 用量。ChatGPT 網頁／MCP 的回合不會呼叫本機 CLI，所以沒有用量；含這類回合的任務會匯出 `usage_complete: false`，結論也會警告 ccc-mcp 的成本被低估。因此純 ChatGPT-only 的執行無法用這個方法量測。
 
 ## 交付範圍
 

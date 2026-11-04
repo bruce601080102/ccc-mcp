@@ -7,6 +7,7 @@ transaction in a way that could touch the task's own already-committed state (br
 core/evaluation.py's maybe_auto_evaluate for the try/except boundary)."""
 
 import json
+import re
 import uuid
 
 from ..adapters.storage import now
@@ -15,6 +16,7 @@ from ..infra.security import canonical
 from . import disagreement_detector, evidence_collector, feature_extractor, quality_scorer
 from . import reputation_tracker as reputation
 from .config import validated_role_weights
+from .evidence_collector import IMPLEMENTATION_ROLES
 from .models import SCHEMA_VERSION
 
 
@@ -185,3 +187,71 @@ def get_reliability(bridge, *, agent=None, role=None, task_type=None):
         bridge.store, agent=agent, role=role, task_type=task_type,
         low_sample_threshold=reputation.DEFAULT_LOW_SAMPLE_THRESHOLD,
     )
+
+
+_INSTANCE_ID = re.compile(r"\b[A-Za-z0-9_.-]+__[A-Za-z0-9_.-]+-\d+\b")
+
+
+def _task_tokens(bridge, project_id, task_id):
+    """Sum of CLI-reported tokens over a task's executions. ChatGPT web/MCP rounds never
+    invoke a local CLI, so they have no usage record; `complete` says whether every round
+    had one, so a partial total is never mistaken for the whole cost."""
+    totals, rounds, with_usage = {}, 0, 0
+    for row in bridge.get_task_usage(project_id, task_id):
+        rounds += 1
+        usage = (row["invocation"] or {}).get("usage") or {}
+        if not usage.get("available"):
+            continue
+        with_usage += 1
+        for key, value in (usage.get("tokens") or {}).items():
+            totals[key] = totals.get(key, 0) + value
+    return {
+        "tokens": totals,
+        # None, not 0, when no round reported usage: zero would read as "free".
+        "tokens_total": (
+            totals.get("input_tokens", 0) + totals.get("output_tokens", 0) if with_usage else None
+        ),
+        "usage_rounds": with_usage,
+        "total_rounds": rounds,
+        "usage_complete": rounds > 0 and with_usage == rounds,
+    }
+
+
+def export_cases(bridge, project_id, task_ids=None):
+    """One validation case per task (see validation.py): the latest succeeded
+    implementation round's diff, host test result and report, as the scorer sees them.
+    `instance_id` is the SWE-bench id found in the task's requirement text, else the task
+    id; ground truth is deliberately not included — it comes from the benchmark harness."""
+    tasks = task_ids or [t["id"] for t in bridge.list_tasks(project_id)]
+    cases = []
+    for task_id in tasks:
+        rounds = [
+            r for r in bridge.get_task_result(project_id, task_id)
+            if r["role"] in IMPLEMENTATION_ROLES and r["status"] == "SUCCEEDED"
+        ]
+        if not rounds:
+            continue
+        target = rounds[-1]
+        bundle = evidence_collector.collect(bridge, project_id, task_id, target["role"], target["id"])
+        task = bundle["task"]
+        static = next((e for e in bundle["evidence"] if e["kind"] == "static_analysis"), None)
+        test_result = bundle["test_result"] or {}
+        match = _INSTANCE_ID.search(task.get("requirement") or "")
+        cases.append(
+            {
+                "instance_id": match.group(0) if match else task_id,
+                "task_id": task_id,
+                "role": target["role"],
+                "diff": bundle["diff_text"],
+                "test_result": {
+                    key: test_result.get(key)
+                    for key in ("executed_by_host", "passed", "no_tests_collected", "stdout", "command")
+                } if bundle["test_result"] else None,
+                "report": bundle["report"],
+                "acceptance": task.get("acceptance") or [],
+                "static_findings": ((static or {}).get("payload") or {}).get("findings"),
+                "review_report": bundle["review_report"],
+                **_task_tokens(bridge, project_id, task_id),
+            }
+        )
+    return cases

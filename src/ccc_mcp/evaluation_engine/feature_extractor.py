@@ -126,6 +126,7 @@ def extract(bundle, review_tally, disagreements):
         "only_self_authored_tests_passed": diffs.has_pre_existing_passing_test_only(diff_text)
         if diff_text
         else False,
+        "has_changes": bool(diff_text),
         "host_tests_executed": bool(test_result and test_result.get("executed_by_host")),
         "host_test_passed": (test_result or {}).get("passed"),
         "host_no_tests_collected": bool((test_result or {}).get("no_tests_collected")),
