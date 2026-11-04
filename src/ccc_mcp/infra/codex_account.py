@@ -68,7 +68,7 @@ def _rate_metrics(result):
     return windows
 
 
-async def read_account_usage(timeout=5):
+async def read_account_usage(timeout=10):
     """Return account-wide token activity and plan windows, or a safe fallback."""
     executable = shutil.which("codex")
     if not executable:

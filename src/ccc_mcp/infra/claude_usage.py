@@ -3,9 +3,11 @@
 import json
 import math
 import os
+import re
 import shlex
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -110,6 +112,138 @@ def read_claude_usage(home: Path, claude_home: Path | None = None) -> dict:
             }
         )
     return result
+
+
+_PROBE_LOCK = threading.Lock()
+_PROBE_MIN_INTERVAL = 60
+_ANSI = re.compile(r"\x1b(?:\[[0-9;?>]*[A-Za-z]|\][^\x07]*\x07)")
+
+
+def _probe_outcome(ok: bool, reason: str) -> dict:
+    return {"ok": ok, "reason": reason}
+
+
+def _drive_claude_session(executable, cwd: Path, snapshot_path: Path, timeout: float) -> dict:
+    """Run one tiny interactive Claude Code turn inside a pseudo-terminal.
+
+    The status line (and so the plan-limit snapshot) only refreshes in an interactive
+    session, which a headless `--print` call never is. Driving a real TUI in a PTY is the
+    only no-credential way to get those numbers without asking the user to open a terminal.
+    """
+    import fcntl
+    import pty
+    import select
+    import signal
+    import struct
+    import termios
+
+    before = snapshot_path.stat().st_mtime if snapshot_path.exists() else 0
+    cwd.mkdir(parents=True, exist_ok=True)
+    pid, fd = pty.fork()
+    if pid == 0:
+        try:
+            os.chdir(cwd)
+            os.environ["TERM"] = "xterm-256color"
+            os.execv(executable, [executable, "--model", "haiku"])
+        finally:
+            os._exit(127)
+    fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 120, 0, 0))
+    start = time.monotonic()
+    last_output = start
+    screen = ""
+    trusted = sent = False
+    outcome = _probe_outcome(False, "timeout")
+    try:
+        while time.monotonic() - start < timeout:
+            ready, _, _ = select.select([fd], [], [], 0.4)
+            if ready:
+                try:
+                    data = os.read(fd, 65536)
+                except OSError:
+                    outcome = _probe_outcome(False, "session_ended")
+                    break
+                if not data:
+                    outcome = _probe_outcome(False, "session_ended")
+                    break
+                screen = (screen + _ANSI.sub("", data.decode("utf-8", "ignore")))[-6000:]
+                last_output = time.monotonic()
+            if snapshot_path.exists() and snapshot_path.stat().st_mtime > before:
+                outcome = _probe_outcome(True, "updated")
+                break
+            lowered = screen.lower()
+            if not trusted and "trust this folder" in lowered:
+                os.write(fd, b"\r")
+                trusted, screen, last_output = True, "", time.monotonic()
+                continue
+            if not sent and any(m in lowered for m in ("/login", "select login method")):
+                outcome = _probe_outcome(False, "not_signed_in")
+                break
+            quiet = time.monotonic() - last_output > 2.5 and time.monotonic() - start > 3
+            if not sent and quiet:
+                os.write(fd, b"reply with: ok")
+                time.sleep(0.4)
+                os.write(fd, b"\r")
+                sent, last_output = True, time.monotonic()
+        else:
+            outcome = _probe_outcome(False, "no_rate_limit_data" if sent else "timeout")
+    finally:
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            try:
+                os.killpg(pid, sig)
+            except (ProcessLookupError, PermissionError):
+                pass
+            deadline = time.monotonic() + 2
+            reaped = False
+            while time.monotonic() < deadline:
+                try:
+                    done, _ = os.waitpid(pid, os.WNOHANG)
+                except ChildProcessError:
+                    reaped = True
+                    break
+                if done:
+                    reaped = True
+                    break
+                time.sleep(0.05)
+            if reaped:
+                break
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+    return outcome
+
+
+def probe_claude_usage(home: Path, claude_home: Path | None = None, timeout: float = 45) -> dict:
+    """Refresh the Claude plan-limit snapshot without the user opening a terminal.
+
+    Costs one trivial Haiku message from the signed-in Claude Code account. The probe runs
+    in ccc-mcp's own empty `usage-probe` folder, so confirming Claude Code's "trust this
+    folder" prompt there trusts nothing of the user's.
+    """
+    state = read_claude_usage(home, claude_home)
+    if not state["enabled"]:
+        return {**state, "probe": _probe_outcome(False, "sync_disabled")}
+    captured = state.get("captured_at")
+    if state["windows"] and captured and time.time() - captured < _PROBE_MIN_INTERVAL:
+        return {**state, "probe": _probe_outcome(True, "recent")}
+    try:
+        import pty  # noqa: F401 - POSIX only
+    except ImportError:
+        return {**state, "probe": _probe_outcome(False, "unsupported")}
+    from ..adapters.agents import base
+
+    try:
+        executable = base.native_executable("claude")
+    except BridgeError:
+        return {**state, "probe": _probe_outcome(False, "claude_unavailable")}
+    if not _PROBE_LOCK.acquire(blocking=False):
+        return {**state, "probe": _probe_outcome(False, "busy")}
+    try:
+        _, _, _, snapshot_path = _paths(home, claude_home)
+        outcome = _drive_claude_session(executable, home / "usage-probe", snapshot_path, timeout)
+    finally:
+        _PROBE_LOCK.release()
+    return {**read_claude_usage(home, claude_home), "probe": outcome}
 
 
 def enable_claude_usage(home: Path, claude_home: Path | None = None) -> dict:

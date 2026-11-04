@@ -45,7 +45,12 @@ from ..adapters.tunnel_client import (
 )
 from ..adapters.ui_groups import change_project_groups, project_groups
 from ..evaluation_engine.config import validated_role_weights
-from ..infra.claude_usage import disable_claude_usage, enable_claude_usage, read_claude_usage
+from ..infra.claude_usage import (
+    disable_claude_usage,
+    enable_claude_usage,
+    probe_claude_usage,
+    read_claude_usage,
+)
 from ..infra.codex_account import read_account_usage
 from ..infra.errors import BridgeError
 from ..service import CCCMCP
@@ -218,6 +223,11 @@ async def dashboard_claude_usage(request: Request):
 @endpoint
 async def dashboard_claude_usage_enable(request: Request):
     return JSONResponse(await run(enable_claude_usage, bridge_of(request).home))
+
+
+@endpoint
+async def dashboard_claude_usage_probe(request: Request):
+    return JSONResponse(await run(probe_claude_usage, bridge_of(request).home))
 
 
 @endpoint
@@ -989,6 +999,7 @@ ROUTES = [
     Route("/api/dashboard/account-usage", dashboard_account_usage, methods=["GET"]),
     Route("/api/dashboard/claude-usage", dashboard_claude_usage, methods=["GET"]),
     Route("/api/dashboard/claude-usage/enable", dashboard_claude_usage_enable, methods=["POST"]),
+    Route("/api/dashboard/claude-usage/probe", dashboard_claude_usage_probe, methods=["POST"]),
     Route("/api/dashboard/claude-usage/disable", dashboard_claude_usage_disable, methods=["POST"]),
     Route("/api/dashboard/reliability", agent_reliability, methods=["GET"]),
     Route("/api/project-groups", get_project_groups, methods=["GET"]),

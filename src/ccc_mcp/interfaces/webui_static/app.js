@@ -422,12 +422,36 @@
       </a>`).join("")}</div>` : `<div class="dashboard-empty">${esc(UI.translate("No projects yet. Add an existing folder or create a new one."))}</div>`;
   }
 
+  const CLAUDE_PROBE_REASONS = {
+    claude_unavailable: "Claude Code CLI was not found on this computer.",
+    not_signed_in: "Claude Code is not signed in. Sign in once with a Claude subscription, then check again.",
+    no_rate_limit_data: "Claude answered but reported no plan limits. Limits exist for subscription sign-ins, not API keys.",
+    timeout: "Claude Code did not respond in time. Click Check now to retry.",
+    session_ended: "Claude Code closed unexpectedly. Click Check now to retry.",
+    busy: "A check is already running.",
+    unsupported: "Automatic checks are not supported on this system yet; open Claude Code in a terminal once instead.",
+    sync_disabled: "Claude quota sync is off.",
+  };
   const USAGE_WINDOWS = ["5m", "15m", "1h", "1d", "1w", "1mo"];
   let dashboardUsageWindow = (() => {
     try { return USAGE_WINDOWS.includes(localStorage.getItem("ccc_usage_window")) ? localStorage.getItem("ccc_usage_window") : "1d"; }
     catch (e) { return "1d"; }
   })();
   let accountUsageCache = null, accountUsageAt = 0, accountUsagePending = null;
+  const CLAUDE_AUTO_CHOICES = [0, 15, 30, 60];
+  let claudeAutoAttemptAt = 0;
+  function claudeAutoMinutes() {
+    try {
+      const value = Number(localStorage.getItem("ccc_claude_auto_check"));
+      return CLAUDE_AUTO_CHOICES.includes(value) ? value : 0;
+    } catch (e) { return 0; }
+  }
+
+  function codexReason(data) {
+    if (data?.reason === "codex_unavailable") return "Codex CLI was not found on this computer.";
+    if (data?.available === false) return "Couldn't read Codex limits just now. Click Check now to retry.";
+    return "Codex returned no plan limits. Limits only exist for ChatGPT-plan sign-ins, not API keys.";
+  }
 
   function dashboardAccountUsage(data, providers, claudeUsage) {
     const number = new Intl.NumberFormat(UI.getLocale());
@@ -445,8 +469,10 @@
     const claudeState = claudeUsage?.backend_outdated
       ? `<div class="quota-unavailable"><strong>${esc(UI.translate("Console restart required"))}</strong><span>${esc(UI.translate("This page has newer Claude controls than the running ccc-mcp server. Restart ccc-mcp ui and open its new URL."))}</span></div>`
       : claudeUsage?.enabled
-      ? `${claudeWindows || `<div class="quota-unavailable"><strong>${esc(UI.translate("Waiting for Claude usage"))}</strong><span>${esc(UI.translate("Run claude yourself in a terminal, not through ccc-mcp dispatch, which skips your settings file. After its first reply, click Check now."))}</span></div>`}
+      ? `${claudeWindows || `<div class="quota-unavailable"><strong>${esc(UI.translate("Waiting for Claude usage"))}</strong><span>${esc(UI.translate("Click Check now. ccc-mcp quietly opens a short Claude Code session in the background (about 10 seconds, one tiny Haiku message) and reads your plan limits. No terminal needed."))}</span></div>`}
          ${claudeUpdated ? `<p class="quota-source ${claudeUsage.stale ? "stale" : ""}">${esc(UI.translate(claudeUsage.stale ? "Last observed · may be stale" : "Observed from Claude Code"))}: ${esc(claudeUpdated)}</p>` : ""}
+         <label class="quota-auto"><span>${esc(UI.translate("Auto-check while this page is open"))}</span><select data-claude-auto-check>${CLAUDE_AUTO_CHOICES.map((m) => `<option value="${m}" ${claudeAutoMinutes() === m ? "selected" : ""}>${esc(m ? UI.translate("Every {n} min").replace("{n}", m) : UI.translate("Off"))}</option>`).join("")}</select></label>
+         <p class="quota-source">${esc(UI.translate("Each check uses one tiny Haiku message from your Claude plan."))}</p>
          <div class="quota-actions"><button class="btn small ghost" data-claude-usage-action="refresh">${esc(UI.translate("Check now"))}</button><button class="btn small ghost" data-claude-usage-action="disable">${esc(UI.translate("Disable Claude quota sync"))}</button></div>`
       : `<div class="quota-unavailable"><strong>${esc(UI.translate("Claude quota sync is off"))}</strong><span>${esc(UI.translate("Read official 5-hour and 7-day plan limits from Claude Code's status line. No credentials or prompts are collected."))}</span></div>
          <button class="btn small quota-action" data-claude-usage-action="enable">${esc(UI.translate("Enable Claude quota sync"))}</button>`;
@@ -456,7 +482,7 @@
     const max = Math.max(1, ...daily.map((row) => row.tokens));
     const chart = daily.length ? `<div class="dashboard-account-chart" role="img" aria-label="${esc(UI.translate("Daily account token activity"))}">${daily.map((row) => `<div class="dashboard-account-day" title="${esc(row.date)} · ${number.format(row.tokens)}"><span style="height:${Math.max(3, row.tokens / max * 100)}%"></span></div>`).join("")}</div>` : `<p class="dashboard-account-no-chart">${esc(UI.translate(days ? "Daily account history is unavailable." : "Account history has daily resolution; choose one day or longer."))}</p>`;
     return `<div class="quota-grid">
-      <div class="quota-provider"><div class="quota-provider-head"><strong>Codex</strong><span>${esc(UI.translate(status(codex)))}</span></div><p>${esc(UI.translate("ChatGPT account plan window · all Codex activity"))}</p>${windows || `<div class="quota-unavailable">${esc(UI.translate("Remaining quota unavailable. Sign in with ChatGPT in Codex."))}</div>`}</div>
+      <div class="quota-provider"><div class="quota-provider-head"><strong>Codex</strong><span>${esc(UI.translate(status(codex)))}</span></div><p>${esc(UI.translate("ChatGPT account plan window · all Codex activity"))}</p>${windows || `<div class="quota-unavailable"><strong>${esc(UI.translate(codexReason(data)))}</strong></div><div class="quota-actions"><button class="btn small ghost" data-claude-usage-action="refresh-codex">${esc(UI.translate("Check now"))}</button></div>`}</div>
       <div class="quota-provider"><div class="quota-provider-head"><strong>Claude Code</strong><span>${esc(UI.translate(status(claude)))}</span></div><p>${esc(UI.translate("Claude plan allowance"))}</p>${claudeState}</div>
     </div><details class="account-history"><summary>${esc(UI.translate("Account-wide token history"))} · ${total === null ? "—" : number.format(total)} ${esc(UI.translate("lifetime tokens"))}</summary><p>${esc(UI.translate("This is the signed-in ChatGPT account across apps and all time. It cannot be attributed to this workspace, and is not a remaining allowance."))}</p>${chart}</details>`;
   }
@@ -479,12 +505,25 @@
     pending.then((value) => {
       if (stale(gen) || !target.isConnected) return;
       target.innerHTML = dashboardAccountUsage(value.data, value.providers, value.claudeUsage);
+      target.querySelector("[data-claude-auto-check]")?.addEventListener("change", (event) => {
+        try { localStorage.setItem("ccc_claude_auto_check", event.target.value); } catch (e) {}
+        claudeAutoAttemptAt = Date.now();
+      });
       target.querySelectorAll("[data-claude-usage-action]").forEach((button) => button.addEventListener("click", async (event) => {
         const button = event.currentTarget;
+        const action = button.dataset.claudeUsageAction;
+        const label = button.textContent;
         button.disabled = true;
         try {
-          if (button.dataset.claudeUsageAction !== "refresh")
-            await api(`/dashboard/claude-usage/${button.dataset.claudeUsageAction}`, { method: "POST" });
+          if (action === "refresh" || action === "enable" || action === "disable") {
+            if (action === "enable" || action === "disable")
+              await api(`/dashboard/claude-usage/${action}`, { method: "POST" });
+            if (action !== "disable") {
+              button.textContent = UI.translate("Checking Claude…");
+              const outcome = (await api("/dashboard/claude-usage/probe", { method: "POST" })).probe;
+              if (outcome && !outcome.ok) toast(UI.translate(CLAUDE_PROBE_REASONS[outcome.reason] || CLAUDE_PROBE_REASONS.timeout), true);
+            }
+          }
           accountUsageCache = null;
           loadDashboardAccountUsage(gen, true);
         } catch (err) {
@@ -492,6 +531,7 @@
             ? "This console is running an older backend. Restart ccc-mcp ui and open the new URL."
             : err.message), true);
           button.disabled = false;
+          button.textContent = label;
         }
       }));
     }).catch((err) => toast(err.message, true));
@@ -630,7 +670,7 @@
       </div>
       <section class="dashboard-panel dashboard-usage">
         <div class="dashboard-panel-head"><div><h2>${esc(UI.translate("Usage and remaining allowance"))}</h2><p>${esc(UI.translate("Plan windows come from the account; the time filter applies to workspace CLI records and available daily history."))}</p></div><div class="usage-window-picker" role="group" aria-label="${esc(UI.translate("Workspace CLI period"))}">${USAGE_WINDOWS.map((window) => `<button class="usage-window-button ${dashboardUsageWindow === window ? "active" : ""}" data-usage-window="${window}" aria-pressed="${dashboardUsageWindow === window}">${esc(UI.translate(window))}</button>`).join("")}</div></div>
-        <p class="quota-refresh-note">${esc(UI.translate("This page checks every five minutes. Claude limits update when Claude Code receives a response."))}</p>
+        <p class="quota-refresh-note">${esc(UI.translate("This page re-reads Codex every five minutes. Claude limits refresh when you click Check now."))}</p>
         <div id="dashboard-account-usage" class="dashboard-account-usage">${esc(UI.translate("Loading account usage…"))}</div>
         <div class="dashboard-usage-subhead">${esc(UI.translate("This workspace · CLI runs"))} · ${esc(UI.translate(dashboardUsageWindow))}</div>
         <div id="dashboard-cli-usage">${dashboardUsagePanel(snapshot.usage)}</div>
@@ -677,6 +717,15 @@
       }));
       trackTimer(setInterval(async () => {
         if (stale(gen)) return;
+        const minutes = claudeAutoMinutes();
+        const claude = accountUsageCache?.claudeUsage;
+        const observed = (claude?.captured_at || 0) * 1000;
+        const due = Math.max(observed, claudeAutoAttemptAt) + minutes * 60000;
+        if (minutes && claude?.enabled && Date.now() >= due) {
+          claudeAutoAttemptAt = Date.now();
+          try { await api("/dashboard/claude-usage/probe", { method: "POST" }); } catch (e) {}
+          accountUsageCache = null;
+        }
         loadDashboardAccountUsage(gen, true);
         loadDashboardReliability(gen);
         try {

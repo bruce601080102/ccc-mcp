@@ -105,6 +105,10 @@ def test_claude_quota_controls_are_token_gated(client, monkeypatch):
     assert client.get("/api/dashboard/claude-usage").json() == expected
     assert client.post("/api/dashboard/claude-usage/enable").json() == expected
     assert client.post("/api/dashboard/claude-usage/disable").json() == {"enabled": False}
+    probed = {**expected, "probe": {"ok": True, "reason": "updated"}}
+    monkeypatch.setattr("ccc_mcp.interfaces.web.probe_claude_usage", lambda home: probed)
+    assert client.post("/api/dashboard/claude-usage/probe").json() == probed
+    assert TestClient(client.app).post("/api/dashboard/claude-usage/probe").status_code == 401
     unauthenticated = TestClient(client.app)
     assert unauthenticated.get("/api/dashboard/claude-usage").status_code == 401
     assert unauthenticated.post("/api/dashboard/claude-usage/enable").status_code == 401
