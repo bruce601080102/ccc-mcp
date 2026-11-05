@@ -13,8 +13,8 @@ from ..infra.config import cli_language, metadata_name
 from ..infra.errors import BridgeError, PermissionDenied
 from ..infra.security import atomic_write, canonical, redact, reject_secrets, safe_path
 from .context import context_policy, identifier
-from .models import PROTOCOL_VERSION
 from .flows import (
+    BUILTIN_FLOWS,
     DEFAULT_REVIEW_GATE,
     DEFAULT_SELECTION,
     DEFAULT_WORKFLOW,
@@ -29,8 +29,16 @@ from .flows import (
     validated_workflow,
     validated_workflow_name,
 )
-from .flows import BUILTIN_FLOWS
-from .roles import AGENT_ROLES, NAMEABLE_ROLES, READ_ONLY_ROLES, default_provider, validated_role_avatars, validated_role_name, validated_role_names
+from .models import PROTOCOL_VERSION
+from .roles import (
+    AGENT_ROLES,
+    NAMEABLE_ROLES,
+    READ_ONLY_ROLES,
+    default_provider,
+    validated_role_avatars,
+    validated_role_name,
+    validated_role_names,
+)
 
 # "chatgpt" is interactive, not CLI-dispatched, so it is not in the ADAPTERS registry
 # but is still a configurable provider.

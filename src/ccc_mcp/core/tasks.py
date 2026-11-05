@@ -20,6 +20,12 @@ from ..infra.security import canonical, digest, reject_secrets
 from .approval import local_identity
 from .context import identifier
 from .flows import GATE_ROLES
+from .models import (
+    AgentReport,
+    ClarificationRequest,
+    ClarificationResponse,
+    ContextSnapshot,
+)
 from .roles import (
     AGENT_ROLES,
     DOCUMENT_FILES,
@@ -27,12 +33,6 @@ from .roles import (
     REPORT_FILES,
     RUNNING_STATE,
     writes_files,
-)
-from .models import (
-    AgentReport,
-    ClarificationRequest,
-    ClarificationResponse,
-    ContextSnapshot,
 )
 
 
@@ -2507,7 +2507,7 @@ class TaskHub:
             venv_python_path,
         )
         from ..adapters.tunnel_client import tunnel_client_path
-        from .configuration import ROLES, detect_profile
+        from .configuration import detect_profile
 
         task_id = task_id or self.project_workstream_task(project_id)
         self.task(project_id, task_id)

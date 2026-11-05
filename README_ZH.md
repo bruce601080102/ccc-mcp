@@ -190,3 +190,7 @@ python3.11 -m pytest -q
 ```
 
 本專案要求 Python 3.11 以上。真實 agent 測試需要本機已安裝且登入的 CLI，預設不會執行；詳見[安裝與登入](docs/ch/1-install-and-sign-in.md)。
+
+## 發版
+
+新版只需修改 `src/ccc_mcp/__init__.py` 的 `__version__`。每個 Pull Request 與推送到 `main` 的提交，都會先執行與發版相同的 lint、多版本及跨平台測試、套件建置、wheel 安裝冒煙測試。`main` 全數通過後，從 `main` 手動執行 **CI and Release**，不必再填一次版本。流程會讀取實際產出的 wheel 與 sdist 版本並核對一致，再建立對應的 GitHub Release 並發布到 PyPI。

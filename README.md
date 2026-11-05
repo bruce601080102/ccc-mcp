@@ -189,3 +189,7 @@ python3.11 -m pytest -q
 ```
 
 The repository requires Python 3.11 or newer. Real-agent tests are opt-in because they need locally installed, authenticated CLIs; see [Chinese](docs/ch/1-install-and-sign-in.md) or [English](docs/en/1-install-and-sign-in.md).
+
+## Releasing
+
+Change only `__version__` in `src/ccc_mcp/__init__.py` for a new release. Every pull request and push to `main` runs the same lint, test matrix, package build, and wheel installation checks used by the release workflow. Once those checks pass on `main`, run **CI and Release** manually from `main`; no version input is needed. The workflow reads the version from the built wheel and sdist, checks that they agree, then creates the matching GitHub release and publishes the artifacts to PyPI.

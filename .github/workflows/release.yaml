@@ -1,18 +1,16 @@
-name: Release
+name: CI and Release
 
 on:
+  push:
+    branches: [main]
+  pull_request:
   workflow_dispatch:
-    inputs:
-      version:
-        description: Release version without the v prefix (for example 0.1.1)
-        required: true
-        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ inputs.version }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: false
 
 jobs:
@@ -25,7 +23,14 @@ jobs:
           python-version: "3.12"
           cache: pip
       - run: python -m pip install "ruff>=0.13,<1"
-      - run: ruff check src tests
+      - run: ruff check src tests scripts
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Check bundled UI JavaScript syntax
+        run: |
+          node --check src/ccc_mcp/interfaces/webui_static/app.js
+          node --check src/ccc_mcp/interfaces/webui_static/i18n.js
 
   test:
     name: test (${{ matrix.os }}, py${{ matrix.python-version }})
@@ -66,28 +71,25 @@ jobs:
     name: build sdist + wheel
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.version.outputs.version }}
+      version: ${{ steps.artifacts.outputs.version }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - name: Version must match the package
-        id: version
-        env:
-          RELEASE_VERSION: ${{ inputs.version }}
+      - name: Releases must run from main
+        if: github.event_name == 'workflow_dispatch'
         run: |
-          version=$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' src/ccc_mcp/__init__.py)
-          if [ "${RELEASE_VERSION}" != "${version}" ]; then
-            echo "Requested version ${RELEASE_VERSION} does not match package version ${version}" >&2
+          test "${GITHUB_REF}" = "refs/heads/main" || {
+            echo "Run releases from main so the published artifacts match the main branch" >&2
             exit 1
-          fi
-          echo "version=${version}" >> "${GITHUB_OUTPUT}"
-      - run: python -m pip install build twine
+          }
+      - run: python -m pip install build twine packaging
       - run: python -m build
       - run: python -m twine check --strict dist/*
-      - name: Require one universal wheel
-        run: python -c "from pathlib import Path; wheels = list(Path('dist').glob('*.whl')); assert len(wheels) == 1 and wheels[0].name.endswith('-py3-none-any.whl'), wheels"
+      - name: Validate artifacts and read their version
+        id: artifacts
+        run: python scripts/release_artifacts.py >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v7
         with:
           name: dist
@@ -122,6 +124,7 @@ jobs:
 
   github-release:
     name: attach build to GitHub Release
+    if: github.event_name == 'workflow_dispatch'
     needs: [lint, test, build, smoke-install]
     runs-on: ubuntu-latest
     permissions:
@@ -139,6 +142,7 @@ jobs:
 
   publish:
     name: publish
+    if: github.event_name == 'workflow_dispatch'
     needs: [build, smoke-install, github-release]
     runs-on: ubuntu-latest
     environment:
