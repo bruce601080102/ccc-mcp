@@ -1,131 +1,34 @@
-name: CI and Release
+name: Release
 
 on:
-  push:
-    branches: [main]
-  pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  group: release
   cancel-in-progress: false
 
 jobs:
-  lint:
+  require-main:
+    name: require main branch
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
-        with:
-          python-version: "3.12"
-          cache: pip
-      - run: python -m pip install "ruff>=0.13,<1"
-      - run: ruff check src tests scripts
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-      - name: Check bundled UI JavaScript syntax
-        run: |
-          node --check src/ccc_mcp/interfaces/webui_static/app.js
-          node --check src/ccc_mcp/interfaces/webui_static/i18n.js
-
-  test:
-    name: test (${{ matrix.os }}, py${{ matrix.python-version }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # Linux covers every supported Python version. macOS and Windows run the
-          # same suite once to catch OS-specific path, process and locking behavior.
-          - os: ubuntu-latest
-            python-version: "3.11"
-          - os: ubuntu-latest
-            python-version: "3.12"
-          - os: ubuntu-latest
-            python-version: "3.13"
-          - os: ubuntu-latest
-            python-version: "3.14"
-          - os: macos-latest
-            python-version: "3.14"
-          - os: windows-latest
-            python-version: "3.14"
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
-        with:
-          python-version: ${{ matrix.python-version }}
-          cache: pip
-      - name: Configure Git identity
-        run: |
-          git config --global user.name "ci"
-          git config --global user.email "ci@example.invalid"
-          git config --global init.defaultBranch main
-      - run: python -m pip install -e ".[dev]"
-      - run: python -m pytest -q
-
-  build:
-    name: build sdist + wheel
-    runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.artifacts.outputs.version }}
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
-        with:
-          python-version: "3.12"
-      - name: Releases must run from main
-        if: github.event_name == 'workflow_dispatch'
+      - name: Release only from main
         run: |
           test "${GITHUB_REF}" = "refs/heads/main" || {
-            echo "Run releases from main so the published artifacts match the main branch" >&2
+            echo "Choose main when starting the release workflow" >&2
             exit 1
           }
-      - run: python -m pip install build twine packaging
-      - run: python -m build
-      - run: python -m twine check --strict dist/*
-      - name: Validate artifacts and read their version
-        id: artifacts
-        run: python scripts/release_artifacts.py >> "$GITHUB_OUTPUT"
-      - uses: actions/upload-artifact@v7
-        with:
-          name: dist
-          path: dist/
-          if-no-files-found: error
 
-  smoke-install:
-    name: install wheel (${{ matrix.os }})
-    needs: build
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    steps:
-      - uses: actions/setup-python@v7
-        with:
-          python-version: "3.14"
-      - uses: actions/download-artifact@v8
-        with:
-          name: dist
-          path: dist
-      - name: Install the exact built wheel
-        run: python -c "from pathlib import Path; import subprocess, sys; wheels = list(Path('dist').glob('*.whl')); assert len(wheels) == 1, wheels; subprocess.check_call([sys.executable, '-m', 'pip', 'install', str(wheels[0])])"
-      - name: Smoke-test the installed CLI
-        run: |
-          python -m ccc_mcp --help
-          python -c "import ccc_mcp, importlib.metadata as m; assert ccc_mcp.__version__ == m.version('ccc-mcp'); print(ccc_mcp.__version__)"
-      - name: Verify the Windows runtime dependency
-        if: runner.os == 'Windows'
-        run: python -c "import win32job"
+  verify:
+    needs: require-main
+    uses: ./.github/workflows/checks.yaml
 
   github-release:
     name: attach build to GitHub Release
-    if: github.event_name == 'workflow_dispatch'
-    needs: [lint, test, build, smoke-install]
+    needs: verify
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -137,13 +40,12 @@ jobs:
       - name: Create release with the sdist and wheel
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_VERSION: ${{ needs.build.outputs.version }}
+          RELEASE_VERSION: ${{ needs.verify.outputs.version }}
         run: gh release create "v${RELEASE_VERSION}" dist/* --repo "${GITHUB_REPOSITORY}" --target "${GITHUB_SHA}" --title "v${RELEASE_VERSION}" --generate-notes
 
   publish:
     name: publish
-    if: github.event_name == 'workflow_dispatch'
-    needs: [build, smoke-install, github-release]
+    needs: [verify, github-release]
     runs-on: ubuntu-latest
     environment:
       name: pypi

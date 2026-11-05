@@ -6,7 +6,7 @@
 
 **讓 ChatGPT Chat 在你的電腦上寫程式、跑測試、完成審查。**
 
-[![CI](https://img.shields.io/github/actions/workflow/status/bruce601080102/ccc-mcp/release.yaml?branch=main&style=flat-square&logo=githubactions&logoColor=white&label=CI)](https://github.com/bruce601080102/ccc-mcp/actions/workflows/release.yaml)
+[![CI](https://img.shields.io/github/actions/workflow/status/bruce601080102/ccc-mcp/ci.yaml?branch=main&style=flat-square&logo=githubactions&logoColor=white&label=CI)](https://github.com/bruce601080102/ccc-mcp/actions/workflows/ci.yaml)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![Platforms](https://img.shields.io/badge/Platforms-macOS%20%7C%20Linux%20%7C%20Windows-555555?style=flat-square)](docs/ch/1-install-and-sign-in.md)
 [![MCP](https://img.shields.io/badge/Protocol-MCP-6E56CF?style=flat-square)](https://modelcontextprotocol.io/)
@@ -193,4 +193,4 @@ python3.11 -m pytest -q
 
 ## 發版
 
-新版只需修改 `src/ccc_mcp/__init__.py` 的 `__version__`。每個 Pull Request 與推送到 `main` 的提交，都會先執行與發版相同的 lint、多版本及跨平台測試、套件建置、wheel 安裝冒煙測試。`main` 全數通過後，從 `main` 手動執行 **CI and Release**，不必再填一次版本。流程會讀取實際產出的 wheel 與 sdist 版本並核對一致，再建立對應的 GitHub Release 並發布到 PyPI。
+發版時間和版本號由你決定：要發新版時，手動修改 `src/ccc_mcp/__init__.py` 的 `__version__`。推送和 Pull Request 只會執行 **CI** 檢查（lint、多版本及跨平台測試、套件建置、wheel 安裝），不會修改版本或發布。準備發版時，才從 `main` 手動執行 **Release**；它會重跑相同檢查，核對 wheel 與 sdist 的版本一致，再建立 GitHub Release 並發布到 PyPI。

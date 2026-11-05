@@ -6,7 +6,7 @@
 
 **Let ChatGPT Chat write, test, and review code on your own computer.**
 
-[![CI](https://img.shields.io/github/actions/workflow/status/bruce601080102/ccc-mcp/release.yaml?branch=main&style=flat-square&logo=githubactions&logoColor=white&label=CI)](https://github.com/bruce601080102/ccc-mcp/actions/workflows/release.yaml)
+[![CI](https://img.shields.io/github/actions/workflow/status/bruce601080102/ccc-mcp/ci.yaml?branch=main&style=flat-square&logo=githubactions&logoColor=white&label=CI)](https://github.com/bruce601080102/ccc-mcp/actions/workflows/ci.yaml)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![Platforms](https://img.shields.io/badge/Platforms-macOS%20%7C%20Linux%20%7C%20Windows-555555?style=flat-square)](docs/en/1-install-and-sign-in.md)
 [![MCP](https://img.shields.io/badge/Protocol-MCP-6E56CF?style=flat-square)](https://modelcontextprotocol.io/)
@@ -192,4 +192,4 @@ The repository requires Python 3.11 or newer. Real-agent tests are opt-in becaus
 
 ## Releasing
 
-Change only `__version__` in `src/ccc_mcp/__init__.py` for a new release. Every pull request and push to `main` runs the same lint, test matrix, package build, and wheel installation checks used by the release workflow. Once those checks pass on `main`, run **CI and Release** manually from `main`; no version input is needed. The workflow reads the version from the built wheel and sdist, checks that they agree, then creates the matching GitHub release and publishes the artifacts to PyPI.
+You choose when to release and manually change `__version__` in `src/ccc_mcp/__init__.py`. Pushes and pull requests run **CI** checks only: lint, the test matrix, package build, and wheel installation. They never change the version or publish a release. When ready, start **Release** manually from `main`; it reruns those checks, reads the version from the matching wheel and sdist, then creates the GitHub release and publishes to PyPI.
