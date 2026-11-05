@@ -23,10 +23,14 @@ def _artifacts(dist: Path, *, wheel_version: str = "0.3.0", sdist_version: str =
     return wheel, sdist
 
 
-def _check_release(tmp_path):
+def _check_release(tmp_path, *options):
     script = Path(__file__).resolve().parents[1] / "scripts" / "release_artifacts.py"
     return subprocess.run(
-        [sys.executable, str(script)], cwd=tmp_path, capture_output=True, text=True, check=False
+        [sys.executable, str(script), *options],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
     )
 
 
@@ -58,3 +62,10 @@ def test_release_version_rejects_filename_metadata_mismatch(tmp_path):
     result = _check_release(tmp_path)
     assert result.returncode != 0
     assert "filenames and metadata have different versions" in result.stderr
+
+
+def test_release_version_rejects_different_manual_request(tmp_path):
+    _artifacts(tmp_path / "dist")
+    result = _check_release(tmp_path, "--expected", "0.4.0")
+    assert result.returncode != 0
+    assert "Built version 0.3.0 != requested version 0.4.0" in result.stderr

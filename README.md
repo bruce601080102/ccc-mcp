@@ -192,4 +192,4 @@ The repository requires Python 3.11 or newer. Real-agent tests are opt-in becaus
 
 ## Releasing
 
-You choose when to release and manually change `__version__` in `src/ccc_mcp/__init__.py`. Pushes and pull requests run **CI** checks only: lint, the test matrix, package build, and wheel installation. They never change the version or publish a release. When ready, start **Release** manually from `main`; it reruns those checks, reads the version from the matching wheel and sdist, then creates the GitHub release and publishes to PyPI.
+You choose both the release version and when to publish. Pushes and pull requests run a short **CI** check: lint and focused tests on Linux and Windows. They do not build release artifacts, change the version, or publish. When ready, start **Release** manually from `main` and enter the version in the GitHub form (for example `0.3.0`, without `v`). Release runs the complete Python and platform test matrix, builds and installs the wheel, verifies the wheel and sdist, and tags the matching versioned source commit before publishing to GitHub Releases and PyPI. It does not update `main`'s version file.

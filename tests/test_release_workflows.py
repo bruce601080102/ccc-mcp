@@ -22,9 +22,23 @@ def test_push_and_pull_request_cannot_publish():
     assert ci["jobs"] == {"checks": {"uses": "./.github/workflows/checks.yaml"}}
 
     assert set(checks["on"]) == {"workflow_call"}
+    assert checks["on"]["workflow_call"]["inputs"]["full_checks"]["default"] == "false"
+    assert checks["on"]["workflow_call"]["inputs"]["release_version"]["default"] == ""
     assert checks["permissions"] == {"contents": "read"}
-    assert set(checks["jobs"]) == {"lint", "test", "build", "smoke-install"}
+    assert set(checks["jobs"]) == {"lint", "quick-test", "test", "build", "smoke-install"}
+    assert checks["jobs"]["quick-test"]["if"] == "inputs.full_checks == false"
+    for name in ("test", "build", "smoke-install"):
+        assert checks["jobs"][name]["if"] == "inputs.full_checks"
+    version_step = next(
+        step
+        for step in checks["jobs"]["test"]["steps"]
+        if step.get("name") == "Use the manually chosen version for this checkout"
+    )
+    assert version_step["shell"] == "bash"
 
     assert set(release["on"]) == {"workflow_dispatch"}
+    assert release["on"]["workflow_dispatch"]["inputs"]["version"]["required"] == "true"
     assert release["jobs"]["verify"]["uses"] == "./.github/workflows/checks.yaml"
+    assert release["jobs"]["verify"]["with"]["full_checks"] == "true"
+    assert release["jobs"]["verify"]["with"]["release_version"] == "${{ inputs.version }}"
     assert {"github-release", "publish"} <= set(release["jobs"])

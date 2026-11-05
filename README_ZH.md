@@ -193,4 +193,4 @@ python3.11 -m pytest -q
 
 ## 發版
 
-發版時間和版本號由你決定：要發新版時，手動修改 `src/ccc_mcp/__init__.py` 的 `__version__`。推送和 Pull Request 只會執行 **CI** 檢查（lint、多版本及跨平台測試、套件建置、wheel 安裝），不會修改版本或發布。準備發版時，才從 `main` 手動執行 **Release**；它會重跑相同檢查，核對 wheel 與 sdist 的版本一致，再建立 GitHub Release 並發布到 PyPI。
+發版時間和版本號都由你決定。推送和 Pull Request 只跑較快的 **CI**：lint 與 Linux、Windows 的重點測試；不會建置發版套件、修改版本或發布。準備發版時，從 `main` 手動執行 **Release**，在 GitHub 表單輸入版號（例如 `0.3.0`，不用加 `v`）。Release 才會跑完整的 Python 與跨平台測試矩陣、建置及安裝 wheel、核對 wheel 與 sdist，為一致的原始碼建立 tag，再發布到 GitHub Releases 與 PyPI；不會改動 `main` 的版本檔。

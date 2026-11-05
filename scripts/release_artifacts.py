@@ -1,10 +1,6 @@
-"""Validate release distributions and emit their single, built-in version.
+"""Validate built distributions and emit their version for the release workflow."""
 
-The release workflow reads this after building. The package's __version__ is the
-only version edited for a release; neither the workflow nor its dispatch form
-supplies another version that can drift out of sync.
-"""
-
+import argparse
 import tarfile
 import zipfile
 from email.parser import BytesParser
@@ -69,4 +65,10 @@ def release_version(dist: Path) -> str:
 
 
 if __name__ == "__main__":
-    print(f"version={release_version(Path('dist'))}")
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--expected", default="", help="Version entered in the Release form")
+    args = parser.parse_args()
+    version = release_version(Path("dist"))
+    if args.expected and version != args.expected:
+        raise ValueError(f"Built version {version} != requested version {args.expected}")
+    print(f"version={version}")

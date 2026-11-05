@@ -473,7 +473,13 @@ def test_account_usage_reads_documented_app_server_metrics(tmp_path, monkeypatch
         encoding="utf-8",
     )
     server.chmod(0o755)
+    real_subprocess_exec = asyncio.create_subprocess_exec
+
+    async def launch_python_fixture(executable, *args, **kwargs):
+        return await real_subprocess_exec(sys.executable, executable, *args, **kwargs)
+
     monkeypatch.setattr("ccc_mcp.infra.codex_account.shutil.which", lambda name: str(server))
+    monkeypatch.setattr("ccc_mcp.infra.codex_account.asyncio.create_subprocess_exec", launch_python_fixture)
     data = asyncio.run(read_account_usage(timeout=2))
     assert data["available"] is True
     assert data["summary"]["lifetimeTokens"] == 1200

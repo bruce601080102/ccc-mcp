@@ -2,7 +2,6 @@
 
 import json
 import os
-import shlex
 import subprocess
 import sys
 import time
@@ -24,7 +23,7 @@ def test_statusline_capture_preserves_existing_command_and_only_saves_limits(tmp
     claude.mkdir()
     previous = {
         "type": "command",
-        "command": f"{shlex.quote(sys.executable)} -c 'import sys; print(\"existing status\")'",
+        "command": "echo existing status",
         "padding": 2,
         "refreshInterval": 30,
     }
