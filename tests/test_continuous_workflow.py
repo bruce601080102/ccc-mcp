@@ -197,14 +197,69 @@ def test_project_authorization_drives_one_continuous_workstream(bridge, human):
     assert bridge.context_sync_status("demo")["pending_reports"] == []
 
     second = bridge.create_task("demo", "繼續加入第二個功能", ["沿用既有上下文"])
-    assert second["id"] == task_id
-    assert second["reused"] is True
+    assert second["id"] == "TASK-0002"
+    assert second["reused"] is False
     assert second["state"] == "CREATED"
-    assert len(bridge.list_tasks("demo")) == 1
+    assert [task["id"] for task in bridge.list_tasks("demo")] == ["TASK-0001", "TASK-0002"]
     requirements = bridge.store.all(
         "SELECT path FROM artifacts WHERE project_id='demo' AND path LIKE '%/requirements/%'"
     )
     assert len(requirements) == 2
+
+
+def test_an_unfinished_task_keeps_receiving_the_next_request(bridge, human):
+    bridge.authorize_project_local("demo")
+    first = bridge.create_task("demo", "加入第一個功能", ["功能可用"])
+
+    follow_up = bridge.create_task("demo", "補充：同一個工作串", ["沿用既有上下文"])
+
+    assert follow_up["id"] == first["id"]
+    assert follow_up["reused"] is True
+    assert len(bridge.list_tasks("demo")) == 1
+
+
+def _finished_task(bridge, requirement="加入功能"):
+    task = bridge.create_task("demo", requirement, ["功能可用"])
+    bridge.cancel_task("demo", task["id"], "done for this test")
+    return task["id"]
+
+
+def test_a_deleted_task_leaves_the_lists_and_its_id_is_never_handed_out_again(bridge, human):
+    bridge.authorize_project_local("demo")
+    first = _finished_task(bridge)
+    second = _finished_task(bridge, "第二個功能")
+    assert (first, second) == ("TASK-0001", "TASK-0002")
+
+    assert bridge.delete_task("demo", second) == {"deleted": second}
+
+    assert [task["id"] for task in bridge.list_tasks("demo")] == [first]
+    with pytest.raises(BridgeError, match="Task not found"):
+        bridge.task("demo", second)
+    assert second not in {task["task_id"] for task in bridge.dashboard_snapshot()["tasks"]}
+    assert bridge.create_task("demo", "第三個功能", ["功能可用"])["id"] == "TASK-0003"
+    kept = bridge.store.one(
+        "SELECT 1 FROM tasks WHERE project_id='demo' AND id=?", (second,)
+    )
+    assert kept, "history stays in the database for audit"
+
+
+def test_a_task_that_is_still_in_progress_cannot_be_deleted(bridge, human):
+    bridge.authorize_project_local("demo")
+    task = bridge.create_task("demo", "加入功能", ["功能可用"])
+
+    with pytest.raises(BridgeError, match="Stop or finish"):
+        bridge.delete_task("demo", task["id"])
+
+    assert [row["id"] for row in bridge.list_tasks("demo")] == [task["id"]]
+
+
+def test_deleting_twice_reports_the_task_as_gone(bridge, human):
+    bridge.authorize_project_local("demo")
+    task_id = _finished_task(bridge)
+    bridge.delete_task("demo", task_id)
+
+    with pytest.raises(BridgeError, match="Task not found"):
+        bridge.delete_task("demo", task_id)
 
 
 def test_language_defaults_to_chinese_and_can_be_english(bridge):

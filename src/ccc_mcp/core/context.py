@@ -954,7 +954,9 @@ class ContextHub:
         latest = self.latest(project_id)
         snapshot = latest["snapshot"]
         tasks = self.store.all(
-            "SELECT id,state,requirement,acceptance FROM tasks WHERE project_id=? ORDER BY created",
+            "SELECT id,state,requirement,acceptance FROM tasks WHERE project_id=? AND NOT EXISTS "
+            "(SELECT 1 FROM task_deletions d WHERE d.project_id=tasks.project_id "
+            "AND d.task_id=tasks.id) ORDER BY created",
             (project_id,),
         )
         decisions = self.store.all(

@@ -18,7 +18,7 @@ ccc-mcp project add 路徑 --id 專案ID --write
 ccc-mcp project authorize 專案ID
 ```
 
-授權後固定走 Agent／Context 證據鏈，不需選模式。ChatGPT 對一般修改需求呼叫 `start_project_request`，後端會建立或沿用內部工作串並派出設定的 SA；PM 以 `advance_project` 提交有來源的 ContextPatch 後，系統自動派出 SD/RD、REVIEW 並完成本輪。實作 Agent 在原專案寫檔；MCP 不提供直接寫檔捷徑。
+授權後固定走 Agent／Context 證據鏈，不需選模式。ChatGPT 對一般修改需求呼叫 `start_project_request`，後端會派出設定的 SA；上一個任務未結束時沿用它，已完成、取消或駁回時建立下一個 TASK 編號；PM 以 `advance_project` 提交有來源的 ContextPatch 後，系統自動派出 SD/RD、REVIEW 並完成本輪。實作 Agent 在原專案寫檔；MCP 不提供直接寫檔捷徑。
 
 設定格式（`ROLE`、`PROVIDER` 是要替換的欄位）：
 
@@ -189,7 +189,7 @@ ccc-mcp --project demo-app task preflight
 | `role=SA`／`SD/RD` | 本次派工的角色 | 可說「先分析，再一起設計與實作」；工具須使用正確角色值 |
 | `adapter=real` | 真實執行流程；`fake` 只模擬 | 工具預設 real；fake 結果不代表真實開發 |
 | `Context Version` | 派工使用的共享上下文版本 | 不必背數字，由 ChatGPT 查詢目前版本 |
-| `PLAN-A`、`TASK-0001` | 內部稽核 ID | 已授權專案會重用同一工作串；一般使用者不必輸入或管理 |
+| `PLAN-A`、`TASK-0001` | 內部稽核 ID | 上一個任務未結束時，新需求沿用同一個 TASK；任務完成、取消或駁回後，下一個需求建立新編號（TASK-0002…），編號不會重複使用 |
 
 ChatGPT 透過 MCP 工具操作，不是看到單字就必然執行。請確認回覆有實際任務／執行 ID 與原始結果；若只提供一般建議，可說「請實際呼叫 ccc-mcp 工具」。
 

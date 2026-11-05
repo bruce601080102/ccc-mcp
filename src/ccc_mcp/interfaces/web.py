@@ -672,6 +672,14 @@ async def task_stop(request: Request):
 
 
 @endpoint
+async def task_delete(request: Request):
+    bridge = bridge_of(request)
+    return JSONResponse(await run(
+        bridge.delete_task, request.path_params["project_id"], request.path_params["task_id"],
+    ))
+
+
+@endpoint
 async def task_message(request: Request):
     bridge = bridge_of(request)
     body = await _body(request)
@@ -1112,6 +1120,7 @@ ROUTES = [
     Route("/api/projects/{project_id}/tasks/{task_id}/resume", task_resume, methods=["POST"]),
     Route("/api/projects/{project_id}/tasks/{task_id}/stop", task_stop, methods=["POST"]),
     Route("/api/projects/{project_id}/tasks/{task_id}/messages", task_message, methods=["POST"]),
+    Route("/api/projects/{project_id}/tasks/{task_id}/delete", task_delete, methods=["POST"]),
     Route("/api/skills", list_skills, methods=["GET"]),
     Route("/api/skills/discover", discover_skills, methods=["GET"]),
     Route("/api/skills/install-discovered", install_discovered_skill, methods=["POST"]),

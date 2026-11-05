@@ -283,6 +283,8 @@
     "Open questions": "待釐清問題", "Things the PM still needs answered.": "PM 仍需要得到答覆的事項。", "Nothing is waiting on an answer.": "目前沒有等待回覆的問題。",
     "Work requests tracked in this context.": "此 Context 追蹤的工作需求。",
     "Skills in this context": "Context 內的 Skills", "Skills the agents receive with each handoff.": "每次交接時 Agent 會收到的 Skills。",
+    "is typing…": "正在輸入…", "Delete": "刪除", "Delete task": "刪除任務", "Delete this task?": "刪除這個任務？", "Task deleted.": "任務已刪除。",
+    "The task disappears from this console. Its history is kept for audit and the ID is not reused. Files already changed in the project are not touched.": "這個任務會從控制台消失。紀錄會保留作為稽核，編號不會重複使用，專案內已修改的檔案不會被動到。",
     "Connection status": "連線狀態", "Found on this computer": "本機找到", "Discover local Skills": "探索本機 Skills",
     "Progress": "進度", "Policy": "政策", "Rules applied to every agent run.": "套用在每次 Agent 執行的規則。",
     "Design": "設計", "Implementation": "實作", "Design and implementation": "設計與實作", "Workflow role": "工作流程角色",

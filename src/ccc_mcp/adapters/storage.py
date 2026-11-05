@@ -133,6 +133,17 @@ CREATE TRIGGER IF NOT EXISTS project_deletions_no_update BEFORE UPDATE ON projec
  BEGIN SELECT RAISE(ABORT, 'Project deletion history is immutable'); END;
 CREATE TRIGGER IF NOT EXISTS project_deletions_no_delete BEFORE DELETE ON project_deletions
  BEGIN SELECT RAISE(ABORT, 'Project deletion history is immutable'); END;
+-- A task the operator removed from the console. Like project_deletions this only hides
+-- the task (lists, dashboard, shared Context); its executions, evaluations and events
+-- stay for audit, and its ID is never handed out again.
+CREATE TABLE IF NOT EXISTS task_deletions (
+ id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
+ task_id TEXT NOT NULL, identity TEXT NOT NULL, created TEXT NOT NULL,
+ UNIQUE(project_id, task_id));
+CREATE TRIGGER IF NOT EXISTS task_deletions_no_update BEFORE UPDATE ON task_deletions
+ BEGIN SELECT RAISE(ABORT, 'Task deletion history is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS task_deletions_no_delete BEFORE DELETE ON task_deletions
+ BEGIN SELECT RAISE(ABORT, 'Task deletion history is immutable'); END;
 -- Read-path indexes only: every query below already filters by project_id (often also
 -- task_id) and these columns have no other supporting index, so lookups on these tables
 -- were full scans. Purely additive (IF NOT EXISTS), so they cannot change any query's

@@ -72,6 +72,25 @@ def test_task_conversation_endpoints_are_persistent_and_token_gated(tmp_path, cl
     assert client.get("/api/projects/missing/tasks/TASK-0001/timeline").status_code == 400
 
 
+def test_a_finished_task_can_be_deleted_from_the_console_but_a_running_one_cannot(tmp_path, client):
+    repo = mkrepo(tmp_path, "removal")
+    assert client.post("/api/projects/add", json={"path": str(repo), "id": "removal"}).status_code == 200
+    bridge = client.app.state.bridge
+    task_id = bridge.create_task("removal", "Fix the parser")["id"]
+    base = f"/api/projects/removal/tasks/{task_id}"
+
+    assert client.post(f"{base}/delete", json={}).status_code == 400
+    assert [t["id"] for t in client.get("/api/projects/removal/tasks").json()] == [task_id]
+
+    assert client.post(f"{base}/stop", json={"reason": "not needed"}).status_code == 200
+    assert TestClient(client.app).post(f"{base}/delete", json={}).status_code == 401
+    assert client.post(f"{base}/delete", json={}).json() == {"deleted": task_id}
+
+    assert client.get("/api/projects/removal/tasks").json() == []
+    assert client.get(base).status_code == 400
+    assert bridge.create_task("removal", "Next thing")["id"] == "TASK-0002"
+
+
 def test_dashboard_shows_actionable_task_without_exposing_raw_executions(
     tmp_path, client, monkeypatch
 ):

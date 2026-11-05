@@ -324,6 +324,19 @@
   }
 
   const TERMINAL_STATES = new Set(["COMPLETED", "CANCELLED", "REJECTED"]);
+  const REMOVABLE_STATES = new Set([...TERMINAL_STATES, "FAILED"]);
+  function confirmDeleteTask(projectId, taskId, onDone) {
+    showModal({
+      title: "Delete this task?",
+      body: `${taskId}\n${UI.translate("The task disappears from this console. Its history is kept for audit and the ID is not reused. Files already changed in the project are not touched.")}`,
+      confirmLabel: "Delete task", danger: true,
+      onSubmit: async () => {
+        await api(`/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(taskId)}/delete`, { method: "POST" });
+        toast("Task deleted.");
+        onDone();
+      },
+    });
+  }
   const WAITING_LABELS = {
     DISPATCH_RETRY_NEEDED: "Dispatch needs retry",
     PM_CLARIFICATION_DECISION: "Clarification decision needed",
@@ -1119,39 +1132,87 @@
     return `<div class="stage-strip">${segs}</div>`;
   }
 
-  async function renderTasksList() {
-    const gen = renderGen;
-    const id = parseRoute().project;
-    layout(`<div class="empty">Loading…</div>`);
-    let tasks;
-    try { tasks = await api(`/projects/${encodeURIComponent(id)}/tasks`); }
-    catch (err) { if (!stale(gen)) errorView(err); return; }
-    if (stale(gen)) return;
-    const rows = tasks.map((t) => `
+  const taskRowHtml = (t) => `
       <tr class="clickable" data-task="${esc(t.id)}" tabindex="0" role="link" aria-label="${esc(t.id)}">
         <td class="mono">${esc(t.id)}</td>
         <td>${esc(UI.translate(t.state))}</td>
         <td>${esc((t.requirement || "").slice(0, 80))}</td>
         <td>${esc(t.created || "")}</td>
+        <td class="table-actions">${REMOVABLE_STATES.has(t.state) ? `<button class="btn small danger" data-delete-task="${esc(t.id)}">${esc(UI.translate("Delete"))}</button>` : ""}</td>
       </tr>
-    `).join("");
+    `;
+
+  // Update the task table in place: new tasks slide in, changed rows are replaced, removed
+  // rows disappear, and rows that did not change are never touched.
+  function patchTaskRows(tbody, tasks) {
+    const template = document.createElement("template");
+    template.innerHTML = tasks.map(taskRowHtml).join("");
+    const incoming = [...template.content.children];
+    incoming.forEach((el) => UI.localize(el));
+    const live = new Map([...tbody.children].map((el) => [el.dataset.task, el]));
+    const strip = (el) => el.outerHTML.replace(/ is-entering/g, "");
+    const finalOrder = incoming.map((node) => {
+      const existing = live.get(node.dataset.task);
+      if (existing) return strip(existing) === strip(node) ? existing : node;
+      enter(node, "is-entering");
+      return node;
+    });
+    applyOrder(tbody, finalOrder);
+  }
+
+  async function renderTasksList() {
+    const gen = renderGen;
+    const id = parseRoute().project;
+    const tasksPath = `/projects/${encodeURIComponent(id)}/tasks`;
+    layout(`<div class="empty">Loading…</div>`);
+    let tasks;
+    try { tasks = await api(tasksPath); }
+    catch (err) { if (!stale(gen)) errorView(err); return; }
+    if (stale(gen)) return;
     layout(`
       <div class="title-row"><div><h1>Tasks</h1><div class="sub">${esc(id)}</div></div></div>
       ${tasks.length ? `
         <table>
-          <thead><tr><th>Task</th><th>State</th><th>Requirement</th><th>Created</th></tr></thead>
-          <tbody>${rows}</tbody>
+          <thead><tr><th>Task</th><th>State</th><th>Requirement</th><th>Created</th><th></th></tr></thead>
+          <tbody>${tasks.map(taskRowHtml).join("")}</tbody>
         </table>
       ` : `<div class="empty">${esc(UI.translate("Tasks created through ChatGPT or the CLI will appear here."))}</div>`}
     `);
-    document.querySelectorAll("tr[data-task]").forEach((tr) => {
-      const open = () => navTo(`/p/${encodeURIComponent(id)}/tasks/${encodeURIComponent(tr.dataset.task)}`);
-      tr.addEventListener("click", open);
-      tr.addEventListener("keydown", (event) => {
-        if (event.key === "Enter" || event.key === " ") { event.preventDefault(); open(); }
+    const signature = (list) => JSON.stringify(list.map((t) => [t.id, t.state, t.requirement, t.created]));
+    let baseline = signature(tasks);
+    // One refresh path for the poll and for the delete button: a table that appears or
+    // empties out is a full redraw (rare), anything else is patched row by row.
+    const refresh = async () => {
+      let fresh;
+      try { fresh = await api(tasksPath); } catch (_) { return; }
+      if (stale(gen)) return;
+      const next = signature(fresh);
+      if (next === baseline) return;
+      baseline = next;
+      const tbody = document.querySelector("table tbody");
+      if (!fresh.length || !tbody) { renderTasksList(); return; }
+      patchTaskRows(tbody, fresh);
+    };
+    const table = document.querySelector("table");
+    if (table) {
+      const open = (taskId) => navTo(`/p/${encodeURIComponent(id)}/tasks/${encodeURIComponent(taskId)}`);
+      table.addEventListener("click", (event) => {
+        const remove = event.target.closest("[data-delete-task]");
+        if (remove) { confirmDeleteTask(id, remove.dataset.deleteTask, refresh); return; }
+        const row = event.target.closest("tr[data-task]");
+        if (row) open(row.dataset.task);
       });
-    });
-    watchForChanges(gen, () => api(`/projects/${encodeURIComponent(id)}/tasks`), renderTasksList);
+      table.addEventListener("keydown", (event) => {
+        const row = event.target.closest("tr[data-task]");
+        if (row && event.target === row && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); open(row.dataset.task); }
+      });
+    }
+    let polling = false;
+    trackTimer(setInterval(async () => {
+      if (stale(gen) || polling) return;
+      polling = true;
+      try { await refresh(); } finally { polling = false; }
+    }, 2500));
   }
 
   function verificationLine(tests) {
@@ -1286,13 +1347,13 @@
 
   function bindChatDetailButtons(events) {
     const byId = new Map(events.map((event) => [event.event_id, event]));
-    document.querySelectorAll("[data-chat-detail]").forEach((button) => button.addEventListener("click", () => {
+    document.querySelectorAll("[data-chat-detail]").forEach((button) => { button.onclick = () => {
       const event = byId.get(button.dataset.chatDetail);
       if (event) showTaskEventDetail(event);
-    }));
+    }; });
   }
 
-  function taskChatItem(event, latestCreate) {
+  function taskChatItem(event, latestCreate, typingIds) {
     const type = event.event_type;
     const isUser = type === "task_created" || type === "user_message";
     const isAgent = ["agent_started", "agent_completed", "agent_failed"].includes(type);
@@ -1341,6 +1402,13 @@
       return `<div class="chat-system-entry ${type === "task_cancelled" || event.detail?.passed === false ? "is-negative" : ""}" data-event-id="${esc(event.event_id)}"><div class="chat-notice"><span class="chat-notice-dot" aria-hidden="true"></span><span><strong>${esc(UI.translate(label))}</strong> · ${esc(UI.translate(summary || "System update"))}</span><time datetime="${esc(event.timestamp || "")}">${esc(date)}</time></div>${details}</div>`;
     }
     const avatar = isUser ? "你" : role === "REVIEW" ? "RV" : role === "SD/RD" ? "SD" : role;
+    if (type === "agent_started" && typingIds && typingIds.has(event.execution_id)) {
+      return `<article class="chat-post is-typing" data-event-id="${esc(event.event_id)}">
+        <div class="chat-avatar" aria-hidden="true">${esc(avatar)}</div>
+        <div class="chat-post-body"><div class="chat-post-meta"><strong>${esc(UI.translate(role))}</strong><span>${esc(UI.translate(label))}</span><span class="typing-label">${esc(UI.translate("is typing…"))}</span></div>
+        <div class="chat-bubble typing-bubble" role="status" aria-label="${esc(role)} ${esc(UI.translate("is typing…"))}"><span class="typing-dots" aria-hidden="true"><i></i><i></i><i></i></span></div></div>
+      </article>`;
+    }
     return `<article class="chat-post ${isUser ? "is-user" : ""} ${isPm ? "is-pm" : ""} ${type === "agent_failed" ? "has-error" : ""}" data-event-id="${esc(event.event_id)}">
       <div class="chat-avatar" aria-hidden="true">${esc(avatar)}</div>
       <div class="chat-post-body"><div class="chat-post-meta"><strong>${esc(UI.translate(role))}</strong><span>${esc(UI.translate(label))}</span><time datetime="${esc(event.timestamp || "")}">${esc(date)}</time></div>
@@ -1348,7 +1416,7 @@
     </article>`;
   }
 
-  function taskConversation(events) {
+  function taskConversation(events, typingIds) {
     const latestCreate = [...events].reverse().find((event) => event.event_type === "task_created")?.event_id;
     const ended = new Set(events.filter((event) => ["agent_completed", "agent_failed"].includes(event.event_type)).map((event) => event.execution_id));
     const rounds = [];
@@ -1359,8 +1427,144 @@
     }
     if (!rounds.length) return `<div class="empty">${esc(UI.translate("No task events yet."))}</div>`;
     const older = rounds.slice(0, -1);
-    const history = older.length ? `<details class="chat-history"><summary>${esc(UI.translate("Earlier work rounds"))} <span>${older.length}</span></summary>${older.map((round, index) => `<div class="chat-round-divider">${esc(UI.translate("Work round"))} ${index + 1}</div>${round.map((event) => taskChatItem(event, latestCreate)).join("")}`).join("")}</details>` : "";
-    return `${history}<div class="chat-round-divider">${esc(UI.translate("Latest work round"))}</div>${rounds.at(-1).map((event) => taskChatItem(event, latestCreate)).join("")}`;
+    const history = older.length ? `<details class="chat-history" data-key="history"><summary>${esc(UI.translate("Earlier work rounds"))} <span>${older.length}</span></summary>${older.map((round, index) => `<div class="chat-round-divider">${esc(UI.translate("Work round"))} ${index + 1}</div>${round.map((event) => taskChatItem(event, latestCreate, typingIds)).join("")}`).join("")}</details>` : "";
+    return `${history}<div class="chat-round-divider" data-key="latest-round">${esc(UI.translate("Latest work round"))}</div>${rounds.at(-1).map((event) => taskChatItem(event, latestCreate, typingIds)).join("")}`;
+  }
+
+  async function fetchTaskView(id, taskId, taskBase) {
+    const responses = await Promise.allSettled([
+      api(taskBase), api(`${taskBase}/timeline`), api(`${taskBase}/evaluations`),
+      api(`${taskBase}/artifacts`), api(`/projects/${encodeURIComponent(id)}/settings`), api(`${taskBase}/handoff`),
+    ]);
+    if (responses[0].status === "rejected") return { error: responses[0].reason };
+    const missing = responses.slice(1).filter((result) => result.status === "rejected" && result.reason.status === 404);
+    if (missing.length) {
+      let legacyExecutions = [];
+      try { legacyExecutions = await api(`${taskBase}/result`); } catch (_) { /* Keep the task visible even when the old result endpoint is unavailable. */ }
+      return { mismatch: { status: responses[0].value, paths: missing.map((result) => result.reason.path), legacyExecutions } };
+    }
+    const failed = responses.find((result) => result.status === "rejected");
+    if (failed) return { error: new Error(`${failed.reason.path || "Task request"}: ${failed.reason.message}`) };
+    const [status, timeline, evaluations, artifacts, settings, handoff] = responses.map((result) => result.value);
+    return { data: { status, timeline, evaluations, artifacts, settings, handoff } };
+  }
+
+  // What counts as "something changed" for the live conversation. Fields that tick every
+  // second while an agent runs (elapsed time, the waiting note) are left out on purpose, or
+  // the page would rebuild itself on every poll.
+  function taskSignature(status, timeline) {
+    return JSON.stringify({
+      state: status.state,
+      control: status.brief?.control || null,
+      executions: (status.executions || []).map((e) => [e.id, e.status]),
+      events: (timeline.events || []).map((e) => e.event_id),
+    });
+  }
+
+  // Everything the task page shows, as HTML strings, so a first paint and a later in-place
+  // update share one source of truth.
+  function buildTaskParts(id, taskId, data) {
+    const { status, timeline, evaluations, artifacts, settings, handoff } = data;
+    const brief = status.brief || {};
+    const control = brief.control || { status: "ACTIVE" };
+    const terminal = ["COMPLETED", "CANCELLED", "REJECTED"].includes(status.state);
+    const displayState = control.status !== "ACTIVE" ? control.status : status.state;
+    const stateTone = ["FAILED", "BLOCKED", "CANCELLED", "STOPPING"].includes(displayState) ? "negative" :
+      ["COMPLETED"].includes(displayState) ? "positive" : "warning";
+    const events = timeline.events || [];
+    const typingIds = new Set((status.executions || []).filter((e) => ["RUNNING", "QUEUED"].includes(e.status)).map((e) => e.id));
+    const doneRoles = new Set(events.filter((e) => e.event_type === "agent_completed").map((e) => e.role));
+    const steps = [
+      ["Analysis", doneRoles.has("SA")],
+      ["Development", ["SD", "RD", "SD/RD"].some((r) => doneRoles.has(r))],
+      ["Host tests", events.some((e) => e.event_type === "host_test_completed" && e.detail?.executed_by_host)],
+      ["Review", doneRoles.has("REVIEW")],
+    ];
+    const canMessage = !terminal && !control.stop_requested;
+    const pauseButton = canMessage ?
+      `<button class="btn small" id="task-pause-resume">${esc(UI.translate(control.paused ? "Continue work" : "Pause work"))}</button>` : "";
+    const stopButton = canMessage ? `<button class="btn small danger" id="task-stop">${esc(UI.translate("Stop task"))}</button>` : "";
+    const deleteButton = REMOVABLE_STATES.has(status.state) ? `<button class="btn small danger" id="task-delete">${esc(UI.translate("Delete task"))}</button>` : "";
+    const diffRows = artifacts.filter((a) => a.path.endsWith("/CHANGES.diff"));
+    const testRows = artifacts.filter((a) => /\/executions\/TEST-[^/]+\/TEST-RESULT\.md$/.test(a.path));
+    const reportRows = artifacts.filter((a) => /\/(SA-REPORT|IMPLEMENTATION|REVIEW|CONTEXT-UPDATES)\.md$/.test(a.path));
+    const latestDiff = diffRows.at(-1);
+    const latestTest = testRows.at(-1);
+    return {
+      events, control, canMessage, terminal, typing: typingIds.size > 0,
+      signature: taskSignature(status, timeline),
+      pill: { text: UI.translate(displayState), tone: stateTone },
+      actions: `${pauseButton}${stopButton}${deleteButton}`,
+      steps: steps.map(([, done]) => done),
+      nextText: handoff.next_action && !terminal ? handoff.next_action : "",
+      head: `<div><a class="task-back" href="#/p/${encodeURIComponent(id)}/tasks">← ${esc(UI.translate("Back to tasks"))}</a><h1>${esc(UI.translate("Task discussion"))}</h1><div class="task-identifiers"><span>${esc(id)}</span><span class="mono">${esc(taskId)}</span><span class="pill ${stateTone}">${esc(UI.translate(displayState))}</span></div></div><div class="task-head-actions">${pauseButton}${stopButton}${deleteButton}</div>`,
+      progress: steps.map(([name, done]) => `<span class="conversation-step ${done ? "done" : ""}"><i aria-hidden="true"></i>${esc(UI.translate(name))}</span>`).join(""),
+      feed: taskConversation(events, typingIds),
+      next: handoff.next_action && !terminal ? `<div class="task-next"><strong>${esc(UI.translate("Next step"))}</strong><p>${esc(handoff.next_action)}</p></div>` : "",
+      results: `<section class="task-result-grid">
+      <div class="task-result-card"><h2>${esc(UI.translate("Changed files and diff"))}</h2>${latestDiff ? `<pre class="mono task-diff">${esc(latestDiff.content || "")}</pre>` : `<p class="muted">${esc(UI.translate("No saved diff yet."))}</p>`}</div>
+      <div class="task-result-card"><h2>${esc(UI.translate("Host test evidence"))}</h2>${verificationLine(brief.tests)}${latestTest ? `<details><summary>${esc(UI.translate("View saved test result"))}</summary><pre class="mono">${esc(latestTest.content)}</pre></details>` : `<p class="muted">${esc(UI.translate("No host test evidence yet."))}</p>`}</div>
+    </section><section class="task-result-card evaluation-section"><div class="evaluation-section-head"><div><h2>${esc(UI.translate("Evaluation and evidence"))}</h2><p>${esc(UI.translate("Scores are separate from task completion."))}</p></div>${settings.editable?.evaluation_engine?.enabled ? `<button class="btn small" id="task-evaluate">${esc(UI.translate("Evaluate latest executions"))}</button>` : `<button class="btn small" id="task-enable-evaluation">${esc(UI.translate("Enable evaluation"))}</button>`}</div>${evaluations.length ? `<div class="evaluation-list">${evaluations.slice().reverse().map(evaluationReport).join("")}</div>` : `<p class="muted">${esc(UI.translate("No evaluations for this task yet."))}</p>`}</section>`,
+      technical: `<div class="task-technical"><section class="task-result-card"><h2>${esc(UI.translate("Execution history"))}</h2><div class="task-table-scroll"><table><thead><tr><th>Execution</th><th>Role</th><th>Status</th><th>Error</th></tr></thead><tbody>${(status.executions || []).map((e) => `<tr><td class="mono">${esc(e.id)}</td><td>${esc(e.role)}</td><td>${esc(UI.translate(e.status))}</td><td>${esc(e.error || "")}</td></tr>`).join("")}</tbody></table></div></section>
+      <section class="task-result-card"><h2>${esc(UI.translate("Original reports"))}</h2>${reportRows.length ? reportRows.map((a) => `<details><summary>${esc(a.path.split("/").at(-1))} · ${esc(a.created)}</summary><pre class="mono">${esc(a.content)}</pre></details>`).join("") : `<p class="muted">${esc(UI.translate("No original reports yet."))}</p>`}</section>
+      <section class="task-result-card"><h2>${esc(UI.translate("Context and handoff"))}</h2><details><summary>${esc(UI.translate("View current handoff"))}</summary><pre class="mono">${esc(JSON.stringify(handoff, null, 2))}</pre></details><details><summary>${esc(UI.translate("View task status and events"))}</summary><pre class="mono">${esc(JSON.stringify(status, null, 2))}</pre></details><button class="btn small" id="task-load-context">${esc(UI.translate("Load project context"))}</button><div id="task-context-output"></div></section>
+      <section class="task-result-card"><h2>${esc(UI.translate("Usage and raw executions"))}</h2><button class="btn small" id="task-load-raw">${esc(UI.translate("Load original records"))}</button><div id="task-raw-output"></div></section></div>`,
+    };
+  }
+
+  // Bring the conversation up to date without rebuilding it. Existing messages stay put,
+  // new ones are inserted where they belong, and a finished "typing" bubble hands its exact
+  // slot to the message that replaces it (like a chat app), so nothing blinks or jumps.
+  function patchFeed(feed, html) {
+    const template = document.createElement("template");
+    template.innerHTML = html;
+    const incoming = [...template.content.children];
+    incoming.forEach((el) => UI.localize(el));
+    const keyOf = (el) => el.dataset.key || el.dataset.eventId || "";
+    const live = [...feed.children];
+    if (incoming.some((el) => !keyOf(el)) || live.some((el) => !keyOf(el))) {
+      feed.innerHTML = html;
+      UI.localize(feed);
+      return true;
+    }
+    const liveByKey = new Map(live.map((el) => [keyOf(el), el]));
+    const incomingKeys = new Set(incoming.map(keyOf));
+    const strip = (el) => el.outerHTML.replace(/ is-(entering|settling)/g, "");
+    let slotTaken = false;
+    const finalOrder = incoming.map((node) => {
+      const existing = liveByKey.get(keyOf(node));
+      if (existing) return strip(existing) === strip(node) ? existing : node;
+      const taken = !slotTaken && node.classList.contains("chat-post") && !node.classList.contains("is-typing")
+        && live.some((el) => el.classList.contains("is-typing") && !incomingKeys.has(keyOf(el)));
+      if (taken) slotTaken = true;
+      enter(node, taken ? "is-settling" : "is-entering");
+      return node;
+    });
+    return applyOrder(feed, finalOrder);
+  }
+
+  // Make `container`'s children exactly `finalOrder`, touching only what differs: nodes that
+  // are already in place are left alone, the rest are inserted or removed.
+  function applyOrder(container, finalOrder) {
+    let changed = false;
+    const keep = new Set(finalOrder);
+    // Drop what disappeared first, otherwise it would sit in the way and make every node
+    // after it look "moved" (and re-played its entrance animation).
+    [...container.children].forEach((el) => { if (!keep.has(el)) { el.remove(); changed = true; } });
+    let ref = container.firstElementChild;
+    for (const el of finalOrder) {
+      if (el === ref) { ref = ref.nextElementSibling; continue; }
+      container.insertBefore(el, ref);
+      changed = true;
+    }
+    return changed;
+  }
+
+  // Play an entrance animation once; the class is removed afterwards so a later move of the
+  // same node cannot replay it.
+  function enter(node, className) {
+    node.classList.add(className);
+    node.addEventListener("animationend", () => node.classList.remove(className), { once: true });
   }
 
   async function renderTaskDetail() {
@@ -1379,97 +1583,132 @@
     if (oldInput) taskDetailDraft = oldInput.value;
     const taskBase = `/projects/${encodeURIComponent(id)}/tasks/${encodeURIComponent(taskId)}`;
     layout(`<div class="empty">Loading…</div>`);
-    const names = ["status", "timeline", "evaluations", "artifacts", "settings", "handoff"];
-    const responses = await Promise.allSettled([
-      api(taskBase), api(`${taskBase}/timeline`), api(`${taskBase}/evaluations`),
-      api(`${taskBase}/artifacts`), api(`/projects/${encodeURIComponent(id)}/settings`), api(`${taskBase}/handoff`),
-    ]);
+    const loaded = await fetchTaskView(id, taskId, taskBase);
     if (stale(gen)) return;
-    if (responses[0].status === "rejected") { errorView(responses[0].reason); return; }
-    const missing = responses.slice(1).filter((result) => result.status === "rejected" && result.reason.status === 404);
-    if (missing.length) {
-      let legacyExecutions = [];
-      try { legacyExecutions = await api(`${taskBase}/result`); } catch (_) { /* Keep the task visible even when the old result endpoint is unavailable. */ }
-      if (stale(gen)) return;
-      renderTaskVersionMismatch(responses[0].value, id, taskId, missing.map((result) => result.reason.path), legacyExecutions);
+    if (loaded.error) { errorView(loaded.error); return; }
+    if (loaded.mismatch) {
+      renderTaskVersionMismatch(loaded.mismatch.status, id, taskId, loaded.mismatch.paths, loaded.mismatch.legacyExecutions);
       return;
     }
-    const failed = responses.find((result) => result.status === "rejected");
-    if (failed) { errorView(new Error(`${failed.reason.path || "Task request"}: ${failed.reason.message}`)); return; }
-    const [status, timeline, evaluations, artifacts, settings, handoff] = responses.map((result) => result.value);
-    const brief = status.brief || {};
-    const control = brief.control || { status: "ACTIVE" };
-    const terminal = ["COMPLETED", "CANCELLED", "REJECTED"].includes(status.state);
-    const displayState = control.status !== "ACTIVE" ? control.status : status.state;
-    const stateTone = ["FAILED", "BLOCKED", "CANCELLED", "STOPPING"].includes(displayState) ? "negative" :
-      ["COMPLETED"].includes(displayState) ? "positive" : "warning";
-    const events = timeline.events || [];
-    const conversation = taskConversation(events);
-    const doneRoles = new Set(events.filter((e) => e.event_type === "agent_completed").map((e) => e.role));
-    const steps = [
-      ["Analysis", doneRoles.has("SA")],
-      ["Development", ["SD", "RD", "SD/RD"].some((r) => doneRoles.has(r))],
-      ["Host tests", events.some((e) => e.event_type === "host_test_completed" && e.detail?.executed_by_host)],
-      ["Review", doneRoles.has("REVIEW")],
-    ];
-    const progress = steps.map(([name, done]) => `<span class="conversation-step ${done ? "done" : ""}"><i aria-hidden="true"></i>${esc(UI.translate(name))}</span>`).join("");
-    const pauseButton = !terminal && !control.stop_requested ?
-      `<button class="btn small" id="task-pause-resume">${esc(UI.translate(control.paused ? "Continue work" : "Pause work"))}</button>` : "";
-    const stopButton = !terminal && !control.stop_requested ? `<button class="btn small danger" id="task-stop">${esc(UI.translate("Stop task"))}</button>` : "";
-    const canMessage = !terminal && !control.stop_requested;
-    const diffRows = artifacts.filter((a) => a.path.endsWith("/CHANGES.diff"));
-    const testRows = artifacts.filter((a) => /\/executions\/TEST-[^/]+\/TEST-RESULT\.md$/.test(a.path));
-    const reportRows = artifacts.filter((a) => /\/(SA-REPORT|IMPLEMENTATION|REVIEW|CONTEXT-UPDATES)\.md$/.test(a.path));
-    const latestDiff = diffRows.at(-1);
-    const latestTest = testRows.at(-1);
-    const resultPane = `<section class="task-result-grid">
-      <div class="task-result-card"><h2>${esc(UI.translate("Changed files and diff"))}</h2>${latestDiff ? `<pre class="mono task-diff">${esc(latestDiff.content || "")}</pre>` : `<p class="muted">${esc(UI.translate("No saved diff yet."))}</p>`}</div>
-      <div class="task-result-card"><h2>${esc(UI.translate("Host test evidence"))}</h2>${verificationLine(brief.tests)}${latestTest ? `<details><summary>${esc(UI.translate("View saved test result"))}</summary><pre class="mono">${esc(latestTest.content)}</pre></details>` : `<p class="muted">${esc(UI.translate("No host test evidence yet."))}</p>`}</div>
-    </section><section class="task-result-card evaluation-section"><div class="evaluation-section-head"><div><h2>${esc(UI.translate("Evaluation and evidence"))}</h2><p>${esc(UI.translate("Scores are separate from task completion."))}</p></div>${settings.editable?.evaluation_engine?.enabled ? `<button class="btn small" id="task-evaluate">${esc(UI.translate("Evaluate latest executions"))}</button>` : `<button class="btn small" id="task-enable-evaluation">${esc(UI.translate("Enable evaluation"))}</button>`}</div>${evaluations.length ? `<div class="evaluation-list">${evaluations.slice().reverse().map(evaluationReport).join("")}</div>` : `<p class="muted">${esc(UI.translate("No evaluations for this task yet."))}</p>`}</section>`;
-    const technicalPane = `<div class="task-technical"><section class="task-result-card"><h2>${esc(UI.translate("Execution history"))}</h2><div class="task-table-scroll"><table><thead><tr><th>Execution</th><th>Role</th><th>Status</th><th>Error</th></tr></thead><tbody>${(status.executions || []).map((e) => `<tr><td class="mono">${esc(e.id)}</td><td>${esc(e.role)}</td><td>${esc(UI.translate(e.status))}</td><td>${esc(e.error || "")}</td></tr>`).join("")}</tbody></table></div></section>
-      <section class="task-result-card"><h2>${esc(UI.translate("Original reports"))}</h2>${reportRows.length ? reportRows.map((a) => `<details><summary>${esc(a.path.split("/").at(-1))} · ${esc(a.created)}</summary><pre class="mono">${esc(a.content)}</pre></details>`).join("") : `<p class="muted">${esc(UI.translate("No original reports yet."))}</p>`}</section>
-      <section class="task-result-card"><h2>${esc(UI.translate("Context and handoff"))}</h2><details><summary>${esc(UI.translate("View current handoff"))}</summary><pre class="mono">${esc(JSON.stringify(handoff, null, 2))}</pre></details><details><summary>${esc(UI.translate("View task status and events"))}</summary><pre class="mono">${esc(JSON.stringify(status, null, 2))}</pre></details><button class="btn small" id="task-load-context">${esc(UI.translate("Load project context"))}</button><div id="task-context-output"></div></section>
-      <section class="task-result-card"><h2>${esc(UI.translate("Usage and raw executions"))}</h2><button class="btn small" id="task-load-raw">${esc(UI.translate("Load original records"))}</button><div id="task-raw-output"></div></section></div>`;
+    let data = loaded.data;
+    let parts = buildTaskParts(id, taskId, data);
+    const conversationActive = taskDetailPane === "conversation";
     layout(`<div class="task-workspace">
-      <header class="task-workspace-head"><div><a class="task-back" href="#/p/${encodeURIComponent(id)}/tasks">← ${esc(UI.translate("Back to tasks"))}</a><h1>${esc(UI.translate("Task discussion"))}</h1><div class="task-identifiers"><span>${esc(id)}</span><span class="mono">${esc(taskId)}</span><span class="pill ${stateTone}">${esc(UI.translate(displayState))}</span></div></div><div class="task-head-actions">${pauseButton}${stopButton}</div></header>
-      <div class="conversation-progress" aria-label="${esc(UI.translate("Task progress"))}">${progress}</div>
+      <header class="task-workspace-head">${parts.head}</header>
+      <div class="conversation-progress" aria-label="${esc(UI.translate("Task progress"))}">${parts.progress}</div>
       <nav class="tabs task-main-tabs" role="tablist" aria-label="${esc(UI.translate("Task views"))}">
         <button class="tab ${taskDetailPane === "conversation" ? "active" : ""}" data-task-pane="conversation" role="tab" aria-selected="${taskDetailPane === "conversation"}">${esc(UI.translate("Work conversation"))}</button>
         <button class="tab ${taskDetailPane === "results" ? "active" : ""}" data-task-pane="results" role="tab" aria-selected="${taskDetailPane === "results"}">${esc(UI.translate("Results"))}</button>
         <button class="tab ${taskDetailPane === "technical" ? "active" : ""}" data-task-pane="technical" role="tab" aria-selected="${taskDetailPane === "technical"}">${esc(UI.translate("Technical record"))}</button>
       </nav>
-      <div class="task-pane" data-pane="conversation" ${taskDetailPane !== "conversation" ? "hidden" : ""}><div class="task-conversation-room">
+      <div class="task-pane" data-pane="conversation" ${conversationActive ? "" : "hidden"}><div class="task-conversation-room">
         <div class="chat-room-bar"><div class="chat-room-title"><span class="chat-room-mark" aria-hidden="true">#</span><div><strong>${esc(UI.translate("Task meeting room"))}</strong><small>${esc(taskId)} · ${esc(UI.translate("Saved work conversation"))}</small></div></div><div class="chat-participants" aria-label="${esc(UI.translate("Meeting participants"))}"><span>SA</span><span>SD</span><span>RV</span><span>PM</span></div></div>
-        <div class="conversation-feed" role="log" aria-label="${esc(UI.translate("Work conversation"))}">${conversation}</div>
-        ${handoff.next_action && !terminal ? `<div class="task-next"><strong>${esc(UI.translate("Next step"))}</strong><p>${esc(handoff.next_action)}</p></div>` : ""}
-        <form class="task-composer" id="task-message-form"><label for="task-message">${esc(UI.translate("Correction or instruction"))}</label><textarea id="task-message" rows="2" maxlength="8000" placeholder="${esc(UI.translate("Tell the PM what should change…"))}" ${canMessage ? "" : "disabled"}></textarea><div class="task-composer-foot"><label class="task-check"><input type="checkbox" id="task-message-pause" checked ${canMessage ? "" : "disabled"}> ${esc(UI.translate("Pause before the next agent"))}</label><button class="btn primary" type="submit" ${canMessage ? "" : "disabled"}>${esc(UI.translate("Send correction"))}</button></div><p class="muted">${esc(UI.translate("This records guidance for the workflow. It does not start a separate AI chat."))}</p></form>
+        <div class="conversation-feed" role="log" aria-live="polite" aria-label="${esc(UI.translate("Work conversation"))}">${parts.feed}</div>
+        <div class="task-next-slot">${parts.next}</div>
+        <form class="task-composer" id="task-message-form"><label for="task-message">${esc(UI.translate("Correction or instruction"))}</label><textarea id="task-message" rows="2" maxlength="8000" placeholder="${esc(UI.translate("Tell the PM what should change…"))}" ${parts.canMessage ? "" : "disabled"}></textarea><div class="task-composer-foot"><label class="task-check"><input type="checkbox" id="task-message-pause" checked ${parts.canMessage ? "" : "disabled"}> ${esc(UI.translate("Pause before the next agent"))}</label><button class="btn primary" type="submit" ${parts.canMessage ? "" : "disabled"}>${esc(UI.translate("Send correction"))}</button></div><p class="muted">${esc(UI.translate("This records guidance for the workflow. It does not start a separate AI chat."))}</p></form>
       </div>
       </div>
-      <div class="task-pane" data-pane="results" ${taskDetailPane !== "results" ? "hidden" : ""}>${resultPane}</div>
-      <div class="task-pane" data-pane="technical" ${taskDetailPane !== "technical" ? "hidden" : ""}>${technicalPane}</div>
+      <div class="task-pane" data-pane="results" ${taskDetailPane !== "results" ? "hidden" : ""}>${parts.results}</div>
+      <div class="task-pane" data-pane="technical" ${taskDetailPane !== "technical" ? "hidden" : ""}>${parts.technical}</div>
     </div>`);
     const messageInput = document.getElementById("task-message");
     if (messageInput) messageInput.value = taskDetailDraft;
     const feed = document.querySelector(".conversation-feed");
     if (feed) feed.scrollTop = wasAtBottom ? feed.scrollHeight : oldFeedScroll;
-    bindChatDetailButtons(events);
+
+    // Handlers on parts that are rebuilt in place use `onclick`, so binding again replaces
+    // the old handler instead of stacking a second one.
+    const bindDynamic = () => {
+      const { control } = parts;
+      bindChatDetailButtons(parts.events);
+      const pauseResume = document.getElementById("task-pause-resume");
+      if (pauseResume) pauseResume.onclick = async (event) => {
+        event.currentTarget.disabled = true;
+        try { const result = await api(`${taskBase}/${control.paused ? "resume" : "pause"}`, { method: "POST" });
+          if (control.paused && result.next_action) toast("Work can continue from the saved handoff.");
+          else toast(control.paused ? "Work resumed." : "Pause requested.");
+          refresh();
+        } catch (err) { toast(err.message, true); event.currentTarget.disabled = false; }
+      };
+      const stopTask = document.getElementById("task-stop");
+      if (stopTask) stopTask.onclick = () => showModal({
+        title: "Stop this task?", body: "Stopping prevents further agent work. Changes already made to files will not be rolled back.",
+        fields: [{ label: "Reason (optional)", placeholder: "Why are you stopping this task?" }], danger: true,
+        confirmLabel: "Stop task", onSubmit: async ([reason]) => { await api(`${taskBase}/stop`, { method: "POST", body: { reason } }); toast("Stop requested."); refresh(); },
+      });
+      const deleteTask = document.getElementById("task-delete");
+      if (deleteTask) deleteTask.onclick = () => confirmDeleteTask(id, taskId, () => navTo(`/p/${encodeURIComponent(id)}/tasks`));
+      const enableEvaluation = document.getElementById("task-enable-evaluation");
+      if (enableEvaluation) enableEvaluation.onclick = async () => {
+        try { await api(`/projects/${encodeURIComponent(id)}/config/evaluation-engine`, { method: "POST", body: { enabled: true, auto_evaluate: data.settings.editable?.evaluation_engine?.auto_evaluate || false } }); toast("Evaluation enabled."); refresh(); }
+        catch (err) { toast(err.message, true); }
+      };
+      const evaluate = document.getElementById("task-evaluate");
+      if (evaluate) evaluate.onclick = async () => {
+        try { await api(`${taskBase}/evaluate`, { method: "POST", body: {} }); toast("Evaluations saved."); refresh(); }
+        catch (err) { toast(err.message, true); }
+      };
+      document.querySelectorAll("[data-reevaluate]").forEach((button) => { button.onclick = async () => {
+        try { await api(`${taskBase}/reevaluate`, { method: "POST", body: { execution_id: button.dataset.reevaluate } }); toast("New evaluation version saved."); refresh(); }
+        catch (err) { toast(err.message, true); }
+      }; });
+      const loadContext = document.getElementById("task-load-context");
+      if (loadContext) loadContext.onclick = async () => {
+        try { const result = await api(`/projects/${encodeURIComponent(id)}/context`); document.getElementById("task-context-output").innerHTML = `<pre class="mono">${esc(JSON.stringify(result, null, 2))}</pre>`; }
+        catch (err) { toast(err.message, true); }
+      };
+      const loadRaw = document.getElementById("task-load-raw");
+      if (loadRaw) loadRaw.onclick = async () => {
+        try { const [usage, result] = await Promise.all([api(`${taskBase}/usage`), api(`${taskBase}/result`)]); document.getElementById("task-raw-output").innerHTML = `<pre class="mono">${esc(JSON.stringify({ usage, result }, null, 2))}</pre>`; }
+        catch (err) { toast(err.message, true); }
+      };
+    };
+
+    // Update the page in place: only what actually changed is touched.
+    const patch = (next) => {
+      const root = document.querySelector(".task-workspace");
+      const room = root?.querySelector(".conversation-feed");
+      if (!root || !room) return;
+      const stick = room.scrollHeight - room.scrollTop - room.clientHeight < 120;
+      const pill = root.querySelector(".task-identifiers .pill");
+      if (pill && (pill.textContent !== next.pill.text || !pill.classList.contains(next.pill.tone))) {
+        pill.className = `pill ${next.pill.tone}`;
+        pill.textContent = next.pill.text;
+      }
+      if (parts.actions !== next.actions) {
+        const actions = root.querySelector(".task-head-actions");
+        if (actions) { actions.innerHTML = next.actions; UI.localize(actions); }
+      }
+      root.querySelectorAll(".conversation-step").forEach((el, index) => el.classList.toggle("done", Boolean(next.steps[index])));
+      const slot = root.querySelector(".task-next-slot");
+      const nextBody = slot?.querySelector(".task-next p");
+      if (slot && parts.nextText !== next.nextText) {
+        if (nextBody && next.nextText) nextBody.textContent = next.nextText;
+        else { slot.innerHTML = next.next; UI.localize(slot); }
+      }
+      [['[data-pane="results"]', "results"], ['[data-pane="technical"]', "technical"]].forEach(([selector, key]) => {
+        if (parts[key] === next[key]) return;
+        const el = root.querySelector(selector);
+        if (el) { el.innerHTML = next[key]; UI.localize(el); }
+      });
+      const feedChanged = parts.feed !== next.feed && patchFeed(room, next.feed);
+      root.querySelector("#task-message-form")?.querySelectorAll("textarea, input, button[type=submit]").forEach((el) => { el.disabled = !next.canMessage; });
+      parts = next;
+      bindDynamic();
+      if (feedChanged && stick) room.scrollTo({ top: room.scrollHeight, behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+    };
+    async function refresh() {
+      const result = await fetchTaskView(id, taskId, taskBase);
+      if (stale(gen) || !result.data) return;
+      data = result.data;
+      patch(buildTaskParts(id, taskId, data));
+    }
+
+    bindDynamic();
     document.querySelectorAll("[data-task-pane]").forEach((button) => button.addEventListener("click", () => {
       taskDetailPane = button.dataset.taskPane;
       document.querySelectorAll("[data-task-pane]").forEach((tab) => { tab.classList.toggle("active", tab === button); tab.setAttribute("aria-selected", String(tab === button)); });
       document.querySelectorAll("[data-pane]").forEach((pane) => { pane.hidden = pane.dataset.pane !== taskDetailPane; });
-    }));
-    document.getElementById("task-pause-resume")?.addEventListener("click", async (event) => {
-      event.currentTarget.disabled = true;
-      try { const data = await api(`${taskBase}/${control.paused ? "resume" : "pause"}`, { method: "POST" });
-        if (control.paused && data.next_action) toast("Work can continue from the saved handoff.");
-        else toast(control.paused ? "Work resumed." : "Pause requested.");
-        renderTaskDetail();
-      } catch (err) { toast(err.message, true); event.currentTarget.disabled = false; }
-    });
-    document.getElementById("task-stop")?.addEventListener("click", () => showModal({
-      title: "Stop this task?", body: "Stopping prevents further agent work. Changes already made to files will not be rolled back.",
-      fields: [{ label: "Reason (optional)", placeholder: "Why are you stopping this task?" }], danger: true,
-      confirmLabel: "Stop task", onSubmit: async ([reason]) => { await api(`${taskBase}/stop`, { method: "POST", body: { reason } }); toast("Stop requested."); renderTaskDetail(); },
     }));
     document.getElementById("task-message-form")?.addEventListener("submit", async (event) => {
       event.preventDefault();
@@ -1477,36 +1716,21 @@
       if (!content) { messageInput.focus(); return; }
       const button = event.currentTarget.querySelector('button[type="submit"]'); button.disabled = true;
       try { await api(`${taskBase}/messages`, { method: "POST", body: { content, pause: document.getElementById("task-message-pause").checked } });
-        taskDetailDraft = ""; messageInput.value = ""; toast("Correction saved for the workflow."); renderTaskDetail();
+        taskDetailDraft = ""; messageInput.value = ""; toast("Correction saved for the workflow."); button.disabled = false; refresh();
       } catch (err) { toast(err.message, true); button.disabled = false; }
     });
-    document.getElementById("task-enable-evaluation")?.addEventListener("click", async () => {
-      try { await api(`/projects/${encodeURIComponent(id)}/config/evaluation-engine`, { method: "POST", body: { enabled: true, auto_evaluate: settings.editable?.evaluation_engine?.auto_evaluate || false } }); toast("Evaluation enabled."); renderTaskDetail(); }
-      catch (err) { toast(err.message, true); }
-    });
-    document.getElementById("task-evaluate")?.addEventListener("click", async () => {
-      try { await api(`${taskBase}/evaluate`, { method: "POST", body: {} }); toast("Evaluations saved."); renderTaskDetail(); }
-      catch (err) { toast(err.message, true); }
-    });
-    document.querySelectorAll("[data-reevaluate]").forEach((button) => button.addEventListener("click", async () => {
-      try { await api(`${taskBase}/reevaluate`, { method: "POST", body: { execution_id: button.dataset.reevaluate } }); toast("New evaluation version saved."); renderTaskDetail(); }
-      catch (err) { toast(err.message, true); }
-    }));
-    document.getElementById("task-load-context")?.addEventListener("click", async () => {
-      try { const data = await api(`/projects/${encodeURIComponent(id)}/context`); document.getElementById("task-context-output").innerHTML = `<pre class="mono">${esc(JSON.stringify(data, null, 2))}</pre>`; }
-      catch (err) { toast(err.message, true); }
-    });
-    document.getElementById("task-load-raw")?.addEventListener("click", async () => {
-      try { const [usage, result] = await Promise.all([api(`${taskBase}/usage`), api(`${taskBase}/result`)]); document.getElementById("task-raw-output").innerHTML = `<pre class="mono">${esc(JSON.stringify({ usage, result }, null, 2))}</pre>`; }
-      catch (err) { toast(err.message, true); }
-    });
-    const baseline = JSON.stringify({ status, timeline });
+    let baseline = parts.signature;
+    let polling = false;
     trackTimer(setInterval(async () => {
-      if (stale(gen)) return;
-      try { const [freshStatus, freshTimeline] = await Promise.all([api(taskBase), api(`${taskBase}/timeline`)]);
-        if (!stale(gen) && JSON.stringify({ status: freshStatus, timeline: freshTimeline }) !== baseline) renderTaskDetail();
+      if (stale(gen) || polling) return;
+      polling = true;
+      try {
+        const [freshStatus, freshTimeline] = await Promise.all([api(taskBase), api(`${taskBase}/timeline`)]);
+        const serialized = taskSignature(freshStatus, freshTimeline);
+        if (!stale(gen) && serialized !== baseline) { baseline = serialized; await refresh(); }
       } catch (_) { /* The next poll retries; saved events remain available after reconnect. */ }
-    }, 5000));
+      finally { polling = false; }
+    }, 2500));
   }
 
   async function renderSettings() {

@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -16,6 +17,7 @@ from ..adapters.storage import artifact, decode, event, now
 from ..infra.config import metadata_name, setting_env
 from ..infra.errors import BridgeError, PermissionDenied, VersionConflict
 from ..infra.security import canonical, digest, reject_secrets
+from .approval import local_identity
 from .context import identifier
 from .models import (
     AgentReport,
@@ -34,6 +36,15 @@ def attribution(language, agent, role=None):
         "en": f"> Provided by: {who}\n\n",
     }[language]
 
+
+# A finished task is never picked up again: the next request in a read-write project gets
+# a new TASK-NNNN. FAILED is not final (it can be retried) but can still be removed.
+TERMINAL_TASK_STATES = {"COMPLETED", "CANCELLED", "REJECTED"}
+REMOVABLE_TASK_STATES = TERMINAL_TASK_STATES | {"FAILED"}
+_LIVE_TASK = (
+    "NOT EXISTS (SELECT 1 FROM task_deletions d "
+    "WHERE d.project_id=tasks.project_id AND d.task_id=tasks.id)"
+)
 
 STATES = {
     "CREATED",
@@ -485,7 +496,8 @@ class TaskHub:
     def task(self, project_id, task_id):
         self.project(project_id)
         row = self.store.one(
-            "SELECT * FROM tasks WHERE project_id=? AND id=?", (project_id, identifier(task_id))
+            f"SELECT * FROM tasks WHERE project_id=? AND id=? AND {_LIVE_TASK}",
+            (project_id, identifier(task_id)),
         )
         if not row:
             raise BridgeError("Task not found")
@@ -496,9 +508,38 @@ class TaskHub:
         return [
             decode(row, "acceptance")
             for row in self.store.all(
-                "SELECT * FROM tasks WHERE project_id=? ORDER BY created", (project_id,)
+                f"SELECT * FROM tasks WHERE project_id=? AND {_LIVE_TASK} ORDER BY created",
+                (project_id,),
             )
         ]
+
+    def _next_task_id(self, project_id):
+        """The next TASK-NNNN, counting removed tasks too so an ID is never reused."""
+        numbers = [
+            int(match.group(1))
+            for row in self.store.all("SELECT id FROM tasks WHERE project_id=?", (project_id,))
+            if (match := re.fullmatch(r"TASK-(\d+)", row["id"]))
+        ]
+        return f"TASK-{max(numbers, default=0) + 1:04d}"
+
+    def delete_task(self, project_id, task_id):
+        """Hide a finished task from the console. History stays in the database for audit."""
+        task = self.task(project_id, task_id)
+        if task["state"] not in REMOVABLE_TASK_STATES:
+            raise BridgeError("Stop or finish the task before removing it")
+        with self.lock(project_id):
+            if self.store.one(
+                "SELECT 1 FROM agent_executions WHERE project_id=? AND task_id=? "
+                "AND status IN ('QUEUED','RUNNING')",
+                (project_id, task["id"]),
+            ):
+                raise BridgeError("Wait for or cancel the active execution before removing the task")
+            with self.store.transaction() as conn:
+                conn.execute(
+                    "INSERT INTO task_deletions(id,project_id,task_id,identity,created) VALUES(?,?,?,?,?)",
+                    (uuid.uuid4().hex, project_id, task["id"], local_identity(), now()),
+                )
+        return {"deleted": task["id"]}
 
     def dashboard_snapshot(self, usage_window="1d"):
         """A read-only cross-project view for the local console.
@@ -514,7 +555,9 @@ class TaskHub:
                 "SELECT t.project_id,t.id,t.state,t.created,"
                 "COALESCE((SELECT MAX(e.created) FROM task_events e "
                 "WHERE e.project_id=t.project_id AND e.task_id=t.id),t.created) AS changed "
-                "FROM tasks t ORDER BY changed DESC,t.created DESC"
+                "FROM tasks t WHERE NOT EXISTS (SELECT 1 FROM task_deletions d "
+                "WHERE d.project_id=t.project_id AND d.task_id=t.id) "
+                "ORDER BY changed DESC,t.created DESC"
             )
             if row["project_id"] in visible_projects
         ]
@@ -705,7 +748,7 @@ class TaskHub:
             continuous = self.get_project_access(project_id)["mode"] == "read-write"
             reuse = (
                 continuous and task_id is None and bool(existing)
-                and existing[-1]["state"] not in {"CANCELLED", "REJECTED"}
+                and existing[-1]["state"] not in TERMINAL_TASK_STATES
                 and not self.task_control(project_id, existing[-1]["id"])["stop_requested"]
                 and not self.task_control(project_id, existing[-1]["id"])["paused"]
             )
@@ -714,7 +757,7 @@ class TaskHub:
                     "PM must compact pending agent reports before starting the next project round"
                 )
             task_id = identifier(
-                task_id or (existing[-1]["id"] if reuse else f"TASK-{len(existing) + 1:04d}")
+                task_id or (existing[-1]["id"] if reuse else self._next_task_id(project_id))
             )
             language = self.get_project_settings(project_id)["language"]
             acceptance = acceptance or []
