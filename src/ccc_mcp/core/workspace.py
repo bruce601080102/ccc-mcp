@@ -111,6 +111,8 @@ class WorkspaceHub:
             raise PermissionDenied("Not a ChatGPT interactive execution")
         if row["status"] != "RUNNING" or row["cancel_requested"]:
             raise PermissionDenied("Execution is no longer active")
+        if self.task_control(project_id, row["task_id"])["stop_requested"]:
+            raise PermissionDenied("Task is stopping")
         if self.latest(project_id)["version"] != row["context_version"]:
             raise VersionConflict("Context changed; dispatch again before editing or submitting")
         if row["role"] not in {"SA", "REVIEW"}:
@@ -124,6 +126,10 @@ class WorkspaceHub:
             with self.lock(project_id):
                 if row["cancel_requested"]:
                     raise PermissionDenied("Execution cancelled")
+                if self.task_control(project_id, row["task_id"])["paused"]:
+                    return {"execution_id": execution_id, "task_id": row["task_id"],
+                            "status": "PAUSED", "next_action": "Resume the task to activate this ChatGPT handoff"}
+                self._require_task_runnable(project_id, row["task_id"])
                 if self.latest(project_id)["version"] != row["context_version"]:
                     raise VersionConflict("Context changed before ChatGPT handoff")
                 cwd = Path(self.project(project_id)["root"])

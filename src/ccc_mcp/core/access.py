@@ -239,7 +239,8 @@ class ProjectAccessHub:
                     )
                     for table in (
                         "pending_dispatch", "meeting_clarifications", "approvals", "plans",
-                        "task_events", "agent_executions", "artifacts", "decisions",
+                        "task_events", "task_interventions", "task_controls",
+                        "agent_executions", "artifacts", "decisions",
                         "context_patches", "context_versions", "tasks", "workspace_batches",
                         "workspace_edits", "project_access_events", "project_settings",
                     ):

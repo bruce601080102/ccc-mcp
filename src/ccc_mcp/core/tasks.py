@@ -703,7 +703,12 @@ class TaskHub:
             self.project(project_id)
             existing = self.list_tasks(project_id)
             continuous = self.get_project_access(project_id)["mode"] == "read-write"
-            reuse = continuous and task_id is None and bool(existing)
+            reuse = (
+                continuous and task_id is None and bool(existing)
+                and existing[-1]["state"] not in {"CANCELLED", "REJECTED"}
+                and not self.task_control(project_id, existing[-1]["id"])["stop_requested"]
+                and not self.task_control(project_id, existing[-1]["id"])["paused"]
+            )
             if reuse and self.context_sync_status(project_id)["pending_reports"]:
                 raise PermissionDenied(
                     "PM must compact pending agent reports before starting the next project round"
@@ -791,6 +796,7 @@ class TaskHub:
                 f"Project is read-only. Run ccc-mcp project authorize {project_id} locally once."
             )
         task = self.create_task(project_id, requirement, acceptance)
+        self._require_task_runnable(project_id, task["id"])
         dispatch = self.dispatch_agent(
             project_id,
             task["id"],
@@ -950,6 +956,7 @@ class TaskHub:
         dispatch_agent has actually succeeded — so a failure here always leaves the pointer in
         place for the next resume attempt, never a silently lost or duplicated step."""
         task_id = pointer["task_id"]
+        self._require_task_runnable(project_id, task_id)
         adapter, fake_scenario = pointer["adapter"], pointer["fake_scenario"]
         result = {}
         if pointer.get("meeting_round_action"):
@@ -1028,6 +1035,7 @@ class TaskHub:
         if not execution or execution["status"] != "SUCCEEDED":
             raise BridgeError("Source Agent execution has not succeeded")
         task_id = execution["task_id"]
+        self._require_task_runnable(project_id, task_id)
 
         pointer = self._pending_dispatch_row(project_id, task_id)
         if pointer:
@@ -1099,6 +1107,10 @@ class TaskHub:
             return {"advanced": False, "reason": "Unknown execution"}
         if row["status"] != "SUCCEEDED":
             return {"advanced": False, "reason": "Execution did not succeed"}
+        try:
+            self._require_task_runnable(row["project_id"], row["task_id"])
+        except PermissionDenied as exc:
+            return {"advanced": False, "reason": str(exc)}
         if row["adapter"] != "real" and not allow_fake:
             return {"advanced": False, "reason": "Only real Agent executions auto-advance"}
         if row["role"] not in {"SD", "RD", "SD/RD", "REVIEW"}:
@@ -1634,6 +1646,7 @@ class TaskHub:
         reject_secrets(instruction)
         with self.lock(project_id):
             self.task(project_id, task_id)
+            self._require_task_runnable(project_id, task_id)
             if self.latest(project_id)["version"] != context_version:
                 raise VersionConflict("Dispatch Context Version is stale")
             project_settings = self.get_project_settings(project_id)
@@ -1703,6 +1716,7 @@ class TaskHub:
                 else {"SA": "ANALYZING", "REVIEW": "REVIEWING"}.get(role, "IMPLEMENTING")
             )
             with self.store.transaction() as conn:
+                self._require_task_runnable(project_id, task_id, conn)
                 if conn.execute(
                     "SELECT 1 FROM agent_executions WHERE project_id=? AND task_id=? "
                     "AND status IN ('QUEUED','RUNNING')",
@@ -1739,6 +1753,11 @@ class TaskHub:
                         canonical(package),
                         now(),
                     ),
+                )
+                conn.execute(
+                    "UPDATE task_interventions SET delivered_execution_id=? WHERE project_id=? "
+                    "AND task_id=? AND action='user_message' AND delivered_execution_id IS NULL",
+                    (execution_id, project_id, task_id),
                 )
             self.sync_documents(project_id)
         if agent == "chatgpt" and adapter == "real":
@@ -1975,6 +1994,25 @@ class TaskHub:
                     "history": [dict(r) for r in meeting_rows],
                 },
             }
+            control = self.task_control(project_id, task_id)
+            active = bool(control.get("host_test_running")) or any(
+                e["status"] == "RUNNING" for e in task["executions"]
+            )
+            control_status = (
+                "STOPPING" if control["stop_requested"] and active else
+                "CANCELLED" if control["stop_requested"] else
+                "PAUSING" if control["paused"] and active else
+                "PAUSED" if control["paused"] else "ACTIVE"
+            )
+            task["brief"]["control"] = {
+                "status": control_status,
+                "paused": bool(control["paused"]),
+                "stop_requested": bool(control["stop_requested"]),
+                "stop_reason": control["stop_reason"],
+                "stop_requested_at": control["stop_requested_at"],
+            }
+            if control_status != "ACTIVE":
+                task["brief"]["waiting_on"] = control_status
             return task
 
     def task_handoff(self, project_id, task_id=None):
@@ -2014,7 +2052,23 @@ class TaskHub:
             ),
             "chatgpt_prompt": None,
             "next_action": None,
+            "pending_user_messages": self.store.all(
+                "SELECT seq,content,context_version,execution_id,created FROM task_interventions "
+                "WHERE project_id=? AND task_id=? AND action='user_message' "
+                "AND delivered_execution_id IS NULL ORDER BY seq",
+                (project_id, task_id),
+            ),
         }
+        if waiting_on in {"PAUSED", "PAUSING", "STOPPING"}:
+            result["next_action"] = (
+                "已暫停後續派工。請先在 ChatGPT 檢視使用者意見，再從任務頁繼續工作。"
+                if waiting_on in {"PAUSED", "PAUSING"} and zh else
+                "Further dispatch is paused. Review user feedback in ChatGPT before resuming."
+                if waiting_on in {"PAUSED", "PAUSING"} else
+                "停止請求已記錄；目前執行仍在安全停止中。" if zh else
+                "Stop requested; the current execution is still settling."
+            )
+            return result
         if waiting_on == "CHATGPT_HANDOFF_PENDING":
             pending = next(
                 (
@@ -2719,19 +2773,50 @@ class TaskHub:
             record_test_evidence,
         )
 
-        access = self.get_project_access(project_id)
-        if access["mode"] != "read-write":
-            return record_test_evidence(
-                self,
-                project_id,
-                task_id,
-                {
-                    "executed_by_host": False,
-                    "reason": "Project is not continuously authorized; run project authorize",
-                },
+        with self.store.transaction() as conn:
+            self._require_task_runnable(project_id, task_id, conn)
+            current = conn.execute(
+                "SELECT host_test_running FROM task_controls WHERE project_id=? AND task_id=?",
+                (project_id, task_id),
+            ).fetchone()
+            if current and current["host_test_running"]:
+                raise BridgeError("Host tests are already running for this task")
+            conn.execute(
+                "INSERT INTO task_controls(project_id,task_id,host_test_running) VALUES(?,?,1) "
+                "ON CONFLICT(project_id,task_id) DO UPDATE SET host_test_running=1",
+                (project_id, task_id),
             )
-        command = self.get_project_settings(project_id).get("test_command")
-        return execute_test_command(self, project_id, task_id, command, access["identity"])
+        try:
+            access = self.get_project_access(project_id)
+            if access["mode"] != "read-write":
+                return record_test_evidence(
+                    self, project_id, task_id,
+                    {"executed_by_host": False,
+                     "reason": "Project is not continuously authorized; run project authorize"},
+                )
+            command = self.get_project_settings(project_id).get("test_command")
+            return execute_test_command(self, project_id, task_id, command, access["identity"])
+        finally:
+            stopped = False
+            with self.store.transaction() as conn:
+                conn.execute(
+                    "UPDATE task_controls SET host_test_running=0 WHERE project_id=? AND task_id=?",
+                    (project_id, task_id),
+                )
+                self._record_task_paused_if_settled(conn, project_id, task_id)
+                control = conn.execute(
+                    "SELECT stop_requested FROM task_controls WHERE project_id=? AND task_id=?",
+                    (project_id, task_id),
+                ).fetchone()
+                live = conn.execute(
+                    "SELECT 1 FROM agent_executions WHERE project_id=? AND task_id=? "
+                    "AND status IN ('QUEUED','RUNNING')", (project_id, task_id),
+                ).fetchone()
+                if control and control["stop_requested"] and not live:
+                    self._transition(conn, project_id, task_id, "CANCELLED", "Task stopped by user")
+                    stopped = True
+            if stopped:
+                self.sync_documents(project_id)
 
     def _latest_test_result(self, project_id, task_id):
         root = self.project(project_id)["root"]
@@ -2843,32 +2928,294 @@ class TaskHub:
             )
         return usage
 
-    def cancel_task(self, project_id, task_id):
+    def task_timeline(self, project_id, task_id):
+        """Rebuild the conversation from durable task, execution, test and intervention rows."""
+        task = self.task(project_id, task_id)
+        events = []
+        transitions = self.store.all(
+            "SELECT seq,new_state,reason,created FROM task_events WHERE project_id=? "
+            "AND task_id=? ORDER BY seq", (project_id, task_id),
+        )
+        for row in transitions:
+            if row["new_state"] not in {"CREATED", "COMPLETED", "CANCELLED", "FAILED", "BLOCKED"}:
+                continue
+            kind = {"CREATED": "task_created", "COMPLETED": "task_completed",
+                    "CANCELLED": "task_cancelled"}.get(row["new_state"], "task_state")
+            events.append({"event_id": f"state-{row['seq']}", "event_type": kind,
+                           "actor": "user" if kind == "task_created" else "system",
+                           "role": None, "execution_id": None, "timestamp": row["created"],
+                           "status": row["new_state"],
+                           "summary": task["requirement"] if kind == "task_created" else row["reason"],
+                           "detail": None, "evidence_refs": [], "context_version": None})
+        executions = self.store.all(
+            "SELECT id,agent,role,status,result,error,context_version,created,finished "
+            "FROM agent_executions WHERE project_id=? AND task_id=? ORDER BY created,id",
+            (project_id, task_id),
+        )
+        for row in executions:
+            common = {"actor": row["agent"], "role": row["role"],
+                      "execution_id": row["id"], "context_version": row["context_version"]}
+            events.append({**common, "event_id": f"agent-start-{row['id']}",
+                           "event_type": "agent_started", "timestamp": row["created"],
+                           "status": "QUEUED", "summary": None, "detail": None,
+                           "evidence_refs": []})
+            if not row["finished"]:
+                continue
+            saved = json.loads(row["result"]) if row["result"] else {}
+            report = saved.get("report") or {}
+            summary = report.get("summary") or row["error"]
+            refs = [saved[key] for key in ("diff_reference",) if saved.get(key)]
+            events.append({**common, "event_id": f"agent-end-{row['id']}",
+                           "event_type": "agent_completed" if row["status"] == "SUCCEEDED"
+                           else "agent_failed", "timestamp": row["finished"],
+                           "status": row["status"], "summary": summary,
+                           "detail": saved, "evidence_refs": refs})
+        root = self.project(project_id)["root"]
+        prefix = f"{metadata_name(root)}/tasks/{task_id}/executions/"
+        tests = self.store.all(
+            "SELECT path,content,created FROM artifacts WHERE project_id=? AND path LIKE ? "
+            "ORDER BY created,path", (project_id, prefix + "TEST-%/TEST-RESULT.md"),
+        )
+        for row in tests:
+            if not row["path"].startswith(prefix + "TEST-"):
+                continue
+            try:
+                result = json.loads(row["content"].split("\n\n", 1)[1])
+            except (IndexError, ValueError, TypeError):
+                result = {"executed_by_host": False, "reason": "Test evidence could not be parsed"}
+            if result.get("executed_by_host"):
+                summary = "Host tests passed" if result.get("passed") else "Host tests failed"
+            else:
+                summary = "Host tests not verified: " + str(result.get("reason") or "not run")
+            events.append({"event_id": f"test-{row['path']}",
+                           "event_type": "host_test_completed", "actor": "system",
+                           "role": None, "execution_id": None, "timestamp": row["created"],
+                           "status": "VERIFIED" if result.get("executed_by_host") else "UNVERIFIED",
+                           "summary": summary, "detail": result,
+                           "evidence_refs": [row["path"]], "context_version": None})
+        interventions = self.store.all(
+            "SELECT * FROM task_interventions WHERE project_id=? AND task_id=? ORDER BY seq",
+            (project_id, task_id),
+        )
+        for row in interventions:
+            events.append({"event_id": f"intervention-{row['seq']}",
+                           "event_type": row["action"],
+                           "actor": "user" if row["action"] in {
+                               "user_message", "pause_requested", "resume_requested", "cancel_requested"
+                           } else "system",
+                           "role": None, "execution_id": row["execution_id"],
+                           "timestamp": row["created"], "status": "RECORDED",
+                           "summary": row["content"] or None, "detail": None,
+                           "evidence_refs": [], "context_version": row["context_version"],
+                           "delivered_execution_id": row["delivered_execution_id"]})
+        events.sort(key=lambda e: (e["timestamp"], e["event_id"]))
+        for item in events:
+            item["project_id"] = project_id
+            item["task_id"] = task_id
+            item["metadata"] = {}
+        return {"project_id": project_id, "task_id": task_id, "events": events}
+
+    def task_artifacts(self, project_id, task_id):
+        """Read saved task evidence for the UI without exposing arbitrary workspace paths."""
+        self.task(project_id, task_id)
+        root = self.project(project_id)["root"]
+        prefix = f"{metadata_name(root)}/tasks/{task_id}/"
+        rows = self.store.all(
+            "SELECT path,content,sha256,created FROM artifacts WHERE project_id=? "
+            "AND path LIKE ? ORDER BY created,path", (project_id, prefix + "%"),
+        )
+        # Immutable execution originals are authoritative. The latest aliases remain
+        # available in the database, but do not appear twice in the UI list.
+        return [r for r in rows if r["path"].startswith(prefix) and
+                ("/executions/" in r["path"] or "/requirements/" in r["path"])]
+
+    def task_control(self, project_id, task_id):
+        self.task(project_id, task_id)
+        return self.store.one(
+            "SELECT * FROM task_controls WHERE project_id=? AND task_id=?",
+            (project_id, task_id),
+        ) or {"paused": 0, "stop_requested": 0, "stop_reason": None,
+              "stop_requested_at": None, "host_test_running": 0}
+
+    def _require_task_runnable(self, project_id, task_id, conn=None):
+        query = "SELECT paused,stop_requested FROM task_controls WHERE project_id=? AND task_id=?"
+        row = (conn.execute(query, (project_id, task_id)).fetchone() if conn else
+               self.store.one(query, (project_id, task_id)))
+        if row and row["stop_requested"]:
+            raise PermissionDenied("Task stop was requested; no further work may start")
+        if row and row["paused"]:
+            raise PermissionDenied("Task is paused; resume it before starting more work")
+
+    def _record_intervention(self, conn, project_id, task_id, action, content=""):
+        version = self.latest(project_id)["version"]
+        active = conn.execute(
+            "SELECT id FROM agent_executions WHERE project_id=? AND task_id=? "
+            "AND status IN ('QUEUED','RUNNING') ORDER BY created DESC LIMIT 1",
+            (project_id, task_id),
+        ).fetchone()
+        conn.execute(
+            "INSERT INTO task_interventions(project_id,task_id,action,content,context_version,"
+            "execution_id,created) VALUES(?,?,?,?,?,?,?)",
+            (project_id, task_id, action, content, version, active["id"] if active else None, now()),
+        )
+
+    def _record_task_paused_if_settled(self, conn, project_id, task_id):
+        control = conn.execute(
+            "SELECT paused,host_test_running FROM task_controls WHERE project_id=? AND task_id=?",
+            (project_id, task_id),
+        ).fetchone()
+        if not control or not control["paused"] or control["host_test_running"]:
+            return
+        if conn.execute(
+            "SELECT 1 FROM agent_executions WHERE project_id=? AND task_id=? AND status='RUNNING'",
+            (project_id, task_id),
+        ).fetchone():
+            return
+        pause = conn.execute(
+            "SELECT seq FROM task_interventions WHERE project_id=? AND task_id=? "
+            "AND action='pause_requested' ORDER BY seq DESC LIMIT 1",
+            (project_id, task_id),
+        ).fetchone()
+        if pause and not conn.execute(
+            "SELECT 1 FROM task_interventions WHERE project_id=? AND task_id=? "
+            "AND action='task_paused' AND seq>?",
+            (project_id, task_id, pause["seq"]),
+        ).fetchone():
+            self._record_intervention(conn, project_id, task_id, "task_paused")
+
+    def pause_task(self, project_id, task_id):
         with self.lock(project_id):
-            self.task(project_id, task_id)
+            task = self.task(project_id, task_id)
+            control = self.task_control(project_id, task_id)
+            if task["state"] in {"COMPLETED", "CANCELLED", "REJECTED"} or control["stop_requested"]:
+                raise PermissionDenied("Finished or stopping tasks cannot be paused")
+            if not control["paused"]:
+                with self.store.transaction() as conn:
+                    conn.execute(
+                        "INSERT INTO task_controls(project_id,task_id,paused) VALUES(?,?,1) "
+                        "ON CONFLICT(project_id,task_id) DO UPDATE SET paused=1",
+                        (project_id, task_id),
+                    )
+                    self._record_intervention(conn, project_id, task_id, "pause_requested")
+                    self._record_task_paused_if_settled(conn, project_id, task_id)
+        return self.get_task_status(project_id, task_id)["brief"]["control"]
+
+    def resume_task(self, project_id, task_id):
+        with self.lock(project_id):
+            task = self.task(project_id, task_id)
+            control = self.task_control(project_id, task_id)
+            if task["state"] in {"COMPLETED", "CANCELLED", "REJECTED"} or control["stop_requested"]:
+                raise PermissionDenied("Finished or stopping tasks cannot be resumed")
+            was_paused = bool(control["paused"])
+            if was_paused:
+                with self.store.transaction() as conn:
+                    queued = conn.execute(
+                        "SELECT id,package FROM agent_executions WHERE project_id=? AND task_id=? "
+                        "AND status='QUEUED' AND cancel_requested=0",
+                        (project_id, task_id),
+                    ).fetchall()
+                    pending = conn.execute(
+                        "SELECT seq,content,context_version,execution_id,created "
+                        "FROM task_interventions WHERE project_id=? AND task_id=? "
+                        "AND action='user_message' AND delivered_execution_id IS NULL ORDER BY seq",
+                        (project_id, task_id),
+                    ).fetchall()
+                    if queued and pending:
+                        selected = queued[0]
+                        package = json.loads(selected["package"])
+                        package.setdefault("content", {}).setdefault("pending_user_messages", []).extend(
+                            dict(row) for row in pending
+                        )
+                        conn.execute(
+                            "UPDATE agent_executions SET package=? WHERE id=?",
+                            (canonical(package), selected["id"]),
+                        )
+                        conn.execute(
+                            "UPDATE task_interventions SET delivered_execution_id=? WHERE project_id=? "
+                            "AND task_id=? AND action='user_message' AND delivered_execution_id IS NULL",
+                            (selected["id"], project_id, task_id),
+                        )
+                    conn.execute(
+                        "UPDATE task_controls SET paused=0 WHERE project_id=? AND task_id=?",
+                        (project_id, task_id),
+                    )
+                    self._record_intervention(conn, project_id, task_id, "resume_requested")
+        queued = self.store.all(
+            "SELECT id,adapter FROM agent_executions WHERE project_id=? AND task_id=? "
+            "AND status='QUEUED' AND cancel_requested=0",
+            (project_id, task_id),
+        ) if was_paused else []
+        for row in queued:
+            if row["adapter"] == "interactive":
+                self.prepare_chatgpt_execution(row["id"])
+            else:
+                self.spawn_worker(row["id"])
+        # A browser cannot run a ChatGPT role. Return the durable next-step handoff.
+        return self.task_handoff(project_id, task_id)
+
+    def add_task_message(self, project_id, task_id, content, pause=True):
+        if not isinstance(content, str) or not content.strip() or len(content) > 8000:
+            raise BridgeError("Message must contain 1–8000 characters")
+        reject_secrets(content)
+        with self.lock(project_id):
+            task = self.task(project_id, task_id)
+            control = self.task_control(project_id, task_id)
+            if task["state"] in {"COMPLETED", "CANCELLED", "REJECTED"} or control["stop_requested"]:
+                raise PermissionDenied("Finished or stopping tasks do not accept corrections")
+            with self.store.transaction() as conn:
+                self._record_intervention(conn, project_id, task_id, "user_message", content.strip())
+                if pause and not control["paused"]:
+                    conn.execute(
+                        "INSERT INTO task_controls(project_id,task_id,paused) VALUES(?,?,1) "
+                        "ON CONFLICT(project_id,task_id) DO UPDATE SET paused=1",
+                        (project_id, task_id),
+                    )
+                    self._record_intervention(conn, project_id, task_id, "pause_requested")
+                    self._record_task_paused_if_settled(conn, project_id, task_id)
+        return self.get_task_status(project_id, task_id)["brief"]["control"]
+
+    def cancel_task(self, project_id, task_id, reason=""):
+        if not isinstance(reason, str) or len(reason) > 2000:
+            raise BridgeError("Stop reason must be at most 2000 characters")
+        reject_secrets(reason)
+        with self.lock(project_id):
+            task = self.task(project_id, task_id)
+            control = self.task_control(project_id, task_id)
+            if control["stop_requested"] or task["state"] == "CANCELLED":
+                return self.get_task_status(project_id, task_id)["brief"]["control"]
+            if task["state"] in {"COMPLETED", "REJECTED"}:
+                raise PermissionDenied("Completed tasks cannot be stopped")
             with self.store.transaction() as conn:
                 conn.execute(
                     "UPDATE agent_executions SET cancel_requested=1 WHERE project_id=? AND task_id=? "
                     "AND status IN ('QUEUED','RUNNING')",
                     (project_id, task_id),
                 )
-                self._transition(
-                    conn, project_id, task_id, "CANCELLED", "PM cancelled task; stop requested"
+                conn.execute(
+                    "INSERT INTO task_controls(project_id,task_id,paused,stop_requested,stop_reason,"
+                    "stop_requested_at) VALUES(?,?,0,1,?,?) ON CONFLICT(project_id,task_id) "
+                    "DO UPDATE SET paused=0,stop_requested=1,stop_reason=excluded.stop_reason,"
+                    "stop_requested_at=excluded.stop_requested_at",
+                    (project_id, task_id, reason.strip(), now()),
                 )
+                self._record_intervention(conn, project_id, task_id, "cancel_requested", reason.strip())
+                active = conn.execute(
+                    "SELECT id,adapter,status FROM agent_executions WHERE project_id=? AND task_id=? "
+                    "AND status IN ('QUEUED','RUNNING')",
+                    (project_id, task_id),
+                ).fetchall()
+                host_test = bool(control.get("host_test_running"))
+                if not active and not host_test:
+                    self._transition(conn, project_id, task_id, "CANCELLED", "Task stopped by user")
                 conn.execute(
                     "DELETE FROM pending_dispatch WHERE project_id=? AND task_id=?",
                     (project_id, task_id),
                 )
             self.sync_documents(project_id)
-        for row in self.store.all(
-            "SELECT id,options FROM agent_executions WHERE project_id=? AND task_id=? "
-            "AND agent='chatgpt' AND adapter='interactive' AND status='RUNNING'",
-            (project_id, task_id),
-        ):
-            self.finish_execution(
-                row["id"], error="Interactive execution cancelled", state="CANCELLED"
-            )
-        return {"status": "CANCELLED", "stop_requested": True}
+        for row in active:
+            if row["status"] == "QUEUED" or row["adapter"] == "interactive":
+                self.finish_execution(row["id"], error="Execution stopped by user", state="CANCELLED")
+        return self.get_task_status(project_id, task_id)["brief"]["control"]
 
     def recover_workers(self, project_id):
         self.project(project_id)
@@ -2879,6 +3226,9 @@ class TaskHub:
         )
         for row in rows:
             if decode(row, "options")["options"].get("interactive"):
+                continue
+            if row["status"] == "QUEUED" and self.task_control(project_id, row["task_id"])["paused"]:
+                # A pause deliberately leaves this execution queued for resume.
                 continue
             lockfile = self.home / "locks" / f"{row['id']}.lock"
             try:
@@ -2977,7 +3327,11 @@ class TaskHub:
                 ).fetchone()
                 if current["status"] not in {"QUEUED", "RUNNING"}:
                     return
-                cancelled = bool(current["cancel_requested"])
+                control = conn.execute(
+                    "SELECT stop_requested FROM task_controls WHERE project_id=? AND task_id=?",
+                    (project_id, task_id),
+                ).fetchone()
+                cancelled = bool(current["cancel_requested"] or (control and control["stop_requested"]))
                 is_clarification = report and not cancelled and not error and report_schema != "agent_report"
                 if is_clarification:
                     target = self._record_clarification_result(
@@ -3101,6 +3455,7 @@ class TaskHub:
                 self._transition(
                     conn, project_id, task_id, target, error or "Agent result requires PM review"
                 )
+                self._record_task_paused_if_settled(conn, project_id, task_id)
             self.sync_documents(project_id)
 
     def advance_meeting_clarification(self, execution_id):

@@ -39,3 +39,11 @@ Off by default. `ccc-mcp --project hello-demo config meeting-mode on --min-round
 `--escalation` decides who resolves a `pm_decision_required` round (SA/SD/RD couldn't agree): `ask_user` (default) requires ChatGPT to present the question and SA's recommendation to the real operator in chat and wait for their actual reply before calling `resolve_clarification` — `workflow.must_continue_in_this_turn` is `false` for this case, confirming it is a genuine stop. `auto_pm` lets ChatGPT decide immediately using its own judgement as PM in the same turn (`must_continue_in_this_turn` is `true`), after which it should still tell the operator what it decided and why. This is instruction-driven, not code-enforced — see [reliability and security](7-reliability-and-security.md#meeting-mode) for that boundary and the full set of guarantees.
 
 See [reliability and security](7-reliability-and-security.md) for test gates, quota fallback, and recovery guarantees.
+
+## Task detail 2.0: conversation and user intervention
+
+The local UI now opens each task on a work conversation. It rebuilds events from existing `task_events`, `agent_executions`, and saved per-run `TEST-RESULT.md` evidence, then includes persisted user interventions. Older tasks need no migration. Agent summaries come from saved reports; a test is described as verified only when the host actually ran it. Results and Technical record retain the original reports, diff, evaluation, Context, and handoff.
+
+Pause persists a dispatch gate. A queued worker waits for resume; an already running agent or host test may settle at a safe point, shown as **Pausing** until then. Resume releases the gate and reuses the same queued execution. When the next step belongs to PM or an interactive ChatGPT role, the UI shows the saved handoff; it cannot launch ChatGPT itself.
+
+Stop records a reason and time, requests cancellation of active executions, and blocks further dispatch. It shows **Stopping** while an operation settles and **Stopped** afterward. It does not roll back edited files. The composer stores a correction on the task and pauses dispatch by default. Pending corrections appear in `task_handoff` and the next Agent handoff, then are marked delivered so they are not sent twice. The composer is a workflow control, not a separate LLM chat.

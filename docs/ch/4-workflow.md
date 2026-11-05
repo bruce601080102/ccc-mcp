@@ -143,3 +143,11 @@ ccc-mcp --project my-project config meeting-mode on --min-rounds 1 --max-rounds 
 > 請使用 ccc-mcp 恢復目前專案的上下文，說明目前進度、最近決策、未完成工作與建議下一步。project_id 是 my-project。
 
 只需 `bootstrap_project` 即能取得完整恢復入口。沒有 MCP 時貼入 `context export`。兩種方式都不要求歷史聊天、ChatGPT 個人 Memory 或先前模型 Session ID。
+
+## 任務詳情 2.0：工作對話與使用者介入
+
+本機 Web 控制台的任務詳情預設顯示「工作對話」。它從既有 `task_events`、`agent_executions` 和每次保存的 `TEST-RESULT.md` 重建事件，再合併使用者介入紀錄；舊任務無需遷移即可閱讀。Agent 摘要採用已保存的原始報告，主機測試只採用 host 執行的證據。原始報告、Diff、評估與 Context 可在「執行成果」及「技術紀錄」展開查看。
+
+「暫停工作」會持久化派工閘門。已派出但尚未開始的 worker 會等待恢復；已在執行的 Agent 或主機測試可能在安全點完成，畫面會顯示「暫停中」，完成後才顯示「已暫停」。按「繼續工作」會解除閘門並接續同一個已排隊的執行；若下一步需要 PM/ChatGPT，畫面會顯示保存的 handoff 指引，Web UI 不會自行啟動 ChatGPT。
+
+「停止任務」會保存原因和時間、標記執行取消，並禁止新的派工。執行仍在收尾時顯示「停止中」，結束後才顯示「已停止」。停止不會還原已修改的檔案。對話輸入框會將修正意見保存至該任務，預設同時暫停後續派工；`task_handoff` 和下一次 Agent handoff 會帶入尚未交付的意見，交付後不再重複帶入。輸入框只控制原工作流，不是另一個 LLM 聊天室。

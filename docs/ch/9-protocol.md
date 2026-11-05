@@ -52,3 +52,7 @@ ccc-mcp schema export docs/schema
 - 角色、provider、quota fallback 等設定：`get_project_settings`（MCP）或 `ccc-mcp config show`（CLI）。
 
 不要直接開 `.ccc-mcp/` 底下的 SQLite 檔或平行解析 Markdown 投影檔；那些是實作細節，格式與欄位都可能在不升版的情況下改變。
+
+## 任務對話與控制 API（本機 Web UI）
+
+`GET /api/projects/{project_id}/tasks/{task_id}/timeline` 以穩定 `event_id` 回傳從原始紀錄重建的事件。`GET .../artifacts` 讀取該任務保存的原始 artifact。`POST .../pause`、`POST .../resume`、`POST .../stop`（可帶 `reason`）及 `POST .../messages`（`content`、可選 `pause`，預設 `true`）控制工作流。所有路由沿用本機 UI session token，並依已註冊的 project/task 範圍讀寫。原有 CLI 與 MCP 任務工具不變；`get_task_status.brief.control` 會回報 `ACTIVE`、`PAUSING`、`PAUSED`、`STOPPING` 或 `CANCELLED`，`task_handoff.pending_user_messages` 供 PM 接續處理。

@@ -32,6 +32,7 @@
     if (!res.ok) {
       const err = new Error((data && data.error) || ("Request failed: " + res.status));
       err.status = res.status;
+      err.path = "/api" + path;
       throw err;
     }
     return data;
@@ -294,7 +295,7 @@
         <div class="sidebar-locale"><span>Interface language</span><select id="ui-locale" aria-label="Interface language"><option value="zh-TW">繁體中文</option><option value="en">English</option></select></div>
         <div class="sidebar-foot">LOCAL CONSOLE <span class="status-dot on"></span></div>
       </div>
-      <div class="frame"><div class="sheet" id="sheet"><div class="content${narrow ? " narrow" : ""}">${contentHtml}</div></div></div>
+      <div class="frame"><div class="sheet" id="sheet"><div class="content${narrow ? " narrow" : ""}${opts && opts.contentClass ? " " + opts.contentClass : ""}">${contentHtml}</div></div></div>
     `;
     const localeSelect = document.getElementById("ui-locale");
     localeSelect.value = UI.getLocale();
@@ -637,11 +638,11 @@
     const section = (group, index) => {
       const groupId = group ? group.id : "";
       const members = projects.filter((p) => (assignments[p.id] || "") === groupId);
-      return `<section class="project-group">
-        <div class="section-heading project-heading"><div><h2 data-no-i18n>${esc(group ? groupName(group) : UI.translate("Ungrouped"))}</h2><p>${members.length} ${UI.translate("registered projects")}</p></div>
-        ${group ? `<div class="group-actions">${index > 0 ? `<button class="btn small ghost icon-button" data-group-up="${esc(group.id)}" aria-label="${esc(UI.translate("Move group up"))}" title="${esc(UI.translate("Move group up"))}">${ICON.up}</button>` : ""}${index < groups.length - 1 ? `<button class="btn small ghost icon-button" data-group-down="${esc(group.id)}" aria-label="${esc(UI.translate("Move group down"))}" title="${esc(UI.translate("Move group down"))}">${ICON.down}</button>` : ""}<button class="btn small" data-group-rename="${esc(group.id)}">${esc(UI.translate("Rename"))}</button><button class="btn small danger" data-group-delete="${esc(group.id)}">${esc(UI.translate("Delete group"))}</button></div>` : ""}</div>
-        <div class="project-list" data-drop-group="${esc(groupId)}">${members.length ? members.map(row).join("") : `<div class="group-empty">${esc(UI.translate("Drag projects here, or use Move to on a card."))}</div>`}</div>
-      </section>`;
+      const title = group ? `<span data-no-i18n>${esc(groupName(group))}</span>` : esc(UI.translate("Ungrouped"));
+      const actions = group ? `<div class="group-actions">${index > 0 ? `<button class="btn small ghost icon-button" data-group-up="${esc(group.id)}" aria-label="${esc(UI.translate("Move group up"))}" title="${esc(UI.translate("Move group up"))}">${ICON.up}</button>` : ""}${index < groups.length - 1 ? `<button class="btn small ghost icon-button" data-group-down="${esc(group.id)}" aria-label="${esc(UI.translate("Move group down"))}" title="${esc(UI.translate("Move group down"))}">${ICON.down}</button>` : ""}<button class="btn small" data-group-rename="${esc(group.id)}">${esc(UI.translate("Rename"))}</button><button class="btn small danger" data-group-delete="${esc(group.id)}">${esc(UI.translate("Delete group"))}</button></div>` : "";
+      return pageCard(group ? "folder" : "inbox", title, `${members.length} ${esc(UI.translate("registered projects"))}`,
+        `<div class="project-list" data-drop-group="${esc(groupId)}">${members.length ? members.map(row).join("") : `<div class="group-empty">${esc(UI.translate("Drag projects here, or use Move to on a card."))}</div>`}</div>`,
+        "", { actions, flush: true });
     };
     const dashboardHtml = isDashboard ? `
       <header class="dashboard-command">
@@ -704,7 +705,7 @@
         <div class="kpi"><div class="v num">${writable}</div><div class="l">${esc(UI.translate("Read-write"))}</div></div>
         <div class="kpi"><div class="v num">${projects.length - writable}</div><div class="l">${esc(UI.translate("Read-only"))}</div></div>
       </div>` : ""}
-      ${projects.length || groups.length ? groups.map(section).join("") + section(null, groups.length) : `<div class="empty">No projects yet. Add an existing folder or create a new one.</div>`}
+      ${projects.length || groups.length ? `<div class="settings-stack">${groups.map(section).join("") + section(null, groups.length)}</div>` : `<div class="empty">No projects yet. Add an existing folder or create a new one.</div>`}
     `;
     layout(isDashboard ? dashboardHtml : projectsHtml);
     if (isDashboard) {
@@ -914,6 +915,41 @@
     }).catch((err) => toast(err.message, true));
   }
 
+  const PAGE_ICONS = {
+    profile: '<path d="m12 2 10 5-10 5L2 7z"/><path d="m2 17 10 5 10-5"/><path d="m2 12 10 5 10-5"/>',
+    roles: '<circle cx="9" cy="7" r="4"/><path d="M2 21v-2a4 4 0 0 1 4-4h6a4 4 0 0 1 4 4v2"/><path d="M16 3.1a4 4 0 0 1 0 7.8"/><path d="M22 21v-2a4 4 0 0 0-3-3.9"/>',
+    language: '<circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>',
+    test: '<path d="m4 17 6-6-6-6"/><path d="M12 19h8"/>',
+    runtime: '<rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 2v2M15 2v2M9 20v2M15 20v2M2 9h2M2 15h2M20 9h2M20 15h2"/>',
+    meeting: '<path d="M14 9a2 2 0 0 1-2 2H6l-4 4V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2z"/><path d="M18 9h2a2 2 0 0 1 2 2v11l-4-4h-6a2 2 0 0 1-2-2v-1"/>',
+    evaluation: '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
+    check: '<path d="M20 6 9 17l-5-5"/>',
+    shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/>',
+    danger: '<path d="m21.7 18-8-14a2 2 0 0 0-3.4 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.7-3z"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
+    doc: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/>',
+    decision: '<circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>',
+    lock: '<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
+    question: '<circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"/><path d="M12 17h.01"/>',
+    package: '<path d="M21 8a2 2 0 0 0-1-1.7l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.7l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/>',
+    server: '<rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><path d="M6 6h.01M6 18h.01"/>',
+    search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
+    clock: '<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>',
+    list: '<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',
+    code: '<path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/>',
+    folder: '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.7-.9L9.6 3.9A2 2 0 0 0 7.9 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2z"/>',
+    inbox: '<path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.5 5.1 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.5-6.9A2 2 0 0 0 16.7 4H7.3a2 2 0 0 0-1.8 1.1z"/>',
+    link: '<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/>',
+    key: '<circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 3 3L22 7l-3-3"/>',
+    download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/>',
+  };
+  const pageIcon = (name) => `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${PAGE_ICONS[name]}</svg>`;
+  // One titled card: icon + heading + description, a body, and an optional footer / header actions.
+  // `title` and `description` are plain English strings; the DOM localizer translates them.
+  const pageCard = (icon, title, description, body, footer, opts = {}) => `<section class="settings-card${opts.tone ? " is-" + opts.tone : ""}">
+      <header class="settings-card-head"><span class="settings-card-icon">${pageIcon(icon)}</span><div><h2>${title}</h2>${description ? `<p>${description}</p>` : ""}</div>${opts.actions ? `<div class="settings-card-actions">${opts.actions}</div>` : ""}</header>
+      <div class="settings-card-body${opts.flush ? " flush" : ""}">${body}</div>${footer ? `<footer class="settings-card-foot">${footer}</footer>` : ""}
+    </section>`;
+
   async function renderProjectOverview() {
     const gen = renderGen;
     const route = parseRoute();
@@ -930,6 +966,13 @@
     }
     if (stale(gen)) return;
     const access = project.access;
+    let tasks = [];
+    try { tasks = await api(`/projects/${encodeURIComponent(id)}/tasks`); } catch (err) { tasks = []; }
+    if (stale(gen)) return;
+    const finished = tasks.filter((t) => t.state === "COMPLETED").length;
+    const running = tasks.filter((t) => !["COMPLETED", "CANCELLED"].includes(t.state)).length;
+    const latest = [...tasks].sort((a, b) => String(a.created || "").localeCompare(String(b.created || ""))).at(-1);
+    const dangerRow = (title, description, actions, hint) => `<div class="danger-row"><div><strong>${title}</strong><p>${description}</p>${hint || ""}</div><div class="danger-row-actions">${actions}</div></div>`;
     layout(`
       <div class="title-row">
         <div><h1>${esc(id)}</h1><div class="sub mono">${esc(project.root)}</div></div>
@@ -938,64 +981,40 @@
           <a class="btn" href="#/p/${encodeURIComponent(id)}/settings">Settings</a>
         </div>
       </div>
-      <div class="section">
-        <div class="section-row">
-          <div class="section-label">
-            <div class="t">Access</div>
-            <div class="d">Whether ccc-mcp can write files in this project and run its test command.</div>
-          </div>
-          <div class="section-panel">
-            <div class="kv-row"><span class="k">Mode</span><span class="v">${accessPill(access)}</span></div>
-            ${access.mode === "read-write" ? `
-              <div class="kv-row"><span class="k">Authorized at</span><span class="v">${esc(access.authorized_at || "")}</span></div>
-              <div class="kv-row"><span class="k">Identity</span><span class="v mono">${esc(access.identity || "")}</span></div>
-            ` : ""}
-            <div style="margin-top:16px; display:flex; gap:8px">
-              ${access.mode === "read-write"
-                ? `<button class="btn" id="btn-revoke">Revoke write (back to read-only)</button>`
-                : `<button class="btn primary" id="btn-enable-write">Enable write</button>`}
-            </div>
-          </div>
-        </div>
+      <div class="kpi-strip">
+        <div class="kpi"><div class="v num">${tasks.length}</div><div class="l">Tasks</div></div>
+        <div class="kpi"><div class="v num">${finished}</div><div class="l">Completed</div></div>
+        <div class="kpi"><div class="v num">${running}</div><div class="l">In progress</div></div>
+        <div class="kpi"><div class="v">${accessPill(access)}</div><div class="l">Access</div></div>
       </div>
-      <div class="section">
-        <div class="section-row">
-          <div class="section-label">
-            <div class="t">Clear workflow history</div>
-            <div class="d">Archives the database and resets tasks/context for this project. Source files, settings and authorization are preserved.</div>
-          </div>
-          <div class="section-panel">
-            <button class="btn" id="btn-clear-history">Clear history…</button>
-          </div>
-        </div>
+      <div class="settings-stack">
+        ${latest ? pageCard("clock", "Latest task", "The most recent work request in this project.",
+          `<a class="latest-task" href="#/p/${encodeURIComponent(id)}/tasks/${encodeURIComponent(latest.id)}">
+            <span class="latest-task-id mono">${esc(latest.id)}</span>
+            <span class="latest-task-text">${esc((latest.requirement || "").slice(0, 160))}</span>
+            <span class="pill neutral">${esc(UI.translate(latest.state))}</span>
+          </a>`) : ""}
+        ${pageCard("shield", "Access", "Whether ccc-mcp can write files in this project and run its test command.",
+          `<div class="kv-row"><span class="k">Mode</span><span class="v">${accessPill(access)}</span></div>
+          ${access.mode === "read-write" ? `
+            <div class="kv-row"><span class="k">Authorized at</span><span class="v">${esc(access.authorized_at || "")}</span></div>
+            <div class="kv-row"><span class="k">Identity</span><span class="v mono">${esc(access.identity || "")}</span></div>
+          ` : ""}`,
+          access.mode === "read-write"
+            ? `<button class="btn small" id="btn-revoke">Revoke write (back to read-only)</button>`
+            : `<button class="btn small primary" id="btn-enable-write">Enable write</button>`)}
+        ${pageCard("danger", "Destructive actions", "These change or remove this project's ccc-mcp records. Read each one before you confirm.",
+          `<div class="danger-list">
+            ${dangerRow("Clear workflow history", "Archives the database and resets tasks/context for this project. Source files, settings and authorization are preserved.",
+              `<button class="btn" id="btn-clear-history">Clear history…</button>`)}
+            ${dangerRow("Remove from ccc-mcp", "Removes this project and clears its ccc-mcp records by default. Choose whether to keep the folder; select Keep records in the confirmation if you need an archive.",
+              `<div class="project-remove-actions"><button class="btn primary" id="btn-remove">Remove, keep folder…</button><button class="btn danger" id="btn-remove-files">Remove and delete folder…</button></div>`)}
+            ${dangerRow("Permanently retire project ID", "Permanently retires this project ID. Never deletes files on disk or historical records. Cannot be undone.",
+              `<button class="btn danger" id="btn-delete" ${access.mode === "read-write" ? "disabled" : ""}>Retire ID…</button>`,
+              access.mode === "read-write" ? `<div class="hint">Revoke write access first.</div>` : "")}
+          </div>`, "", { tone: "danger" })}
       </div>
-      <div class="section">
-        <div class="section-row">
-          <div class="section-label">
-            <div class="t">Remove from ccc-mcp</div>
-            <div class="d">Removes this project and clears its ccc-mcp records by default. Choose whether to keep the folder; select Keep records in the confirmation if you need an archive.</div>
-          </div>
-          <div class="section-panel">
-            <div class="project-remove-actions">
-              <button class="btn primary" id="btn-remove">Remove, keep folder…</button>
-              <button class="btn danger" id="btn-remove-files">Remove and delete folder…</button>
-            </div>
-          </div>
-        </div>
-      </div>
-      <div class="section">
-        <div class="section-row">
-          <div class="section-label">
-            <div class="t">Permanently retire project ID</div>
-            <div class="d">Permanently retires this project ID. Never deletes files on disk or historical records. Cannot be undone.</div>
-          </div>
-          <div class="section-panel">
-            <button class="btn danger" id="btn-delete" ${access.mode === "read-write" ? "disabled" : ""}>Retire ID…</button>
-            ${access.mode === "read-write" ? `<div class="hint">Revoke write access first.</div>` : ""}
-          </div>
-        </div>
-      </div>
-    `, { narrow: true });
+    `, { narrow: true, contentClass: "settings-wide" });
     const enableBtn = document.getElementById("btn-enable-write");
     if (enableBtn) enableBtn.addEventListener("click", () => promptAuthorize(id, renderProjectOverview));
     const revokeBtn = document.getElementById("btn-revoke");
@@ -1168,113 +1187,326 @@
     return `<article class="evaluation-report"><div class="evaluation-report-top"><div><strong>${esc(row.role)} · ${esc(row.agent)}</strong><small>${esc(row.evaluation_timestamp)} · v${esc(row.version)} · ${esc(row.trigger)}</small></div><span class="pill ${row.task_status === "PASSED" ? "positive" : row.task_status === "FAILED" ? "negative" : "warning"}">${esc(UI.translate(row.task_status))}</span></div><div class="evaluation-measures"><span><strong class="num">${esc(score)}</strong>${esc(UI.translate("Quality from available signals"))}</span><span><strong class="num">${coverage}%</strong>${esc(UI.translate("Evidence coverage"))}</span></div><div class="evaluation-dimensions">${dims}</div><details><summary>${esc(UI.translate("Evidence and disagreements"))} · ${esc((row.evidence || []).length)} / ${esc((row.disagreements || []).length)}</summary><pre class="mono">${esc(JSON.stringify({ evidence: row.evidence, disagreements: row.disagreements, features: row.scoring_details?.features }, null, 2))}</pre></details><button class="btn small" data-reevaluate="${esc(row.source_execution_id)}">${esc(UI.translate("Re-evaluate execution"))}</button></article>`;
   }
 
+  let taskDetailPane = "conversation";
+  let taskDetailDraft = "";
+  let taskDetailRoute = "";
+
+  function renderTaskVersionMismatch(status, projectId, taskId, missingPaths, legacyExecutions) {
+    const transitions = (status.events || []).filter((event) => ["CREATED", "COMPLETED", "CANCELLED"].includes(event.new_state)).map((event) => ({
+      event_id: `legacy-state-${event.seq}`, event_type: event.new_state === "CREATED" ? "task_created" : event.new_state === "COMPLETED" ? "task_completed" : "task_cancelled",
+      actor: event.new_state === "CREATED" ? "user" : "system", role: null, execution_id: null,
+      timestamp: event.created, summary: event.new_state === "CREATED" ? status.requirement : event.reason,
+      detail: null, evidence_refs: [], context_version: null, legacy: true,
+    }));
+    const executions = (legacyExecutions || []).filter((execution) => execution.finished).map((execution) => ({
+      event_id: `legacy-agent-${execution.id}`, event_type: execution.status === "SUCCEEDED" ? "agent_completed" : "agent_failed",
+      actor: execution.agent, role: execution.role, execution_id: execution.id, timestamp: execution.finished,
+      summary: execution.result?.report?.summary || execution.error || "",
+      detail: execution.result, evidence_refs: [], context_version: execution.context_version,
+    }));
+    const events = [...transitions, ...executions].sort((a, b) => (a.timestamp || "").localeCompare(b.timestamp || "") || a.event_id.localeCompare(b.event_id));
+    layout(`<div class="task-workspace">
+      <header class="task-workspace-head"><div><a class="task-back" href="#/p/${encodeURIComponent(projectId)}/tasks">← ${esc(UI.translate("Back to tasks"))}</a><h1>${esc(UI.translate("Task discussion"))}</h1><div class="task-identifiers"><span>${esc(projectId)}</span><span class="mono">${esc(taskId)}</span><span class="pill warning">${esc(UI.translate(status.state || "UNKNOWN"))}</span></div></div></header>
+      <div class="task-conversation-room"><div class="chat-room-bar"><div class="chat-room-title"><span class="chat-room-mark" aria-hidden="true">#</span><div><strong>${esc(UI.translate("Task meeting room"))}</strong><small>${esc(taskId)} · ${esc(UI.translate("Read-only conversation"))}</small></div></div><div class="chat-participants" aria-label="${esc(UI.translate("Meeting participants"))}"><span>SA</span><span>SD</span><span>RV</span><span>PM</span></div></div>
+        <div class="chat-sync-warning" role="alert"><strong>${esc(UI.translate("Restart the local UI server"))}</strong><span>${esc(UI.translate("The browser has the new task page, but the running ccc-mcp UI server does not provide its required API. Stop that server, run ccc-mcp ui again, then open its newly printed URL."))}</span><small class="mono">${esc(missingPaths.join(", "))}</small></div>
+        <div class="conversation-feed" role="log" aria-label="${esc(UI.translate("Work conversation"))}">${taskConversation(events)}</div>
+        <div class="task-composer"><label>${esc(UI.translate("Correction or instruction"))}</label><textarea rows="2" disabled placeholder="${esc(UI.translate("Restart the UI server to send a correction."))}"></textarea></div>
+      </div>
+    </div>`);
+    const feed = document.querySelector(".conversation-feed");
+    if (feed) feed.scrollTop = feed.scrollHeight;
+    bindChatDetailButtons(events);
+  }
+
+  const TASK_ROLE_LABELS = { SA: "Analysis", "SD/RD": "Development", SD: "Development", RD: "Development", REVIEW: "Review", PM: "Summary" };
+
+  function statusPill(kind, text) {
+    return `<span class="pill ${kind}">${esc(UI.translate(text))}</span>`;
+  }
+
+  // Short, readable facts pulled from a host-test result; everything else stays in the raw data.
+  function hostTestFacts(detail) {
+    if (!detail) return [];
+    const facts = [];
+    if (!detail.executed_by_host) facts.push(["Result", statusPill("warning", "Not verified"), "status"]);
+    else if (detail.no_tests_collected) facts.push(["Result", statusPill("warning", "No tests collected"), "status"]);
+    else facts.push(["Result", detail.passed ? statusPill("positive", "Host tests passed") : statusPill("negative", "Host tests failed"), "status"]);
+    if (Array.isArray(detail.command) && detail.command.length) {
+      const [program, ...args] = detail.command;
+      facts.push(["Test command", [String(program).split(/[\\/]/).pop(), ...args].join(" "), "code"]);
+    }
+    const selection = detail.selection;
+    if (selection) {
+      const scope = selection.full_suite ? UI.translate("Full test suite") : selection.mode === "changed_test_files" ? UI.translate("Only test files changed in this round") : UI.translate("Selected tests");
+      facts.push(["Test scope", Array.isArray(selection.paths) && selection.paths.length ? `${scope} · ${selection.paths.join(", ")}` : scope]);
+    }
+    if (detail.git_revision) facts.push(["Revision", String(detail.git_revision).slice(0, 8), "code"]);
+    if (detail.identity) facts.push(["Run as", detail.identity, "code"]);
+    if (!detail.executed_by_host && detail.reason) facts.push(["Reason", detail.reason]);
+    return facts;
+  }
+
+  function reportFacts(detail) {
+    const report = detail && detail.report;
+    if (!report || typeof report !== "object") return [];
+    const facts = [];
+    if (typeof report.summary === "string" && report.summary) facts.push(["Summary", report.summary]);
+    if (typeof report.next_action === "string" && report.next_action) facts.push(["Next action", report.next_action]);
+    return facts;
+  }
+
+  function showTaskEventDetail(event) {
+    closeModal();
+    const overlay = document.createElement("div");
+    overlay.id = "modal-overlay";
+    overlay.className = "modal-overlay";
+    const isHostTest = event.event_type === "host_test_completed";
+    const contextLabel = TASK_ROLE_LABELS[event.role] || (isHostTest ? "Host tests" : "System update");
+    const payload = {
+      execution_id: event.execution_id,
+      detail: event.detail,
+      evidence_refs: event.evidence_refs,
+      context_version: event.context_version,
+      delivered_execution_id: event.delivered_execution_id,
+    };
+    const facts = isHostTest ? hostTestFacts(event.detail) : reportFacts(event.detail);
+    const factsHtml = facts.length ? `<dl class="task-detail-facts">${facts.map(([name, value, kind]) => `<div><dt>${esc(UI.translate(name))}</dt><dd${kind === "code" ? ' class="mono"' : ""}>${kind === "status" ? value : esc(value)}</dd></div>`).join("")}</dl>` : "";
+    const output = isHostTest && typeof event.detail?.stdout === "string" && event.detail.stdout.trim() ? `<section class="task-detail-section"><h3>${esc(UI.translate("Test output"))}</h3><pre class="mono task-detail-output" tabindex="0">${esc(event.detail.stdout.trim())}</pre></section>` : "";
+    overlay.innerHTML = `<div class="modal task-detail-dialog" role="dialog" aria-modal="true" aria-labelledby="task-detail-title">
+      <div class="task-detail-dialog-head"><div><small>${esc(UI.translate("View technical details"))}</small><h2 id="task-detail-title">${esc(UI.translate(contextLabel))}</h2></div><button class="btn small" id="task-detail-close" type="button">${esc(UI.translate("Close"))}</button></div>
+      <div class="task-detail-body">${factsHtml}${output}
+        <details class="task-detail-raw"><summary>${esc(UI.translate("Raw data"))}</summary><pre class="mono" tabindex="0">${esc(JSON.stringify(payload, null, 2))}</pre></details>
+      </div>
+    </div>`;
+    mountModal(overlay);
+    UI.localize(overlay);
+    overlay.addEventListener("click", (click) => { if (click.target === overlay) closeModal(); });
+    overlay.querySelector("#task-detail-close").addEventListener("click", closeModal);
+  }
+
+  function bindChatDetailButtons(events) {
+    const byId = new Map(events.map((event) => [event.event_id, event]));
+    document.querySelectorAll("[data-chat-detail]").forEach((button) => button.addEventListener("click", () => {
+      const event = byId.get(button.dataset.chatDetail);
+      if (event) showTaskEventDetail(event);
+    }));
+  }
+
+  function taskChatItem(event, latestCreate) {
+    const type = event.event_type;
+    const isUser = type === "task_created" || type === "user_message";
+    const isAgent = ["agent_started", "agent_completed", "agent_failed"].includes(type);
+    const isPm = type === "task_completed";
+    const role = isUser ? "You" : isPm ? "PM" : event.role || "ccc-mcp";
+    const label = isUser ? (type === "task_created" ? "Your request" : "Your correction") :
+      isAgent || isPm ? TASK_ROLE_LABELS[role] || "Work complete" :
+      type === "host_test_completed" ? "Host tests" :
+      type === "pause_requested" ? "Pause requested" :
+      type === "task_paused" ? "Task paused" :
+      type === "resume_requested" ? "Work resumed" :
+      type === "cancel_requested" ? "Stop requested" :
+      type === "task_cancelled" ? "Task stopped" : "System update";
+    let summary = event.summary || "";
+    if (type === "agent_started") summary = "Execution dispatched; waiting for the result.";
+    if (type === "task_completed") summary = event.legacy ?
+      "This work round completed. Restart the UI server to view the saved test evidence." :
+      "This work round completed. Review the host test evidence below before accepting the result.";
+    if (type === "task_cancelled") summary = "No further work will be dispatched. Existing file changes were not rolled back.";
+    if (type === "pause_requested") summary = "Further agent dispatch is paused. An active operation may finish at a safe point.";
+    if (type === "task_paused") summary = "No task operation is running. Work will stay paused until you continue it.";
+    if (type === "resume_requested") summary = "Dispatch is allowed again. Continue from the saved handoff in ChatGPT if it needs a PM decision.";
+    if (type === "cancel_requested") summary = "Stop request saved. An active operation may still be settling; no next agent will start." +
+      (event.summary ? `\n${UI.translate("Reason:")} ${event.summary}` : "");
+    if (type === "task_created" && event.event_id !== latestCreate) summary = "A work round was started.";
+    if (type === "host_test_completed") {
+      summary = event.detail?.executed_by_host ?
+        (event.detail.no_tests_collected ? "The host ran the test command but collected no tests, so nothing was verified." :
+          event.detail.passed ? "The host ran the test command and it passed." : "The host ran the test command and it failed.") :
+        `${UI.translate("Host verification is not complete:")} ${event.detail?.reason || UI.translate("no test was run")}`;
+    }
+    if (type === "agent_failed" && !summary) summary = "This execution ended without a verified result.";
+    const details = event.detail || event.evidence_refs?.length || event.context_version ? `<button class="chat-detail-trigger" type="button" data-chat-detail="${esc(event.event_id)}">${esc(UI.translate("View technical details"))} <span aria-hidden="true">↗</span></button>` : "";
+    const date = event.timestamp ? new Date(event.timestamp).toLocaleString() : "";
+    if (type === "host_test_completed") {
+      const state = !event.detail?.executed_by_host || event.detail.no_tests_collected ? "pending" : event.detail.passed ? "pass" : "fail";
+      const icons = { pass: "M20 6 9 17l-5-5", fail: "M18 6 6 18M6 6l12 12", pending: "M5 12h14" };
+      return `<div class="chat-evidence is-${state}" data-event-id="${esc(event.event_id)}">
+        <span class="chat-evidence-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="${icons[state]}"/></svg></span>
+        <div class="chat-evidence-text"><strong>${esc(UI.translate(label))}</strong><span>${esc(UI.translate(summary))}</span></div>
+        <time datetime="${esc(event.timestamp || "")}">${esc(date)}</time>
+        <button class="chat-evidence-open" type="button" data-chat-detail="${esc(event.event_id)}" aria-label="${esc(UI.translate("View technical details"))}">${esc(UI.translate("Details"))}</button>
+      </div>`;
+    }
+    if (!isUser && !isAgent && !isPm) {
+      return `<div class="chat-system-entry ${type === "task_cancelled" || event.detail?.passed === false ? "is-negative" : ""}" data-event-id="${esc(event.event_id)}"><div class="chat-notice"><span class="chat-notice-dot" aria-hidden="true"></span><span><strong>${esc(UI.translate(label))}</strong> · ${esc(UI.translate(summary || "System update"))}</span><time datetime="${esc(event.timestamp || "")}">${esc(date)}</time></div>${details}</div>`;
+    }
+    const avatar = isUser ? "你" : role === "REVIEW" ? "RV" : role === "SD/RD" ? "SD" : role;
+    return `<article class="chat-post ${isUser ? "is-user" : ""} ${isPm ? "is-pm" : ""} ${type === "agent_failed" ? "has-error" : ""}" data-event-id="${esc(event.event_id)}">
+      <div class="chat-avatar" aria-hidden="true">${esc(avatar)}</div>
+      <div class="chat-post-body"><div class="chat-post-meta"><strong>${esc(UI.translate(role))}</strong><span>${esc(UI.translate(label))}</span><time datetime="${esc(event.timestamp || "")}">${esc(date)}</time></div>
+      <div class="chat-bubble"><p>${esc(UI.translate(summary || "No summary was saved for this execution."))}</p>${details}</div></div>
+    </article>`;
+  }
+
+  function taskConversation(events) {
+    const latestCreate = [...events].reverse().find((event) => event.event_type === "task_created")?.event_id;
+    const ended = new Set(events.filter((event) => ["agent_completed", "agent_failed"].includes(event.event_type)).map((event) => event.execution_id));
+    const rounds = [];
+    for (const event of events) {
+      if (event.event_type === "agent_started" && ended.has(event.execution_id)) continue;
+      if (event.event_type === "task_created" || !rounds.length) rounds.push([]);
+      rounds.at(-1).push(event);
+    }
+    if (!rounds.length) return `<div class="empty">${esc(UI.translate("No task events yet."))}</div>`;
+    const older = rounds.slice(0, -1);
+    const history = older.length ? `<details class="chat-history"><summary>${esc(UI.translate("Earlier work rounds"))} <span>${older.length}</span></summary>${older.map((round, index) => `<div class="chat-round-divider">${esc(UI.translate("Work round"))} ${index + 1}</div>${round.map((event) => taskChatItem(event, latestCreate)).join("")}`).join("")}</details>` : "";
+    return `${history}<div class="chat-round-divider">${esc(UI.translate("Latest work round"))}</div>${rounds.at(-1).map((event) => taskChatItem(event, latestCreate)).join("")}`;
+  }
+
   async function renderTaskDetail() {
     const gen = renderGen;
     const route = parseRoute();
     const id = route.project, taskId = route.sub;
-    layout(`<div class="empty">Loading…</div>`);
-    let status, settings, evaluations;
+    if (taskDetailRoute !== `${id}/${taskId}`) {
+      taskDetailRoute = `${id}/${taskId}`;
+      taskDetailPane = "conversation";
+      taskDetailDraft = "";
+    }
+    const oldInput = document.getElementById("task-message");
+    const oldFeed = document.querySelector(".conversation-feed");
+    const oldFeedScroll = oldFeed?.scrollTop || 0;
+    const wasAtBottom = !oldFeed || oldFeed.scrollHeight - oldFeed.scrollTop - oldFeed.clientHeight < 120;
+    if (oldInput) taskDetailDraft = oldInput.value;
     const taskBase = `/projects/${encodeURIComponent(id)}/tasks/${encodeURIComponent(taskId)}`;
-    try { [status, settings, evaluations] = await Promise.all([
-      api(taskBase), api(`/projects/${encodeURIComponent(id)}/settings`), api(`${taskBase}/evaluations`),
-    ]); }
-    catch (err) { if (!stale(gen)) errorView(err); return; }
+    layout(`<div class="empty">Loading…</div>`);
+    const names = ["status", "timeline", "evaluations", "artifacts", "settings", "handoff"];
+    const responses = await Promise.allSettled([
+      api(taskBase), api(`${taskBase}/timeline`), api(`${taskBase}/evaluations`),
+      api(`${taskBase}/artifacts`), api(`/projects/${encodeURIComponent(id)}/settings`), api(`${taskBase}/handoff`),
+    ]);
     if (stale(gen)) return;
+    if (responses[0].status === "rejected") { errorView(responses[0].reason); return; }
+    const missing = responses.slice(1).filter((result) => result.status === "rejected" && result.reason.status === 404);
+    if (missing.length) {
+      let legacyExecutions = [];
+      try { legacyExecutions = await api(`${taskBase}/result`); } catch (_) { /* Keep the task visible even when the old result endpoint is unavailable. */ }
+      if (stale(gen)) return;
+      renderTaskVersionMismatch(responses[0].value, id, taskId, missing.map((result) => result.reason.path), legacyExecutions);
+      return;
+    }
+    const failed = responses.find((result) => result.status === "rejected");
+    if (failed) { errorView(new Error(`${failed.reason.path || "Task request"}: ${failed.reason.message}`)); return; }
+    const [status, timeline, evaluations, artifacts, settings, handoff] = responses.map((result) => result.value);
     const brief = status.brief || {};
-    const executions = (status.executions || []).map((e) => `
-      <tr>
-        <td class="mono">${esc((e.id || "").slice(0, 12))}</td>
-        <td>${esc(e.role)}</td>
-        <td>${esc(UI.translate(e.status))}</td>
-        <td>${esc(e.error ? String(e.error).slice(0, 120) : "")}</td>
-      </tr>
-    `).join("");
-    layout(`
-      <div class="title-row">
-        <div><h1 data-no-i18n>${esc(taskId)}</h1><div class="sub">${esc(id)} · ${esc(UI.translate(status.state))}</div></div>
-        <div class="title-actions"><a class="btn" href="#/p/${encodeURIComponent(id)}/tasks">Back to tasks</a></div>
+    const control = brief.control || { status: "ACTIVE" };
+    const terminal = ["COMPLETED", "CANCELLED", "REJECTED"].includes(status.state);
+    const displayState = control.status !== "ACTIVE" ? control.status : status.state;
+    const stateTone = ["FAILED", "BLOCKED", "CANCELLED", "STOPPING"].includes(displayState) ? "negative" :
+      ["COMPLETED"].includes(displayState) ? "positive" : "warning";
+    const events = timeline.events || [];
+    const conversation = taskConversation(events);
+    const doneRoles = new Set(events.filter((e) => e.event_type === "agent_completed").map((e) => e.role));
+    const steps = [
+      ["Analysis", doneRoles.has("SA")],
+      ["Development", ["SD", "RD", "SD/RD"].some((r) => doneRoles.has(r))],
+      ["Host tests", events.some((e) => e.event_type === "host_test_completed" && e.detail?.executed_by_host)],
+      ["Review", doneRoles.has("REVIEW")],
+    ];
+    const progress = steps.map(([name, done]) => `<span class="conversation-step ${done ? "done" : ""}"><i aria-hidden="true"></i>${esc(UI.translate(name))}</span>`).join("");
+    const pauseButton = !terminal && !control.stop_requested ?
+      `<button class="btn small" id="task-pause-resume">${esc(UI.translate(control.paused ? "Continue work" : "Pause work"))}</button>` : "";
+    const stopButton = !terminal && !control.stop_requested ? `<button class="btn small danger" id="task-stop">${esc(UI.translate("Stop task"))}</button>` : "";
+    const canMessage = !terminal && !control.stop_requested;
+    const diffRows = artifacts.filter((a) => a.path.endsWith("/CHANGES.diff"));
+    const testRows = artifacts.filter((a) => /\/executions\/TEST-[^/]+\/TEST-RESULT\.md$/.test(a.path));
+    const reportRows = artifacts.filter((a) => /\/(SA-REPORT|IMPLEMENTATION|REVIEW|CONTEXT-UPDATES)\.md$/.test(a.path));
+    const latestDiff = diffRows.at(-1);
+    const latestTest = testRows.at(-1);
+    const resultPane = `<section class="task-result-grid">
+      <div class="task-result-card"><h2>${esc(UI.translate("Changed files and diff"))}</h2>${latestDiff ? `<pre class="mono task-diff">${esc(latestDiff.content || "")}</pre>` : `<p class="muted">${esc(UI.translate("No saved diff yet."))}</p>`}</div>
+      <div class="task-result-card"><h2>${esc(UI.translate("Host test evidence"))}</h2>${verificationLine(brief.tests)}${latestTest ? `<details><summary>${esc(UI.translate("View saved test result"))}</summary><pre class="mono">${esc(latestTest.content)}</pre></details>` : `<p class="muted">${esc(UI.translate("No host test evidence yet."))}</p>`}</div>
+    </section><section class="task-result-card evaluation-section"><div class="evaluation-section-head"><div><h2>${esc(UI.translate("Evaluation and evidence"))}</h2><p>${esc(UI.translate("Scores are separate from task completion."))}</p></div>${settings.editable?.evaluation_engine?.enabled ? `<button class="btn small" id="task-evaluate">${esc(UI.translate("Evaluate latest executions"))}</button>` : `<button class="btn small" id="task-enable-evaluation">${esc(UI.translate("Enable evaluation"))}</button>`}</div>${evaluations.length ? `<div class="evaluation-list">${evaluations.slice().reverse().map(evaluationReport).join("")}</div>` : `<p class="muted">${esc(UI.translate("No evaluations for this task yet."))}</p>`}</section>`;
+    const technicalPane = `<div class="task-technical"><section class="task-result-card"><h2>${esc(UI.translate("Execution history"))}</h2><div class="task-table-scroll"><table><thead><tr><th>Execution</th><th>Role</th><th>Status</th><th>Error</th></tr></thead><tbody>${(status.executions || []).map((e) => `<tr><td class="mono">${esc(e.id)}</td><td>${esc(e.role)}</td><td>${esc(UI.translate(e.status))}</td><td>${esc(e.error || "")}</td></tr>`).join("")}</tbody></table></div></section>
+      <section class="task-result-card"><h2>${esc(UI.translate("Original reports"))}</h2>${reportRows.length ? reportRows.map((a) => `<details><summary>${esc(a.path.split("/").at(-1))} · ${esc(a.created)}</summary><pre class="mono">${esc(a.content)}</pre></details>`).join("") : `<p class="muted">${esc(UI.translate("No original reports yet."))}</p>`}</section>
+      <section class="task-result-card"><h2>${esc(UI.translate("Context and handoff"))}</h2><details><summary>${esc(UI.translate("View current handoff"))}</summary><pre class="mono">${esc(JSON.stringify(handoff, null, 2))}</pre></details><details><summary>${esc(UI.translate("View task status and events"))}</summary><pre class="mono">${esc(JSON.stringify(status, null, 2))}</pre></details><button class="btn small" id="task-load-context">${esc(UI.translate("Load project context"))}</button><div id="task-context-output"></div></section>
+      <section class="task-result-card"><h2>${esc(UI.translate("Usage and raw executions"))}</h2><button class="btn small" id="task-load-raw">${esc(UI.translate("Load original records"))}</button><div id="task-raw-output"></div></section></div>`;
+    layout(`<div class="task-workspace">
+      <header class="task-workspace-head"><div><a class="task-back" href="#/p/${encodeURIComponent(id)}/tasks">← ${esc(UI.translate("Back to tasks"))}</a><h1>${esc(UI.translate("Task discussion"))}</h1><div class="task-identifiers"><span>${esc(id)}</span><span class="mono">${esc(taskId)}</span><span class="pill ${stateTone}">${esc(UI.translate(displayState))}</span></div></div><div class="task-head-actions">${pauseButton}${stopButton}</div></header>
+      <div class="conversation-progress" aria-label="${esc(UI.translate("Task progress"))}">${progress}</div>
+      <nav class="tabs task-main-tabs" role="tablist" aria-label="${esc(UI.translate("Task views"))}">
+        <button class="tab ${taskDetailPane === "conversation" ? "active" : ""}" data-task-pane="conversation" role="tab" aria-selected="${taskDetailPane === "conversation"}">${esc(UI.translate("Work conversation"))}</button>
+        <button class="tab ${taskDetailPane === "results" ? "active" : ""}" data-task-pane="results" role="tab" aria-selected="${taskDetailPane === "results"}">${esc(UI.translate("Results"))}</button>
+        <button class="tab ${taskDetailPane === "technical" ? "active" : ""}" data-task-pane="technical" role="tab" aria-selected="${taskDetailPane === "technical"}">${esc(UI.translate("Technical record"))}</button>
+      </nav>
+      <div class="task-pane" data-pane="conversation" ${taskDetailPane !== "conversation" ? "hidden" : ""}><div class="task-conversation-room">
+        <div class="chat-room-bar"><div class="chat-room-title"><span class="chat-room-mark" aria-hidden="true">#</span><div><strong>${esc(UI.translate("Task meeting room"))}</strong><small>${esc(taskId)} · ${esc(UI.translate("Saved work conversation"))}</small></div></div><div class="chat-participants" aria-label="${esc(UI.translate("Meeting participants"))}"><span>SA</span><span>SD</span><span>RV</span><span>PM</span></div></div>
+        <div class="conversation-feed" role="log" aria-label="${esc(UI.translate("Work conversation"))}">${conversation}</div>
+        ${handoff.next_action && !terminal ? `<div class="task-next"><strong>${esc(UI.translate("Next step"))}</strong><p>${esc(handoff.next_action)}</p></div>` : ""}
+        <form class="task-composer" id="task-message-form"><label for="task-message">${esc(UI.translate("Correction or instruction"))}</label><textarea id="task-message" rows="2" maxlength="8000" placeholder="${esc(UI.translate("Tell the PM what should change…"))}" ${canMessage ? "" : "disabled"}></textarea><div class="task-composer-foot"><label class="task-check"><input type="checkbox" id="task-message-pause" checked ${canMessage ? "" : "disabled"}> ${esc(UI.translate("Pause before the next agent"))}</label><button class="btn primary" type="submit" ${canMessage ? "" : "disabled"}>${esc(UI.translate("Send correction"))}</button></div><p class="muted">${esc(UI.translate("This records guidance for the workflow. It does not start a separate AI chat."))}</p></form>
       </div>
-      ${stageStrip(status.state)}
-      <div class="stage-labels"><span>${esc(UI.translate(STAGES[0]))}</span><span>${esc(UI.translate(STAGES[STAGES.length - 1]))}</span></div>
-      <div class="section">
-        <div class="kv-row"><span class="k">Waiting on</span><span class="v">${esc(brief.waiting_on || "—")}</span></div>
-        <div class="kv-row"><span class="k">Agent / role</span><span class="v">${esc(brief.agent || "—")} / ${esc(brief.role || "—")}</span></div>
-        <div class="kv-row"><span class="k">Execution status</span><span class="v">${esc(brief.execution_status || "—")}</span></div>
-        <div class="kv-row"><span class="k">Host verification</span><span class="v">${verificationLine(brief.tests)}</span></div>
-        ${testScopeLine(brief.tests) ? `<div class="kv-row"><span class="k">Test scope</span><span class="v">${testScopeLine(brief.tests)}</span></div>` : ""}
-        ${dependencyLine(brief.tests) ? `<div class="kv-row"><span class="k">Dependencies</span><span class="v">${dependencyLine(brief.tests)}</span></div>` : ""}
-        ${brief.summary ? `<div class="kv-row"><span class="k">Summary</span><span class="v">${esc(brief.summary)}</span></div>` : ""}
-        ${brief.next_action ? `<div class="kv-row"><span class="k">Next action</span><span class="v">${esc(brief.next_action)}</span></div>` : ""}
       </div>
-      <div class="section">
-        <div class="t" style="font-weight:500; margin-bottom:12px">Executions</div>
-        ${executions ? `<table><thead><tr><th>Execution</th><th>Role</th><th>Status</th><th>Error</th></tr></thead><tbody>${executions}</tbody></table>` : `<div class="empty">No executions yet.</div>`}
-      </div>
-      <div class="section">
-        <div class="t" style="font-weight:500; margin-bottom:8px">Requirement</div>
-        <div class="muted">${esc(status.requirement || "—")}</div>
-      </div>
-      <section class="section evaluation-section">
-        <div class="evaluation-section-head"><div><h2>${esc(UI.translate("Evaluation and evidence"))}</h2><p>${esc(UI.translate("Rule-based signals from saved reports, diffs, host tests and lint. Scores never change the task state."))}</p></div>${settings.editable?.evaluation_engine?.enabled ? `<button class="btn primary" id="task-evaluate">${esc(UI.translate("Evaluate latest executions"))}</button>` : `<button class="btn" id="task-enable-evaluation">${esc(UI.translate("Enable evaluation"))}</button>`}</div>
-        ${evaluations.length ? `<div class="evaluation-list">${evaluations.slice().reverse().map(evaluationReport).join("")}</div>` : `<div class="dashboard-empty">${esc(UI.translate("No evaluations for this task yet."))}</div>`}
-      </section>
-      <div class="section">
-        <div class="tabs" role="tablist">
-          <button class="tab active" data-tab="usage" role="tab" aria-selected="true">Usage &amp; CLI evidence</button>
-          <button class="tab" data-tab="result" role="tab" aria-selected="false">Raw result</button>
-        </div>
-        <div id="task-tab-body"><div class="empty">Loading…</div></div>
-      </div>
-    `);
+      <div class="task-pane" data-pane="results" ${taskDetailPane !== "results" ? "hidden" : ""}>${resultPane}</div>
+      <div class="task-pane" data-pane="technical" ${taskDetailPane !== "technical" ? "hidden" : ""}>${technicalPane}</div>
+    </div>`);
+    const messageInput = document.getElementById("task-message");
+    if (messageInput) messageInput.value = taskDetailDraft;
+    const feed = document.querySelector(".conversation-feed");
+    if (feed) feed.scrollTop = wasAtBottom ? feed.scrollHeight : oldFeedScroll;
+    bindChatDetailButtons(events);
+    document.querySelectorAll("[data-task-pane]").forEach((button) => button.addEventListener("click", () => {
+      taskDetailPane = button.dataset.taskPane;
+      document.querySelectorAll("[data-task-pane]").forEach((tab) => { tab.classList.toggle("active", tab === button); tab.setAttribute("aria-selected", String(tab === button)); });
+      document.querySelectorAll("[data-pane]").forEach((pane) => { pane.hidden = pane.dataset.pane !== taskDetailPane; });
+    }));
+    document.getElementById("task-pause-resume")?.addEventListener("click", async (event) => {
+      event.currentTarget.disabled = true;
+      try { const data = await api(`${taskBase}/${control.paused ? "resume" : "pause"}`, { method: "POST" });
+        if (control.paused && data.next_action) toast("Work can continue from the saved handoff.");
+        else toast(control.paused ? "Work resumed." : "Pause requested.");
+        renderTaskDetail();
+      } catch (err) { toast(err.message, true); event.currentTarget.disabled = false; }
+    });
+    document.getElementById("task-stop")?.addEventListener("click", () => showModal({
+      title: "Stop this task?", body: "Stopping prevents further agent work. Changes already made to files will not be rolled back.",
+      fields: [{ label: "Reason (optional)", placeholder: "Why are you stopping this task?" }], danger: true,
+      confirmLabel: "Stop task", onSubmit: async ([reason]) => { await api(`${taskBase}/stop`, { method: "POST", body: { reason } }); toast("Stop requested."); renderTaskDetail(); },
+    }));
+    document.getElementById("task-message-form")?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const content = messageInput.value.trim();
+      if (!content) { messageInput.focus(); return; }
+      const button = event.currentTarget.querySelector('button[type="submit"]'); button.disabled = true;
+      try { await api(`${taskBase}/messages`, { method: "POST", body: { content, pause: document.getElementById("task-message-pause").checked } });
+        taskDetailDraft = ""; messageInput.value = ""; toast("Correction saved for the workflow."); renderTaskDetail();
+      } catch (err) { toast(err.message, true); button.disabled = false; }
+    });
     document.getElementById("task-enable-evaluation")?.addEventListener("click", async () => {
-      try {
-        await api(`/projects/${encodeURIComponent(id)}/config/evaluation-engine`, { method: "POST", body: { enabled: true, auto_evaluate: settings.editable?.evaluation_engine?.auto_evaluate || false } });
-        toast("Evaluation enabled."); renderTaskDetail();
-      } catch (err) { toast(err.message, true); }
+      try { await api(`/projects/${encodeURIComponent(id)}/config/evaluation-engine`, { method: "POST", body: { enabled: true, auto_evaluate: settings.editable?.evaluation_engine?.auto_evaluate || false } }); toast("Evaluation enabled."); renderTaskDetail(); }
+      catch (err) { toast(err.message, true); }
     });
     document.getElementById("task-evaluate")?.addEventListener("click", async () => {
-      try {
-        const reports = await api(`${taskBase}/evaluate`, { method: "POST", body: {} });
-        toast(reports.length ? "Evaluations saved." : "Latest executions were already evaluated."); renderTaskDetail();
-      } catch (err) { toast(err.message, true); }
+      try { await api(`${taskBase}/evaluate`, { method: "POST", body: {} }); toast("Evaluations saved."); renderTaskDetail(); }
+      catch (err) { toast(err.message, true); }
     });
     document.querySelectorAll("[data-reevaluate]").forEach((button) => button.addEventListener("click", async () => {
-      try {
-        await api(`${taskBase}/reevaluate`, { method: "POST", body: { execution_id: button.dataset.reevaluate } });
-        toast("New evaluation version saved."); renderTaskDetail();
-      } catch (err) { toast(err.message, true); }
+      try { await api(`${taskBase}/reevaluate`, { method: "POST", body: { execution_id: button.dataset.reevaluate } }); toast("New evaluation version saved."); renderTaskDetail(); }
+      catch (err) { toast(err.message, true); }
     }));
-    const tabCache = {};
-    const tabBody = document.getElementById("task-tab-body");
-    async function loadTab(name) {
-      if (!tabCache[name]) {
-        const path = name === "usage" ? "usage" : "result";
-        try {
-          tabCache[name] = await api(`/projects/${encodeURIComponent(id)}/tasks/${encodeURIComponent(taskId)}/${path}`);
-        } catch (err) {
-          tabBody.innerHTML = `<div class="empty">${esc(err.message)}</div>`;
-          return;
-        }
-      }
-      tabBody.innerHTML = `<pre class="panel mono" style="white-space:pre-wrap; overflow:auto; max-height:420px">${esc(JSON.stringify(tabCache[name], null, 2))}</pre>`;
-    }
-    document.querySelectorAll(".tab").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        document.querySelectorAll(".tab").forEach((b) => { b.classList.remove("active"); b.setAttribute("aria-selected", "false"); });
-        btn.classList.add("active");
-        btn.setAttribute("aria-selected", "true");
-        loadTab(btn.dataset.tab);
-      });
+    document.getElementById("task-load-context")?.addEventListener("click", async () => {
+      try { const data = await api(`/projects/${encodeURIComponent(id)}/context`); document.getElementById("task-context-output").innerHTML = `<pre class="mono">${esc(JSON.stringify(data, null, 2))}</pre>`; }
+      catch (err) { toast(err.message, true); }
     });
-    loadTab("usage");
-    if (!TERMINAL_FAIL.has(status.state) && status.state !== "COMPLETED") {
-      watchForChanges(
-        gen,
-        () => api(`/projects/${encodeURIComponent(id)}/tasks/${encodeURIComponent(taskId)}`),
-        renderTaskDetail,
-        5000
-      );
-    }
+    document.getElementById("task-load-raw")?.addEventListener("click", async () => {
+      try { const [usage, result] = await Promise.all([api(`${taskBase}/usage`), api(`${taskBase}/result`)]); document.getElementById("task-raw-output").innerHTML = `<pre class="mono">${esc(JSON.stringify({ usage, result }, null, 2))}</pre>`; }
+      catch (err) { toast(err.message, true); }
+    });
+    const baseline = JSON.stringify({ status, timeline });
+    trackTimer(setInterval(async () => {
+      if (stale(gen)) return;
+      try { const [freshStatus, freshTimeline] = await Promise.all([api(taskBase), api(`${taskBase}/timeline`)]);
+        if (!stale(gen) && JSON.stringify({ status: freshStatus, timeline: freshTimeline }) !== baseline) renderTaskDetail();
+      } catch (_) { /* The next poll retries; saved events remain available after reconnect. */ }
+    }, 5000));
   }
 
   async function renderSettings() {
@@ -1292,11 +1524,16 @@
       return `<option value="">${esc(UI.translate("CLI default"))}</option>` +
         list.map((e) => `<option value="${esc(e)}" ${current === e ? "selected" : ""}>${esc(e)}</option>`).join("");
     };
+    const ROLE_HELP = { SA: "Analysis", SD: "Design", RD: "Implementation", "SD/RD": "Design and implementation", REVIEW: "Review" };
     const roleRows = Object.keys(roles).map((role) => {
       const cfg = roles[role] || {};
       const isChatgpt = cfg.provider === "chatgpt";
       return `<div class="role-config-row" data-role="${esc(role)}">
-        <div class="role-config-title" data-no-i18n>${esc(role)}</div>
+        <div class="role-config-head">
+          <span class="role-config-badge" aria-hidden="true" data-no-i18n>${esc(role.replace("/", ""))}</span>
+          <div class="role-config-title"><strong data-no-i18n>${esc(role)}</strong><small>${esc(UI.translate(ROLE_HELP[role] || "Workflow role"))}</small></div>
+          <span class="pill role-provider-pill" data-no-i18n>${esc(cfg.provider || "")}</span>
+        </div>
         <div class="role-config-fields">
           <div class="field"><label>${esc(UI.translate("Provider"))}</label><select class="role-field" data-field="provider">${providers.map((p) => `<option value="${esc(p)}" ${cfg.provider === p ? "selected" : ""}>${esc(p)}</option>`).join("")}</select></div>
           <div class="field"><label>${esc(UI.translate("Model"))}</label><input type="text" class="role-field" data-field="model" value="${esc(cfg.model || "")}" placeholder="${esc(UI.translate("CLI default"))}" ${isChatgpt ? "disabled" : ""} /></div>
@@ -1342,49 +1579,31 @@
       return `<div class="score-weight-role"><div class="score-weight-role-head"><div class="score-weight-role-title" data-no-i18n>${esc(role)}</div><div class="score-weight-presets">${presets}</div></div><div class="score-weight-bar" data-role="${esc(role)}">${bar}</div><div class="score-weight-sliders">${rows}</div></div>`;
     }).join("");
     const runtime = overview.editable.runtime || {};
+    const switchRow = (id, checked, label) => `<label class="settings-switch" for="${id}"><input type="checkbox" role="switch" id="${id}" ${checked ? "checked" : ""} /><span>${label}</span></label>`;
+    const profileOption = (name, description) => `<button class="profile-option ${overview.profile === name ? "selected" : ""}" data-profile="${name}" aria-pressed="${overview.profile === name}">
+        <span class="profile-option-name" data-no-i18n>${name}</span><span class="profile-option-desc">${description}</span>
+        <span class="profile-option-check" aria-hidden="true">${pageIcon("check")}</span>
+      </button>`;
     layout(`
       <div class="title-row"><div><h1>Settings</h1><div class="sub">${esc(id)} · ${UI.translate("profile")}: ${esc(overview.profile)}</div></div></div>
-      <div class="section">
-        <div class="section-row">
-          <div class="section-label"><div class="t">Profile</div><div class="d">Apply a bundled provider combination to every role at once.</div></div>
-          <div class="section-panel">
-            <button class="btn ${overview.profile === "chatgpt-only" ? "selected" : ""}" data-profile="chatgpt-only" aria-pressed="${overview.profile === "chatgpt-only"}">chatgpt-only</button>
-            <button class="btn ${overview.profile === "best-model" ? "selected" : ""}" data-profile="best-model" aria-pressed="${overview.profile === "best-model"}">best-model</button>
-          </div>
-        </div>
-      </div>
-      <div class="section">
-        <div class="section-row">
-          <div class="section-label"><div class="t">Roles</div><div class="d">Provider, model, effort and quota fallback for each workflow role.</div></div>
-          <div class="section-panel">${roleRows}</div>
-        </div>
-      </div>
-      <div class="section">
-        <div class="section-row">
-          <div class="section-label"><div class="t">Language</div><div class="d">What Codex/Claude/ChatGPT receive in reports.</div></div>
-          <div class="section-panel">
-            <select id="language-select">
-              ${["zh-TW", "ch", "en"].map((l) => `<option value="${l}" ${overview.editable.language === l ? "selected" : ""}>${l}</option>`).join("")}
-            </select>
-          </div>
-        </div>
-      </div>
-      <div class="section">
-        <div class="section-row">
-          <div class="section-label"><div class="t">Test command</div><div class="d">After each implementation, ccc-mcp installs declared dependencies and runs tests automatically before REVIEW.</div></div>
-          <div class="section-panel">
-            <div class="field">
-              <input type="text" id="test-command" value="${esc((overview.editable.test_command || []).join(" "))}" placeholder="e.g. python -m pytest -q" />
-              <div class="hint">Leave blank to test changed Python test files automatically. If none changed, or pytest settings changed, pytest uses the project's configured scope. Enter a command only to override this.</div>
-            </div>
-            <button class="btn small" id="save-test-command">Save</button>
-          </div>
-        </div>
-      </div>
-      <div class="section">
-        <div class="section-row">
-          <div class="section-label"><div class="t">Project runtime</div><div class="d">Choose the language and installed runtime used for this project's code and tests.</div></div>
-          <div class="section-panel">
+      <div class="settings-stack">
+        ${pageCard("profile", "Profile", "Apply a bundled provider combination to every role at once.",
+          `<div class="profile-options">
+            ${profileOption("chatgpt-only", "Every role runs on ChatGPT through the connector.")}
+            ${profileOption("best-model", "Codex for SA and REVIEW, Claude for implementation, when both are installed.")}
+          </div>`)}
+        ${pageCard("roles", "Roles", "Provider, model, effort and quota fallback for each workflow role.", `<div class="role-config-list">${roleRows}</div>`)}
+        ${pageCard("language", "Language", "What Codex/Claude/ChatGPT receive in reports.",
+          `<div class="field narrow-field"><select id="language-select" aria-label="${esc(UI.translate("Language"))}">
+            ${["zh-TW", "ch", "en"].map((l) => `<option value="${l}" ${overview.editable.language === l ? "selected" : ""}>${l}</option>`).join("")}
+          </select></div>`)}
+        ${pageCard("test", "Test command", "After each implementation, ccc-mcp installs declared dependencies and runs tests automatically before REVIEW.",
+          `<div class="field">
+            <input type="text" id="test-command" class="mono" value="${esc((overview.editable.test_command || []).join(" "))}" placeholder="e.g. python -m pytest -q" aria-label="${esc(UI.translate("Test command"))}" />
+            <div class="hint">Leave blank to test changed Python test files automatically. If none changed, or pytest settings changed, pytest uses the project's configured scope. Enter a command only to override this.</div>
+          </div>`, `<button class="btn small primary" id="save-test-command">Save</button>`)}
+        ${pageCard("runtime", "Project runtime", "Choose the language and installed runtime used for this project's code and tests.",
+          `<div class="settings-grid">
             <div class="field">
               <label for="runtime-language">Programming language</label>
               <select id="runtime-language">
@@ -1397,54 +1616,28 @@
               <input type="text" id="runtime-version" value="${esc(runtime.version)}" placeholder="e.g. 3.9 or 22.14.0" autocomplete="off" />
               <div class="hint">3.9 accepts any 3.9.x patch. JavaScript and TypeScript use the Node.js version.</div>
             </div>
-            <div class="field">
-              <label for="runtime-executable">Local executable (optional)</label>
-              <input type="text" id="runtime-executable" value="${esc(runtime.executable)}" placeholder="e.g. C:/Python39/python.exe" autocomplete="off" />
-              <div class="hint">Absolute executable path or command name, without arguments. Leave empty to find an installed runtime.</div>
-            </div>
-            <div class="hint">Python uses a separate virtual environment per selection. Set a test command for other languages. Install the required runtime locally first.</div>
-            <div class="actions" style="margin-top:12px">
-              <button class="btn small" id="save-runtime">Save runtime</button>
-              <button class="btn small" id="check-runtime">Check local version</button>
-            </div>
-            <div id="runtime-status" class="hint" role="status" aria-live="polite"></div>
           </div>
-        </div>
-      </div>
-      <div class="section">
-        <div class="section-row">
-          <div class="section-label"><div class="t">Meeting Mode</div><div class="d">Bounded SD/RD↔SA clarification rounds before implementation.</div></div>
-          <div class="section-panel">
-            <div class="checkbox-row">
-              <input type="checkbox" id="mm-enabled" ${mm.enabled ? "checked" : ""} />
-              <label for="mm-enabled" style="margin:0">Enabled</label>
-            </div>
-            <div class="field" style="margin-top:12px">
-              <label>Max rounds (0-5)</label>
-              <input type="text" id="mm-max" value="${esc(mm.max_rounds)}" />
-            </div>
-            <button class="btn small" id="save-meeting-mode">Save</button>
+          <div class="field">
+            <label for="runtime-executable">Local executable (optional)</label>
+            <input type="text" id="runtime-executable" class="mono" value="${esc(runtime.executable)}" placeholder="e.g. C:/Python39/python.exe" autocomplete="off" />
+            <div class="hint">Absolute executable path or command name, without arguments. Leave empty to find an installed runtime.</div>
           </div>
-        </div>
+          <div class="hint">Python uses a separate virtual environment per selection. Set a test command for other languages. Install the required runtime locally first.</div>
+          <div id="runtime-status" class="hint settings-status" role="status" aria-live="polite"></div>`,
+          `<button class="btn small" id="check-runtime">Check local version</button><button class="btn small primary" id="save-runtime">Save runtime</button>`)}
+        ${pageCard("meeting", "Meeting Mode", "Bounded SD/RD↔SA clarification rounds before implementation.",
+          `${switchRow("mm-enabled", mm.enabled, "Enabled")}
+          <div class="field narrow-field" style="margin-top:16px">
+            <label for="mm-max">Max rounds (0-5)</label>
+            <input type="text" id="mm-max" value="${esc(mm.max_rounds)}" inputmode="numeric" />
+          </div>`, `<button class="btn small primary" id="save-meeting-mode">Save</button>`)}
+        ${pageCard("evaluation", "Evaluation Engine", "Score saved execution evidence without another model call. Open a task to evaluate, inspect, or re-evaluate it.",
+          `${switchRow("ee-enabled", ee.enabled, "Enabled")}
+          ${switchRow("ee-auto", ee.auto_evaluate, "Auto-evaluate after every successful role execution")}
+          <details class="score-settings"><summary>${esc(UI.translate("Advanced scoring settings"))}</summary><p>${esc(UI.translate("Not sure? Pick a preset below each role. Want to fine-tune instead? Drag a slider - the others adjust automatically so each role always totals 100%. Changes only affect new evaluation versions."))}</p>${scoreDimensionLegend}${scoreWeightRows}</details>`,
+          `<button class="btn small primary" id="save-evaluation-engine">Save</button>`)}
       </div>
-      <div class="section">
-        <div class="section-row">
-          <div class="section-label"><div class="t">Evaluation Engine</div><div class="d">Score saved execution evidence without another model call. Open a task to evaluate, inspect, or re-evaluate it.</div></div>
-          <div class="section-panel">
-            <div class="checkbox-row">
-              <input type="checkbox" id="ee-enabled" ${ee.enabled ? "checked" : ""} />
-              <label for="ee-enabled" style="margin:0">Enabled</label>
-            </div>
-            <div class="checkbox-row" style="margin-top:8px">
-              <input type="checkbox" id="ee-auto" ${ee.auto_evaluate ? "checked" : ""} />
-              <label for="ee-auto" style="margin:0">Auto-evaluate after every successful role execution</label>
-            </div>
-            <details class="score-settings"><summary>${esc(UI.translate("Advanced scoring settings"))}</summary><p>${esc(UI.translate("Not sure? Pick a preset below each role. Want to fine-tune instead? Drag a slider - the others adjust automatically so each role always totals 100%. Changes only affect new evaluation versions."))}</p>${scoreDimensionLegend}${scoreWeightRows}</details>
-            <button class="btn small" id="save-evaluation-engine">Save</button>
-          </div>
-        </div>
-      </div>
-    `, { narrow: true });
+    `, { narrow: true, contentClass: "settings-wide" });
     document.querySelectorAll(".role-config-row").forEach((row) => {
       const role = row.dataset.role;
       const providerSel = row.querySelector('[data-field="provider"]');
@@ -1468,6 +1661,7 @@
       };
       providerSel.addEventListener("change", () => {
         const isChatgpt = providerSel.value === "chatgpt";
+        row.querySelector(".role-provider-pill").textContent = providerSel.value;
         modelInput.disabled = isChatgpt;
         effortSel.disabled = isChatgpt;
         if (isChatgpt) modelInput.value = "";
@@ -1622,10 +1816,46 @@
     try { ctx = await api(`/projects/${encodeURIComponent(id)}/context`); }
     catch (err) { if (!stale(gen)) errorView(err); return; }
     if (stale(gen)) return;
+    const content = ctx.content || {};
+    const shared = content.shared_context || {};
+    const list = (value) => (Array.isArray(value) ? value : []);
+    const field = (label, value) => value ? `<div class="ctx-field"><dt>${esc(UI.translate(label))}</dt><dd>${esc(value)}</dd></div>` : "";
+    const stateKind = (state) => state === "COMPLETED" ? "positive" : state === "CANCELLED" ? "negative" : "neutral";
+    const decisions = list(content.decisions);
+    const invariants = list(content.invariants);
+    const questions = list(content.unresolved_questions);
+    const progress = list(content.progress);
+    const skillsInContext = list(content.available_skills);
+    const summaryFields = [
+      field("Purpose", content.purpose || shared.purpose), field("Current status", shared.status),
+      field("Summary", content.summary || shared.summary), field("Next action", content.next_action || shared.next_action),
+    ].join("");
+    const budget = ctx.token_budget ? ` / ${Number(ctx.token_budget).toLocaleString()}` : "";
     layout(`
       <div class="title-row"><div><h1>Context</h1><div class="sub">${esc(id)} · ${UI.translate("read-only PM view")}</div></div></div>
-      <pre class="panel mono" style="white-space:pre-wrap; overflow:auto">${esc(JSON.stringify(ctx, null, 2))}</pre>
-    `);
+      <div class="kpi-strip">
+        <div class="kpi"><div class="v num">v${esc(ctx.context_version ?? "–")}</div><div class="l">Context version</div></div>
+        <div class="kpi"><div class="v num">${ctx.estimated_tokens != null ? Number(ctx.estimated_tokens).toLocaleString() : "–"}<small class="kpi-unit">${esc(budget)}</small></div><div class="l">Estimated tokens</div></div>
+        <div class="kpi"><div class="v mono">${esc(String(ctx.git_revision || "–").slice(0, 8))}</div><div class="l">Git revision</div></div>
+        <div class="kpi"><div class="v">${esc(ctx.role || "–")}<small class="kpi-unit"> · ${esc(ctx.target_agent || "")}</small></div><div class="l">Viewing as</div></div>
+      </div>
+      <div class="settings-stack">
+        ${pageCard("doc", "Project summary", "What the PM currently knows about this project.",
+          summaryFields ? `<dl class="ctx-fields">${summaryFields}</dl>` : `<div class="empty">${esc(UI.translate("Nothing recorded yet."))}</div>`)}
+        ${pageCard("decision", "Decisions", "Choices the PM has recorded for future rounds.",
+          decisions.length ? `<ul class="ctx-list">${decisions.map((d) => `<li><div class="ctx-list-main"><strong>${esc(d.content || "")}</strong>${d.reason ? `<p>${esc(d.reason)}</p>` : ""}</div><div class="ctx-list-side">${d.status ? `<span class="pill neutral">${esc(d.status)}</span>` : ""}${d.created ? `<time>${esc(String(d.created).slice(0, 10))}</time>` : ""}</div></li>`).join("")}</ul>` : `<div class="empty">${esc(UI.translate("No decisions recorded."))}</div>`)}
+        ${pageCard("lock", "Invariants", "Rules every agent must follow in this project.",
+          invariants.length ? `<ul class="ctx-list">${invariants.map((rule) => `<li><div class="ctx-list-main"><strong>${esc(rule.text || "")}</strong></div><div class="ctx-list-side"><span class="pill accent">${esc(rule.kind || "rule")}</span></div></li>`).join("")}</ul>` : `<div class="empty">${esc(UI.translate("No invariants recorded."))}</div>`)}
+        ${pageCard("question", "Open questions", "Things the PM still needs answered.",
+          questions.length ? `<ul class="ctx-list">${questions.map((q) => `<li><div class="ctx-list-main"><strong>${esc(typeof q === "string" ? q : JSON.stringify(q))}</strong></div></li>`).join("")}</ul>` : `<div class="empty">${esc(UI.translate("Nothing is waiting on an answer."))}</div>`)}
+        ${progress.length ? pageCard("list", "Progress", "Work requests tracked in this context.",
+          `<ul class="ctx-list">${progress.map((t) => `<li><div class="ctx-list-main"><strong>${esc((t.requirement || "").slice(0, 160))}</strong><p class="mono">${esc(t.id || "")}</p></div><div class="ctx-list-side"><span class="pill ${stateKind(t.state)}">${esc(UI.translate(t.state || ""))}</span></div></li>`).join("")}</ul>`) : ""}
+        ${skillsInContext.length ? pageCard("package", "Skills in this context", "Skills the agents receive with each handoff.",
+          `<div class="chip-row">${skillsInContext.map((skill) => `<span class="chip" title="${esc(skill.description || "")}">${esc(skill.name || skill.id)}</span>`).join("")}</div>`) : ""}
+        ${ctx.policy ? pageCard("shield", "Policy", "Rules applied to every agent run.", `<p class="ctx-policy">${esc(ctx.policy)}</p>`) : ""}
+        <details class="ctx-raw"><summary>${esc(UI.translate("Raw data"))}</summary><pre class="mono">${esc(JSON.stringify(ctx, null, 2))}</pre></details>
+      </div>
+    `, { narrow: true, contentClass: "settings-wide" });
   }
 
   async function renderDocs() {
@@ -1719,41 +1949,42 @@
     const firstById = new Map();
     for (const entry of available) if (!firstById.has(entry.skill.id)) firstById.set(entry.skill.id, entry.index);
     const installedRows = installed.map((skill) => `
-      <tr>
-        <td><strong>${esc(skill.name || skill.id)}</strong><div class="table-sub mono">${esc(skill.id)}</div></td>
-        <td>${esc(skill.description || "")}</td>
-        <td class="table-actions"><button class="btn small danger" data-remove-global-skill="${esc(skill.id)}">Remove</button></td>
-      </tr>
+      <div class="skill-card has-action">
+        <div class="skill-card-head"><div><strong>${esc(skill.name || skill.id)}</strong><span class="skill-id mono">${esc(skill.id)}</span></div><button class="btn small danger" data-remove-global-skill="${esc(skill.id)}">Remove</button></div>
+        <p>${esc(skill.description || "")}</p>
+      </div>
     `).join("");
     const discoveredRows = discovered.map((skill, index) => `
-      <tr>
-        <td><input type="checkbox" data-global-skill-choice="${index}" aria-label="${esc(`${UI.translate("Install for all projects")}: ${skill.name}`)}" ${skill.usable && !skill.already_installed ? "" : "disabled"} /></td>
-        <td><strong>${esc(skill.name)}</strong><div class="table-sub">${esc(UI.translate(skill.provider))}</div></td>
-        <td>${esc(skill.description || "")}</td>
-        <td>${skill.already_installed
+      <li class="pick-row ${skill.usable && !skill.already_installed ? "" : "is-muted"}">
+        <input type="checkbox" data-global-skill-choice="${index}" aria-label="${esc(`${UI.translate("Install for all projects")}: ${skill.name}`)}" ${skill.usable && !skill.already_installed ? "" : "disabled"} />
+        <div class="pick-main"><strong>${esc(skill.name)}</strong><span class="server-client">${esc(UI.translate(skill.provider))}</span><p>${esc(skill.description || "")}</p></div>
+        ${skill.already_installed
           ? `<span class="pill accent">${esc(UI.translate("Already installed"))}</span>`
           : skill.usable
             ? `<span class="pill positive">${esc(UI.translate("Can install"))}</span>`
-            : `<span class="pill negative" title="${esc(skill.reason || "")}">${esc(UI.translate("Not usable"))}</span>`}</td>
-      </tr>
+            : `<span class="pill negative" title="${esc(skill.reason || "")}">${esc(UI.translate("Not usable"))}</span>`}
+      </li>
     `).join("");
     layout(`
       <div class="title-row"><div><h1>Global Skills</h1><div class="sub">${esc(UI.translate("Installed Skills are shared with every project and agent role."))}</div></div><div class="title-actions"><button class="btn" id="refresh-global-skills">Refresh</button></div></div>
-      <div class="section">
-        <div class="section-heading"><div><h2>Installed for all projects</h2><p>${esc(UI.translate("Removing a Skill here removes it from every project's future handoffs."))}</p></div></div>
-        ${installed.length ? `<div class="table-wrap"><table><thead><tr><th>Name</th><th>Description</th><th></th></tr></thead><tbody>${installedRows}</tbody></table></div>` : `<div class="empty">${esc(UI.translate("No global Skills are installed yet."))}</div>`}
+      <div class="kpi-strip">
+        <div class="kpi"><div class="v num">${installed.length}</div><div class="l">${esc(UI.translate("Installed for all projects"))}</div></div>
+        <div class="kpi"><div class="v num">${discovered.length}</div><div class="l">${esc(UI.translate("Found on this computer"))}</div></div>
+        <div class="kpi"><div class="v num">${firstById.size}</div><div class="l">${esc(UI.translate("Can install"))}</div></div>
       </div>
-      <div class="section">
-        <div class="section-heading"><div><h2>Discover local Skills</h2><p>${esc(UI.translate("Choose Skills from Claude Code or Codex and install them for every project."))}</p></div></div>
-        ${discovered.length ? `
-          <div class="skill-bulk-actions">
-            <label class="checkbox-row"><input type="checkbox" id="select-all-global-skills" ${available.length ? "" : "disabled"} /><span>${esc(UI.translate("Select all available"))}</span></label>
-            <button class="btn primary" id="install-selected-skills" disabled>${esc(UI.translate("Install selected"))} (0)</button>
-          </div>
-          <div class="table-wrap"><table><thead><tr><th></th><th>Name</th><th>Description</th><th>Status</th></tr></thead><tbody>${discoveredRows}</tbody></table></div>
-        ` : `<div class="empty">${esc(UI.translate("No local Skills were found in ~/.claude/skills or ~/.codex/skills."))}</div>`}
+      <div class="settings-stack">
+        ${pageCard("package", "Installed for all projects", esc(UI.translate("Removing a Skill here removes it from every project's future handoffs.")),
+          installed.length ? `<div class="skill-grid wide">${installedRows}</div>` : `<div class="empty">${esc(UI.translate("No global Skills are installed yet."))}</div>`)}
+        ${pageCard("search", "Discover local Skills", esc(UI.translate("Choose Skills from Claude Code or Codex and install them for every project.")),
+          discovered.length ? `
+            <div class="skill-bulk-actions">
+              <label class="checkbox-row"><input type="checkbox" id="select-all-global-skills" ${available.length ? "" : "disabled"} /><span>${esc(UI.translate("Select all available"))}</span></label>
+              <button class="btn small primary" id="install-selected-skills" disabled>${esc(UI.translate("Install selected"))} (0)</button>
+            </div>
+            <ul class="pick-list">${discoveredRows}</ul>
+          ` : `<div class="empty">${esc(UI.translate("No local Skills were found in ~/.claude/skills or ~/.codex/skills."))}</div>`)}
       </div>
-    `);
+    `, { narrow: true, contentClass: "settings-wide" });
     document.getElementById("refresh-global-skills").addEventListener("click", renderGlobalSkills);
     document.querySelectorAll("[data-remove-global-skill]").forEach((button) => {
       button.addEventListener("click", () => {
@@ -1827,7 +2058,7 @@
       ]);
     } catch (err) { if (!stale(gen)) errorView(err); return; }
     if (stale(gen)) return;
-    const skillRows = skills.map((s) => `<tr><td>${esc(s.name || s.id)}</td><td>${esc(s.description || "")}</td></tr>`).join("");
+    const skillRows = skills.map((s) => `<div class="skill-card"><strong>${esc(s.name || s.id)}</strong><p>${esc(s.description || "")}</p></div>`).join("");
     const installed = Object.entries(mcp.installed || {});
     const mcpRows = installed.map(([name, spec]) => `
       <tr>
@@ -1840,12 +2071,12 @@
     `).join("");
     const discovered = (mcp.discovered || []).filter((item) => item.transport === "stdio");
     const discoveredRows = discovered.map((item, index) => `
-      <tr>
-        <td><strong>${esc(item.name)}</strong><div class="table-sub">${esc(UI.translate(item.client))}</div></td>
-        <td class="mono">${esc(item.command || "")}</td>
-        <td>${item.has_env ? `<span class="pill warning">env</span>` : `<span class="pill neutral">stdio</span>`}</td>
-        <td class="table-actions"><button class="btn small" data-install="${index}">Install</button></td>
-      </tr>
+      <li class="server-row">
+        <span class="server-avatar" aria-hidden="true">${esc((item.name || "?").slice(0, 1).toUpperCase())}</span>
+        <div class="server-main"><strong>${esc(item.name)}</strong><span class="server-client">${esc(UI.translate(item.client))}</span><code class="server-command" title="${esc(item.command || "")}">${esc(item.command || "")}</code></div>
+        ${item.has_env ? `<span class="pill warning">env</span>` : `<span class="pill neutral">stdio</span>`}
+        <button class="btn small" data-install="${index}">Install</button>
+      </li>
     `).join("");
     const recent = calls.filter((entry) => entry.project === id).slice(-8).reverse();
     const callRows = recent.map((entry) => `
@@ -1863,22 +2094,20 @@
         <div class="kpi"><div class="v num">${discovered.length}</div><div class="l">Available on this computer</div></div>
         <div class="kpi"><div class="v num">${recent.length}</div><div class="l">Recent MCP calls</div></div>
       </div>
-      <div class="section">
-        <div class="section-heading"><div><h2>MCP servers</h2><p>Installed for this project — click Tools on a row below to actually call it</p></div></div>
-        ${installed.length ? `<div class="table-wrap"><table><thead><tr><th>Name</th><th>Scope</th><th class="num">Tools</th><th>Status</th><th></th></tr></thead><tbody>${mcpRows}</tbody></table></div>` : `<div class="empty">Nothing installed yet — calling a tool needs one install step first. Pick a server below, click Install, choose which tools to allow, then come back here and click Tools to call one.</div>`}
-      </div>
-      <div class="section">
-        <div class="section-heading"><div><h2>Discover local servers</h2><p>${esc(UI.translate("Candidates from MCP client settings and local executables. Select one to verify its tools before installing."))}</p></div><button class="btn small" id="mcp-install-by-name">${esc(UI.translate("Install by name…"))}</button></div>
-        ${discovered.length ? `<div class="table-wrap"><table><thead><tr><th>Name</th><th>Command</th><th>Source</th><th></th></tr></thead><tbody>${discoveredRows}</tbody></table></div>` : `<div class="empty">No local MCP servers were discovered.</div>`}
-        <p class="table-sub" style="margin-top:10px">${esc(UI.translate("Not listed? Use Install by name to enter a command or an exact executable path."))}</p>
-      </div>
-      <div class="section">
-        <div class="section-heading"><div><h2>Recent MCP calls</h2><p>${esc(id)}</p></div></div>
-        ${recent.length ? `<div class="table-wrap"><table><thead><tr><th>Time</th><th>Server</th><th>Tool</th><th>Status</th></tr></thead><tbody>${callRows}</tbody></table></div>` : `<div class="empty">No MCP calls for this project yet.</div>`}
-      </div>
-      <div class="section">
-        <div class="section-heading"><div><h2>Global Skills</h2><p>${esc(UI.translate("These Skills are shared with every project and agent role."))}</p></div><a class="btn small" href="#/global-skills">${esc(UI.translate("Manage global Skills"))}</a></div>
-        ${skills.length ? `<div class="table-wrap"><table><thead><tr><th>Name</th><th>Description</th></tr></thead><tbody>${skillRows}</tbody></table></div>` : `<div class="empty">No skills installed.</div>`}
+      <div class="settings-stack">
+        ${pageCard("server", "MCP servers", "Installed for this project — click Tools on a row below to actually call it",
+          installed.length ? `<div class="table-wrap"><table><thead><tr><th>Name</th><th>Scope</th><th class="num">Tools</th><th>Status</th><th></th></tr></thead><tbody>${mcpRows}</tbody></table></div>` : `<div class="empty">Nothing installed yet — calling a tool needs one install step first. Pick a server below, click Install, choose which tools to allow, then come back here and click Tools to call one.</div>`,
+          "", { flush: installed.length > 0 })}
+        ${pageCard("search", "Discover local servers", esc(UI.translate("Candidates from MCP client settings and local executables. Select one to verify its tools before installing.")),
+          discovered.length ? `<ul class="server-list">${discoveredRows}</ul>` : `<div class="empty">No local MCP servers were discovered.</div>`,
+          `<span class="table-sub">${esc(UI.translate("Not listed? Use Install by name to enter a command or an exact executable path."))}</span>`,
+          { actions: `<button class="btn small" id="mcp-install-by-name">${esc(UI.translate("Install by name…"))}</button>` })}
+        ${pageCard("clock", "Recent MCP calls", esc(id),
+          recent.length ? `<div class="table-wrap"><table><thead><tr><th>Time</th><th>Server</th><th>Tool</th><th>Status</th></tr></thead><tbody>${callRows}</tbody></table></div>` : `<div class="empty">No MCP calls for this project yet.</div>`,
+          "", { flush: recent.length > 0 })}
+        ${pageCard("package", "Global Skills", esc(UI.translate("These Skills are shared with every project and agent role.")),
+          skills.length ? `<div class="skill-grid">${skillRows}</div>` : `<div class="empty">No skills installed.</div>`,
+          "", { actions: `<a class="btn small" href="#/global-skills">${esc(UI.translate("Manage global Skills"))}</a>` })}
       </div>
     `);
     document.getElementById("refresh-mcp").addEventListener("click", renderSkills);
@@ -2192,69 +2421,48 @@
       <div class="title-row">
         <div><h1>Connect</h1><div class="sub">Link this ccc-mcp home to ChatGPT over an OpenAI Platform Tunnel.</div></div>
       </div>
-      <div class="section">
-        <div class="status-row"><span class="status-dot ${dotCls}"></span><strong>${esc(UI.translate(status.state))}</strong>${status.tunnel_id ? ` <span class="mono muted">${esc(status.tunnel_id)}</span>` : ""}</div>
-        ${status.error ? `<div class="kv-row"><span class="k">Error</span><span class="v" style="color:var(--negative)">${esc(status.error)}</span></div>` : ""}
-        ${!status.tunnel_client_installed ? `<div class="hint">tunnel-client is not installed yet — it downloads and verifies automatically on first connect.</div>` : ""}
-        <div id="connect-log-wrap" style="margin-top:16px"></div>
-        <div style="margin-top:16px; display:flex; gap:8px">
-          ${live ? `<button class="btn danger" id="btn-disconnect">Disconnect</button>` : ""}
-        </div>
-      </div>
-      ${!live ? `
-      <div class="section">
-        <div class="section-row">
-          <div class="section-label"><div class="t">Connection profile</div><div class="d">Save several named connections, each with its own Tunnel ID and runtime key. One connection runs at a time.</div></div>
-          <div class="section-panel">
+      <div class="settings-stack">
+        ${pageCard("link", "Connection status", "", `
+          <div class="status-row connect-state is-${dotCls || "off"}"><span class="status-dot ${dotCls}"></span><strong>${esc(UI.translate(status.state))}</strong>${status.tunnel_id ? ` <span class="mono muted">${esc(status.tunnel_id)}</span>` : ""}</div>
+          ${status.error ? `<div class="kv-row"><span class="k">Error</span><span class="v" style="color:var(--negative)">${esc(status.error)}</span></div>` : ""}
+          ${!status.tunnel_client_installed ? `<div class="hint">tunnel-client is not installed yet — it downloads and verifies automatically on first connect.</div>` : ""}
+          <div id="connect-log-wrap" ${live ? 'style="margin-top:16px"' : ""}></div>`,
+          live ? `<button class="btn small danger" id="btn-disconnect">Disconnect</button>` : "")}
+        ${!live ? pageCard("key", "Connection profile", "Save several named connections, each with its own Tunnel ID and runtime key. One connection runs at a time.", `
             <input type="hidden" id="connect-profile-id" />
-            <div class="field">
-              <label for="connect-name">Connection name</label>
-              <input type="text" id="connect-name" placeholder="e.g. Work / Personal" maxlength="60" />
-            </div>
-            <div class="field">
-              <label for="connect-tunnel-id">Tunnel ID</label>
-              <input type="text" id="connect-tunnel-id" placeholder="tunnel_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" />
+            <div class="settings-grid">
+              <div class="field">
+                <label for="connect-name">Connection name</label>
+                <input type="text" id="connect-name" placeholder="e.g. Work / Personal" maxlength="60" />
+              </div>
+              <div class="field">
+                <label for="connect-tunnel-id">Tunnel ID</label>
+                <input type="text" id="connect-tunnel-id" class="mono" placeholder="tunnel_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" />
+              </div>
             </div>
             <div class="field">
               <label for="connect-api-key">Runtime API key</label>
               <input type="password" id="connect-api-key" placeholder="leave empty to use a remembered key" autocomplete="off" />
               <div class="hint">${esc(UI.translate("Saved keys are never shown again. Enter a new key here to replace one."))}</div>
             </div>
-            <div class="checkbox-row" style="margin-bottom:16px">
-              <input type="checkbox" id="connect-remember" />
-              <label for="connect-remember">Remember this key on this device</label>
+            <label class="settings-switch" for="connect-remember"><input type="checkbox" role="switch" id="connect-remember" /><span>Remember this key on this device</span></label>
+            <div class="hint" id="connect-progress" role="status" aria-live="polite"></div>`,
+          `<button class="btn small ghost" id="btn-clear-connection">New profile</button><button class="btn small" id="btn-save-connection">Save profile</button><button class="btn small primary" id="btn-connect">Connect</button>`) : ""}
+        ${!live && savedConnections.length ? pageCard("download", "Saved connections", "Saved to ~/.ccc-mcp/tunnel/credentials.json, readable only by your OS account. Keys are never displayed here.",
+          savedConnections.map((profile) => `
+            <div class="saved-connection">
+              <span class="server-avatar" aria-hidden="true">${esc((profile.name || "?").slice(0, 1).toUpperCase())}</span>
+              <div><strong>${esc(profile.name)}</strong><div class="mono muted">${esc(profile.tunnel_id)}</div></div>
+              <span class="connect-row-actions">
+                <button class="btn small" data-use="${esc(profile.id)}">Use</button>
+                <button class="btn small danger" data-forget="${esc(profile.id)}">Forget</button>
+              </span>
             </div>
-            <div class="connect-actions"><button class="btn primary" id="btn-connect">Connect</button><button class="btn" id="btn-save-connection">Save profile</button><button class="btn ghost" id="btn-clear-connection">New profile</button></div>
-            <div class="hint" id="connect-progress"></div>
-          </div>
-        </div>
+          `).join("")) : ""}
+        ${pageCard("test", "Native CLI login", "Codex and Claude Code sign in independently of the Tunnel; ccc-mcp never stores their credentials.",
+          `<div id="provider-status"><div class="kv-row"><span class="k muted"><span class="spinner small"></span> Checking…</span></div></div>`)}
       </div>
-      ${savedConnections.length ? `
-      <div class="section">
-        <div class="section-row">
-          <div class="section-label"><div class="t">Saved connections</div><div class="d">Saved to ~/.ccc-mcp/tunnel/credentials.json, readable only by your OS account. Keys are never displayed here.</div></div>
-          <div class="section-panel">
-            ${savedConnections.map((profile) => `
-              <div class="saved-connection">
-                <div><strong>${esc(profile.name)}</strong><div class="mono muted">${esc(profile.tunnel_id)}</div></div>
-                <span class="connect-row-actions">
-                  <button class="btn small" data-use="${esc(profile.id)}">Use</button>
-                  <button class="btn small danger" data-forget="${esc(profile.id)}">Forget</button>
-                </span>
-              </div>
-            `).join("")}
-          </div>
-        </div>
-      </div>
-      ` : ""}
-      ` : ""}
-      <div class="section">
-        <div class="section-row">
-          <div class="section-label"><div class="t">Native CLI login</div><div class="d">Codex and Claude Code sign in independently of the Tunnel; ccc-mcp never stores their credentials.</div></div>
-          <div class="section-panel" id="provider-status"><div class="kv-row"><span class="k muted"><span class="spinner small"></span> Checking…</span></div></div>
-        </div>
-      </div>
-    `, { narrow: true });
+    `, { narrow: true, contentClass: "settings-wide" });
     api("/connect/providers").then((r) => {
       if (stale(gen)) return;
       const el = document.getElementById("provider-status");

@@ -48,6 +48,14 @@ def run_execution(bridge, execution_id):
             if not row or row["status"] != "QUEUED":
                 return
             row = dict(row)
+            control = conn.execute(
+                "SELECT paused,stop_requested FROM task_controls WHERE project_id=? AND task_id=?",
+                (row["project_id"], row["task_id"]),
+            ).fetchone()
+            if control and (control["paused"] or control["stop_requested"]):
+                # Leave a paused queued execution untouched; stopping is finalized by
+                # cancel_task, which marks this execution and closes it outside the lock.
+                return
             conn.execute("UPDATE agent_executions SET status='RUNNING' WHERE id=?", (execution_id,))
         audit = {
             "provider": row["agent"],

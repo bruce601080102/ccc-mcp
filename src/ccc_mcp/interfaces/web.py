@@ -629,6 +629,58 @@ async def task_handoff(request: Request):
     return JSONResponse(result)
 
 
+@endpoint
+async def task_timeline(request: Request):
+    bridge = bridge_of(request)
+    return JSONResponse(await run(
+        bridge.task_timeline, request.path_params["project_id"], request.path_params["task_id"]
+    ))
+
+
+@endpoint
+async def task_artifacts(request: Request):
+    bridge = bridge_of(request)
+    return JSONResponse(await run(
+        bridge.task_artifacts, request.path_params["project_id"], request.path_params["task_id"]
+    ))
+
+
+@endpoint
+async def task_pause(request: Request):
+    bridge = bridge_of(request)
+    return JSONResponse(await run(
+        bridge.pause_task, request.path_params["project_id"], request.path_params["task_id"]
+    ))
+
+
+@endpoint
+async def task_resume(request: Request):
+    bridge = bridge_of(request)
+    return JSONResponse(await run(
+        bridge.resume_task, request.path_params["project_id"], request.path_params["task_id"]
+    ))
+
+
+@endpoint
+async def task_stop(request: Request):
+    bridge = bridge_of(request)
+    body = await _body(request)
+    return JSONResponse(await run(
+        bridge.cancel_task, request.path_params["project_id"], request.path_params["task_id"],
+        body.get("reason", ""),
+    ))
+
+
+@endpoint
+async def task_message(request: Request):
+    bridge = bridge_of(request)
+    body = await _body(request)
+    return JSONResponse(await run(
+        bridge.add_task_message, request.path_params["project_id"], request.path_params["task_id"],
+        body.get("content", ""), body.get("pause", True),
+    ))
+
+
 # --- Context / Skills / MCP ------------------------------------------------------
 
 
@@ -1054,6 +1106,12 @@ ROUTES = [
     Route("/api/projects/{project_id}/tasks/{task_id}/approvals", task_approvals, methods=["GET"]),
     Route("/api/projects/{project_id}/tasks/{task_id}/meeting", task_meeting, methods=["GET"]),
     Route("/api/projects/{project_id}/tasks/{task_id}/handoff", task_handoff, methods=["GET"]),
+    Route("/api/projects/{project_id}/tasks/{task_id}/timeline", task_timeline, methods=["GET"]),
+    Route("/api/projects/{project_id}/tasks/{task_id}/artifacts", task_artifacts, methods=["GET"]),
+    Route("/api/projects/{project_id}/tasks/{task_id}/pause", task_pause, methods=["POST"]),
+    Route("/api/projects/{project_id}/tasks/{task_id}/resume", task_resume, methods=["POST"]),
+    Route("/api/projects/{project_id}/tasks/{task_id}/stop", task_stop, methods=["POST"]),
+    Route("/api/projects/{project_id}/tasks/{task_id}/messages", task_message, methods=["POST"]),
     Route("/api/skills", list_skills, methods=["GET"]),
     Route("/api/skills/discover", discover_skills, methods=["GET"]),
     Route("/api/skills/install-discovered", install_discovered_skill, methods=["POST"]),

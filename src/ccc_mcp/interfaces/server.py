@@ -116,6 +116,8 @@ def create_server(
         "internal workstream, dispatches the configured SA, and waits for initial progress. Never call start_project_request merely "
         "to continue, retry, recover, or check an existing task: it starts a new work round, invalidates "
         "the prior plan approval, and dispatches SA again. For an existing task, inspect task_handoff; "
+        "when bootstrap_project or task_handoff reports pending user messages, review those corrections "
+        "before resuming or advancing the affected task; a paused task needs an explicit resume. "
         "use resume_pending_dispatch only for DISPATCH_RETRY_NEEDED, otherwise continue the role named "
         "by status with advance_project or dispatch_agent. Do not edit files directly as PM. "
         "SA reports and exceptional Agent outcomes need a provenance-backed PM ContextPatch. "

@@ -49,6 +49,29 @@ def test_task_status_remains_available_while_project_is_locked(tmp_path, client)
     assert response.json()["brief"]["task_id"] == "TASK-0001"
 
 
+def test_task_conversation_endpoints_are_persistent_and_token_gated(tmp_path, client):
+    repo = mkrepo(tmp_path, "conversation")
+    assert client.post("/api/projects/add", json={"path": str(repo), "id": "conversation"}).status_code == 200
+    bridge = client.app.state.bridge
+    task_id = bridge.create_task("conversation", "Fix the parser")["id"]
+    base = f"/api/projects/conversation/tasks/{task_id}"
+    message = "Use the existing <script>alert(1)</script> function"
+    assert client.post(f"{base}/messages", json={"content": message, "pause": True}).status_code == 200
+    assert client.get(base).json()["brief"]["control"]["status"] == "PAUSED"
+    events = client.get(f"{base}/timeline").json()["events"]
+    assert next(e for e in events if e["event_type"] == "user_message")["summary"] == message
+    assert client.post(f"{base}/resume", json={}).status_code == 200
+    assert client.post(f"{base}/stop", json={"reason": "Wrong goal"}).json()["status"] == "CANCELLED"
+    assert client.get(base).json()["brief"]["control"]["stop_reason"] == "Wrong goal"
+    assert client.post(f"{base}/messages", json={"content": "late"}).status_code == 400
+    no_token = TestClient(client.app)
+    for path in (base, f"{base}/timeline", f"{base}/artifacts"):
+        assert no_token.get(path).status_code == 401
+    for path in ("pause", "resume", "stop", "messages"):
+        assert no_token.post(f"{base}/{path}", json={}).status_code == 401
+    assert client.get("/api/projects/missing/tasks/TASK-0001/timeline").status_code == 400
+
+
 def test_dashboard_shows_actionable_task_without_exposing_raw_executions(
     tmp_path, client, monkeypatch
 ):

@@ -68,6 +68,18 @@ CREATE TABLE IF NOT EXISTS tasks (
 CREATE TABLE IF NOT EXISTS task_events (
  seq INTEGER PRIMARY KEY AUTOINCREMENT, project_id TEXT NOT NULL, task_id TEXT NOT NULL,
  old_state TEXT, new_state TEXT NOT NULL, reason TEXT NOT NULL, created TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS task_controls (
+ project_id TEXT NOT NULL, task_id TEXT NOT NULL, paused INTEGER NOT NULL DEFAULT 0,
+ stop_requested INTEGER NOT NULL DEFAULT 0, stop_reason TEXT, stop_requested_at TEXT,
+ host_test_running INTEGER NOT NULL DEFAULT 0,
+ PRIMARY KEY(project_id,task_id), FOREIGN KEY(project_id,task_id) REFERENCES tasks(project_id,id));
+CREATE TABLE IF NOT EXISTS task_interventions (
+ seq INTEGER PRIMARY KEY AUTOINCREMENT, project_id TEXT NOT NULL, task_id TEXT NOT NULL,
+ action TEXT NOT NULL, content TEXT NOT NULL DEFAULT '', context_version INTEGER NOT NULL,
+ execution_id TEXT, delivered_execution_id TEXT, created TEXT NOT NULL,
+ FOREIGN KEY(project_id,task_id) REFERENCES tasks(project_id,id));
+CREATE INDEX IF NOT EXISTS idx_task_interventions_task
+ ON task_interventions(project_id,task_id,seq);
 CREATE TABLE IF NOT EXISTS plans (
  project_id TEXT NOT NULL, task_id TEXT NOT NULL, id TEXT NOT NULL,
  version INTEGER NOT NULL, context_version INTEGER NOT NULL, content TEXT NOT NULL,
@@ -206,6 +218,9 @@ class Store:
             columns = {row[1] for row in conn.execute("PRAGMA table_info(pending_dispatch)")}
             if "meeting_round_action" not in columns:
                 conn.execute("ALTER TABLE pending_dispatch ADD COLUMN meeting_round_action TEXT")
+            control_columns = {row[1] for row in conn.execute("PRAGMA table_info(task_controls)")}
+            if "host_test_running" not in control_columns:
+                conn.execute("ALTER TABLE task_controls ADD COLUMN host_test_running INTEGER NOT NULL DEFAULT 0")
 
     @contextmanager
     def connect(self):

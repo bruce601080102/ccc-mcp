@@ -410,6 +410,8 @@ class ContextHub:
                         "approvals",
                         "plans",
                         "task_events",
+                        "task_interventions",
+                        "task_controls",
                         "agent_executions",
                         "artifacts",
                         "decisions",
@@ -1292,6 +1294,12 @@ class ContextHub:
                 "active_tasks": [
                     t for t in task_rows if t["state"] not in {"COMPLETED", "CANCELLED", "REJECTED"}
                 ],
+                "pending_task_messages": self.store.all(
+                    "SELECT task_id,seq,content,context_version,execution_id,created "
+                    "FROM task_interventions WHERE project_id=? AND action='user_message' "
+                    "AND delivered_execution_id IS NULL ORDER BY seq",
+                    (project_id,),
+                ),
                 "latest_decisions": decisions,
                 "current_blockers": [i for i in snapshot["invariants"] if i["kind"] == "blocker"]
                 + [t for t in task_rows if t["state"] == "BLOCKED"],
@@ -1400,6 +1408,12 @@ class ContextHub:
             ]
         if task_id:
             content["task"] = self.task(project_id, task_id)
+            content["pending_user_messages"] = self.store.all(
+                "SELECT seq,content,context_version,execution_id,created FROM task_interventions "
+                "WHERE project_id=? AND task_id=? AND action='user_message' "
+                "AND delivered_execution_id IS NULL ORDER BY seq",
+                (project_id, task_id),
+            )
             if role in {"SD", "RD", "SD/RD", "REVIEW"}:
                 content["approved_plan"] = self.approved_plan(
                     project_id,
