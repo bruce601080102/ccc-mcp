@@ -13,7 +13,8 @@
   --dim-test: #1f6a5c;  --dim-requirement: #478579;  --dim-code_quality: #6fa096;
   --dim-security: #97bbb3;  --dim-review: #b5cfc9;
   --av-pm: #244a42;  --av-sa: #2563eb;  --av-sd: #7c3aed;  --av-rd: #0f766e;  --av-cr: #b45309;
-  --av-sw: #0e7490;  --av-sr: #0369a1;  --av-ar: #be123c;  --av-sec: #a21caf;  --av-qa: #4d7c0f;  --av-user: #1f6a5c;
+  --av-pa: #e11d48;  --av-rs: #0891b2;  --av-an: #4f46e5;  --av-pl: #f97316;  --av-cs: #92400e;
+  --av-wr: #db2777;  --av-ed: #ca8a04;  --av-vc: #059669;  --av-rv: #64748b;  --av-sw: #0e7490;  --av-sr: #0369a1;  --av-ar: #be123c;  --av-sec: #a21caf;  --av-qa: #4d7c0f;  --av-user: #1f6a5c;
   --shadow-sm: 0 1px 2px rgba(23, 41, 34, .07);
   --shadow-md: 0 10px 24px -8px rgba(23, 41, 34, .16), 0 2px 6px rgba(23, 41, 34, .06);
   --shadow-lg: 0 24px 48px -16px rgba(16, 30, 24, .28), 0 4px 12px rgba(16, 30, 24, .08);
@@ -42,7 +43,8 @@
   --dim-test: #3fb595;  --dim-requirement: #39997f;  --dim-code_quality: #327d68;
   --dim-security: #2c6052;  --dim-review: #274b41;
   --av-pm: #7fc4ae;  --av-sa: #8ab4ff;  --av-sd: #b79cff;  --av-rd: #5fd3c2;  --av-cr: #f0b25f;
-  --av-sw: #5fd0e6;  --av-sr: #6cc2f0;  --av-ar: #ff8aa6;  --av-sec: #e58bf0;  --av-qa: #b4de6a;  --av-user: #3fb595;
+  --av-pa: #fb7185;  --av-rs: #67e8f9;  --av-an: #a5b4fc;  --av-pl: #fdba74;  --av-cs: #d6a27a;
+  --av-wr: #f9a8d4;  --av-ed: #facc15;  --av-vc: #6ee7b7;  --av-rv: #cbd5e1;  --av-sw: #5fd0e6;  --av-sr: #6cc2f0;  --av-ar: #ff8aa6;  --av-sec: #e58bf0;  --av-qa: #b4de6a;  --av-user: #3fb595;
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, .4);
   --shadow-md: 0 10px 26px -8px rgba(0, 0, 0, .55), 0 2px 6px rgba(0, 0, 0, .3);
   --shadow-lg: 0 28px 56px -16px rgba(0, 0, 0, .65), 0 4px 14px rgba(0, 0, 0, .35);
@@ -337,7 +339,9 @@ button.nav-item { width: 100%; border: none; background: none; font: inherit; te
 :root[data-theme="dark"] { --sprite-outline: #0c0f0d; }
 .av-pm { --av: var(--av-pm); } .av-sa { --av: var(--av-sa); } .av-sd { --av: var(--av-sd); } .av-rd { --av: var(--av-rd); }
 .av-cr { --av: var(--av-cr); } .av-sr { --av: var(--av-sr); } .av-ar { --av: var(--av-ar); } .av-sec { --av: var(--av-sec); }
-.av-qa { --av: var(--av-qa); } .av-sw { --av: var(--av-sw); } .av-user { --av: var(--av-user); }
+.av-qa { --av: var(--av-qa); } .av-sw { --av: var(--av-sw); }
+.av-pa { --av: var(--av-pa); } .av-rs { --av: var(--av-rs); } .av-an { --av: var(--av-an); } .av-pl { --av: var(--av-pl); } .av-cs { --av: var(--av-cs); }
+.av-wr { --av: var(--av-wr); } .av-ed { --av: var(--av-ed); } .av-vc { --av: var(--av-vc); } .av-rv { --av: var(--av-rv); } .av-user { --av: var(--av-user); }
 .chat-post.has-error .chat-avatar { background: var(--pill-negative-bg); color: var(--pill-negative-ink); border-color: var(--danger-border); }
 .chat-post.is-user { flex-direction: row-reverse; }
 .chat-post-body { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; max-width: min(76%, 650px); }
@@ -1213,3 +1217,8 @@ tr.clickable:focus-visible { outline: 2px solid var(--accent); outline-offset: -
 @media (prefers-reduced-motion: reduce) { .chat-post.is-typing .chat-avatar { animation: none; } }
 .spec-card { margin-bottom: 14px; }
 .task-spec { max-height: 420px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.workflow-group-title { margin: 18px 0 8px; font-size: 13px; font-weight: 700; color: var(--muted); }
+.workflow-group-title:first-child { margin-top: 0; }
+.role-group { margin-top: 14px; }
+.role-group > summary { cursor: pointer; padding: 8px 2px; font-size: 13px; font-weight: 700; color: var(--muted); }
+.role-group > .role-config-list { margin-top: 8px; }

@@ -1125,7 +1125,7 @@ def test_workflow_and_review_gate_can_be_set_from_the_console(tmp_path, client):
 
     catalog = client.get("/api/projects/flows/workflows").json()
     assert catalog["selected"] == "standard"  # a project added through the console
-    assert [flow["id"] for flow in catalog["workflows"]] == ["classic", "standard", "full"]
+    assert [flow["id"] for flow in catalog["workflows"]][:3] == ["classic", "standard", "full"]
 
     assert client.post("/api/projects/flows/config/workflow", json={"workflow": "full"}).status_code == 200
     assert client.post("/api/projects/flows/config/workflow", json={"workflow": "x"}).status_code == 400
@@ -1170,7 +1170,7 @@ def test_custom_workflows_can_be_managed_from_the_console(tmp_path, client):
     ).status_code == 200
     catalog = client.get("/api/projects/mine/workflows").json()
     assert (catalog["selection"], [f["id"] for f in catalog["workflows"]]) == (
-        "pm", ["classic", "standard", "full", "flow-2"]
+        "pm", ["classic", "standard", "full", "life", "business", "content", "decision", "flow-2"]
     )
     assert client.post("/api/projects/mine/workflows/flow-2/delete", json={}).json()["deleted"] == "flow-2"
     assert client.post("/api/projects/mine/workflows/full/delete", json={}).status_code == 400

@@ -12,7 +12,8 @@ CLARIFICATION_REQUEST_SCENARIOS = {"ask_question", "no_blocking_question"}
 CLARIFICATION_RESPONSE_SCENARIOS = {"confirmed", "recommendation", "pm_decision_required"}
 
 
-GATE_FINDINGS_ROLES = {"REVIEW", "SR", "AR", "SEC", "QA"}
+GATE_FINDINGS_ROLES = {"REVIEW", "SR", "AR", "SEC", "QA", "VC", "RV"}
+DOCUMENT_ROLES = {"SW", "PA", "RS", "AN", "PL", "CS", "WR", "ED"}
 SPEC_DOCUMENT = "# Specification\n\n## Requirements\n- REQ-001 The system MUST do the thing.\n"
 
 
@@ -76,5 +77,5 @@ class FakeAgentAdapter(BaseAgentAdapter):
             next_action="修正 Review 問題後重新檢查。" if revision else "PM 閱讀結果並決定下一步。",
             needs_revision=revision,
             simulated=True,
-            document=SPEC_DOCUMENT if package["role"] == "SW" else "",
+            document=SPEC_DOCUMENT if package["role"] in DOCUMENT_ROLES else "",
         ).model_dump()

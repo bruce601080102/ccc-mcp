@@ -6,16 +6,24 @@ from ..infra.errors import BridgeError
 # Roles that dispatch an Agent. "SD/RD" is the combined role today's automatic workflow
 # dispatches; "REVIEW" is the Code Reviewer (CR) and keeps its stored id so existing
 # projects, executions and settings continue to work unchanged.
-AGENT_ROLES = ("SA", "SD", "RD", "SD/RD", "REVIEW", "SR", "AR", "SEC", "QA", "SW")
+# The everyday roles (PA, RS, AN, PL, CS, WR, ED, VC, RV) are for work that is not software:
+# research, planning, writing, decisions. They never touch files; each producer hands its result
+# over as a document. They default to ChatGPT, which can browse, since the CLI agents here read
+# the project folder only.
+GENERAL_PRODUCERS = ("PA", "RS", "AN", "PL", "CS", "WR", "ED")
+GENERAL_GATES = ("VC", "RV")
+GENERAL_ROLES = (*GENERAL_PRODUCERS, *GENERAL_GATES)
+ENGINEERING_ROLES = ("SA", "SD", "RD", "SD/RD", "REVIEW", "SR", "AR", "SEC", "QA", "SW")
+AGENT_ROLES = (*ENGINEERING_ROLES, *GENERAL_ROLES)
 # PM is the interactive ChatGPT conversation that drives the workflow; it has an identity
 # in the chat room (name, avatar) but no provider to configure.
 PM_ROLE = "PM"
 NAMEABLE_ROLES = (PM_ROLE, *AGENT_ROLES)
 
 # Reviewers judge; they never change the work tree.
-READ_ONLY_ROLES = frozenset({"SA", "REVIEW", "SR", "AR", "SEC", "QA", "SW"})
+READ_ONLY_ROLES = frozenset({"SA", "REVIEW", "SR", "AR", "SEC", "QA", "SW", *GENERAL_ROLES})
 # The reviewers that read the implementation's worktree, never write to it.
-REVIEWER_ROLES = READ_ONLY_ROLES - {"SA", "SW"}
+REVIEWER_ROLES = READ_ONLY_ROLES - {"SA", "SW", *GENERAL_PRODUCERS}
 
 # The task state a role's execution runs under. SD stays IMPLEMENTING so a design step can
 # follow an approved plan whether or not it is read-only.
@@ -30,7 +38,11 @@ REPORT_FILES = {
     "SEC": "SEC-REPORT.md",
     "QA": "QA-REPORT.md",
     "SW": "SW-REPORT.md",
+    **{role: f"{role}-REPORT.md" for role in GENERAL_ROLES},
 }
+# Where a producer's `document` is saved. SW's is the specification; the everyday producers'
+# are the deliverables a person reads.
+DOCUMENT_FILES = {"SW": "SPEC.md", **{role: f"{role}-DOCUMENT.md" for role in GENERAL_PRODUCERS}}
 
 
 def writes_files(role, options=None, report_schema="agent_report"):
@@ -57,6 +69,15 @@ ROLE_CATALOG = {
         "SW", "Specification Writer",
         "Turns the discussion's conclusions into a specification an AI can implement from",
     ),
+    "PA": ("PA", "Personal Assistant", "Understands the request, organises the work and hands over the result"),
+    "RS": ("RS", "Researcher", "Looks things up and collects information on a topic"),
+    "AN": ("AN", "Analyst", "Compares options, works through the numbers and weighs pros and cons"),
+    "PL": ("PL", "Planner", "Turns the findings into a plan with steps, order, time and cost"),
+    "CS": ("CS", "Consultant", "Gives expert advice and judges whether something is workable"),
+    "WR": ("WR", "Writer", "Writes the article, proposal, report or copy"),
+    "ED": ("ED", "Editor", "Polishes wording, tightens structure and makes it easy to read"),
+    "VC": ("VC", "Fact Checker", "Checks claims, sources and figures against evidence"),
+    "RV": ("RV", "Reviewer", "Checks the result and points out problems and gaps"),
 }
 
 ROLE_NAME_MAX = 24
@@ -66,11 +87,15 @@ ROLE_NAME_MAX = 24
 AVATAR_IDS = (
     "boss", "detective", "designer", "dev", "angel", "monk", "devil", "knight", "tester",
     "person", "cat", "robot", "bear", "frog", "writer",
+    "assistant", "researcher", "analyst", "planner", "consultant", "author", "editor",
+    "checker", "reviewer",
 )
 DEFAULT_AVATARS = {
     "PM": "boss", "SA": "detective", "SD": "designer", "RD": "dev", "SD/RD": "dev",
     "REVIEW": "angel", "SR": "monk", "AR": "devil", "SEC": "knight", "QA": "tester",
     "SW": "writer",
+    "PA": "assistant", "RS": "researcher", "AN": "analyst", "PL": "planner", "CS": "consultant",
+    "WR": "author", "ED": "editor", "VC": "checker", "RV": "reviewer",
 }
 
 
@@ -92,7 +117,10 @@ def validated_role_avatars(value):
 
 
 def default_provider(role):
-    """Reviewers default to Codex and builders to Claude, the split `best-model` uses."""
+    """Everyday roles default to ChatGPT (they may need to browse); engineering reviewers to
+    Codex and builders to Claude, the split `best-model` uses."""
+    if role in GENERAL_ROLES:
+        return "chatgpt"
     return "codex" if role in READ_ONLY_ROLES else "claude"
 
 

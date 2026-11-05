@@ -17,7 +17,15 @@ from ..infra.config import metadata_name
 from ..infra.errors import BridgeError, PermissionDenied, VersionConflict
 from ..infra.security import atomic_write, canonical, digest, reject_secrets, safe_path
 from .models import PROTOCOL_VERSION, ContextPatch, ContextSnapshot, SourceRef
-from .roles import AGENT_ROLES, READ_ONLY_ROLES, REVIEWER_ROLES
+from .roles import (
+    AGENT_ROLES,
+    DOCUMENT_FILES,
+    GENERAL_PRODUCERS,
+    GENERAL_ROLES,
+    READ_ONLY_ROLES,
+    REPORT_FILES,
+    REVIEWER_ROLES,
+)
 
 DOCUMENTS = {
     "project": "context/PROJECT.md",
@@ -1428,6 +1436,12 @@ class ContextHub:
                 "REQUIREMENT.md", "SA-REPORT.md", "APPROVED-PLAN.md", "SD-REPORT.md", "SPEC.md",
                 "IMPLEMENTATION.md", "TEST-RESULT.md",
             ]
+            # Everyday roles read the request and everything the earlier steps handed over.
+            everyday = [
+                "REQUIREMENT.md",
+                *(DOCUMENT_FILES[role] for role in GENERAL_PRODUCERS),
+                *(REPORT_FILES[role] for role in (*GENERAL_PRODUCERS, "VC", "RV", "AR")),
+            ]
             names = {
                 "SA": ["REQUIREMENT.md"],
                 "PM": TASK_DOCUMENTS,
@@ -1440,6 +1454,7 @@ class ContextHub:
                 ],
                 "REVIEW": ["REQUIREMENT.md", "SA-REPORT.md", "IMPLEMENTATION.md", "TEST-RESULT.md"],
                 **dict.fromkeys(["SR", "AR", "SEC", "QA"], reviewed),
+                **dict.fromkeys(GENERAL_ROLES, everyday),
             }[role]
             reports = {}
             for name in names:

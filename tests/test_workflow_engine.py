@@ -389,7 +389,7 @@ def test_workflow_catalog_lists_the_builtin_flows(bridge):
     bridge.configure_workflow("demo", "full")
     catalog = bridge.workflow_catalog("demo")
     assert catalog["selected"] == "full"
-    assert [flow["id"] for flow in catalog["workflows"]] == ["classic", "standard", "full"]
+    assert [flow["id"] for flow in catalog["workflows"]][:3] == ["classic", "standard", "full"]
     full = catalog["workflows"][2]
     assert [step["role"] for step in full["steps"]] == FULL
 
@@ -418,8 +418,10 @@ def test_a_saved_workflow_is_named_workflow_2_then_3(bridge):
     assert [s["role"] for s in first["steps"]] == ["SA", "RD", "REVIEW"]
 
     catalog = bridge.workflow_catalog("demo")
-    assert [f["id"] for f in catalog["workflows"]] == ["classic", "standard", "full", "flow-2", "flow-3"]
-    assert [f["builtin"] for f in catalog["workflows"]] == [True, True, True, False, False]
+    assert [f["id"] for f in catalog["workflows"]] == [
+        "classic", "standard", "full", "life", "business", "content", "decision", "flow-2", "flow-3",
+    ]
+    assert [f["builtin"] for f in catalog["workflows"]] == [True] * 7 + [False, False]
 
 
 def test_default_names_follow_the_project_language(bridge):
@@ -723,3 +725,110 @@ def test_a_report_without_a_document_is_still_valid():
         '"needs_revision":false,"simulated":false,"context_updates":[]}'
     )
     assert report["document"] == ""
+
+
+# -- everyday roles and team templates ------------------------------------------------------
+
+LIFE = ["PA", "RS", "AN", "PL", "VC"]
+TEMPLATES = {
+    "life": LIFE,
+    "business": ["PA", "RS", "AN", "CS", "WR", "RV"],
+    "content": ["PA", "RS", "WR", "ED", "VC"],
+    "decision": ["PA", "RS", "AN", "CS", "AR"],
+}
+
+
+def test_everyday_roles_exist_default_to_chatgpt_and_never_write_files(bridge):
+    from ccc_mcp.core import roles
+
+    settings = bridge.get_project_settings("demo")["roles"]
+    for role in roles.GENERAL_ROLES:
+        assert settings[role]["provider"] == "chatgpt"
+        assert role in roles.READ_ONLY_ROLES
+    assert not roles.writes_files("WR")
+    assert set(roles.GENERAL_PRODUCERS) <= flows.PRODUCER_ROLES
+    assert {"VC", "RV"} <= flows.GATE_ROLES
+
+
+def test_the_team_templates_are_built_in_and_listed_after_the_software_workflows(bridge):
+    catalog = bridge.workflow_catalog("demo")
+    ids = [f["id"] for f in catalog["workflows"]]
+    assert ids[:3] == ["classic", "standard", "full"]
+    by_id = {f["id"]: f for f in catalog["workflows"]}
+    for flow_id, roles_ in TEMPLATES.items():
+        assert [s["role"] for s in by_id[flow_id]["steps"]] == roles_
+        assert by_id[flow_id]["audience"] == "general"
+        assert by_id[flow_id]["builtin"] is True
+    assert by_id["full"]["audience"] == "software"
+
+
+@pytest.mark.parametrize("template", sorted(TEMPLATES))
+def test_every_team_template_runs_to_completion_and_hands_over_documents(bridge, human, template):
+    task_id = start(bridge, workflow=template)
+    assert queued(bridge, task_id)["role"] == "PA"
+    assert "Add a feature" in bridge.approved_plan("demo", task_id)["content"]
+    drive(bridge, task_id, "success")
+
+    assert roles_run(bridge, task_id) == TEMPLATES[template]
+    assert bridge.task("demo", task_id)["state"] == "COMPLETED"
+    assert artifact_text(bridge, task_id, "PA-DOCUMENT.md")
+    assert artifact_text(bridge, task_id, "RS-DOCUMENT.md")
+    rows = bridge.store.all(
+        "SELECT worktree FROM agent_executions WHERE project_id='demo' AND task_id=?", (task_id,)
+    )
+    assert all(r["worktree"] is None for r in rows)  # nothing here touches the repository
+
+
+def test_the_fact_checker_sends_work_back_to_the_planner(bridge, human):
+    task_id = start(bridge, "VC:revision,success", workflow="life")
+    drive(bridge, task_id, "VC:revision,success")
+
+    assert roles_run(bridge, task_id) == [*LIFE, "PL", "VC"]
+    assert bridge.task("demo", task_id)["state"] == "COMPLETED"
+
+
+def test_a_decision_team_ends_with_the_strict_reviewer_who_needs_evidence(bridge, human):
+    task_id = start(bridge, "AR:unsupported_claim,success", workflow="decision")
+    drive(bridge, task_id, "AR:unsupported_claim,success")
+
+    assert roles_run(bridge, task_id) == TEMPLATES["decision"]
+    assert bridge.flow_gate_history("demo", task_id)[0]["detail"]["discarded_unsupported"] == 1
+
+
+def test_everyday_roles_see_what_earlier_steps_handed_over(bridge, human):
+    task_id = start(bridge, workflow="content")
+    drive(bridge, task_id, "success")
+
+    reports = bridge.build_handoff("demo", "ED", task_id)["content"]["reports"]
+    assert {"REQUIREMENT.md", "PA-DOCUMENT.md", "RS-DOCUMENT.md", "WR-DOCUMENT.md"} <= set(reports)
+
+
+def test_everyday_instructions_ask_for_plain_language_and_a_document():
+    text = flows.step_instruction("PL", "Plan a trip to Osaka")
+    assert "`document` field" in text
+    assert "plain words" in text
+    assert flows.step_instruction("VC", "x").count("evidence") >= 1
+
+
+def test_auto_selection_recognises_everyday_requests_and_leaves_code_alone(bridge, human):
+    bridge.authorize_project_local("demo")
+    bridge.configure_workflow_selection("demo", "auto")
+    cases = {
+        "幫我規劃日本五天四夜自由行，預算三萬": "life",
+        "Write a blog post about sleep": "content",
+        "Should I rent or buy an apartment? decide for me": "decision",
+        "Draft a proposal for a new market research product": "business",
+    }
+    for text, expected in cases.items():
+        task = bridge.create_task("demo", text)
+        assert bridge._task_flow("demo", task["id"])["id"] == expected, text
+        bridge.cancel_task("demo", task["id"], "next")
+    code = bridge.create_task("demo", "Write a function that plans a trip and add tests")
+    assert (bridge._task_flow("demo", code["id"]) or {"id": "classic"})["id"] != "life"
+
+
+def test_everyday_roles_can_be_put_in_your_own_workflow(bridge):
+    saved = bridge.save_workflow("demo", ["PA", "WR", "ED"], name="Letter")
+    assert [s["role"] for s in saved["steps"]] == ["PA", "WR", "ED"]
+    with pytest.raises(BridgeError):
+        bridge.save_workflow("demo", ["VC", "WR"])  # a checker needs something to check first

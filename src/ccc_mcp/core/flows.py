@@ -15,9 +15,9 @@ Only pure rules live here. Dispatching and persistence are in ``core/flow_engine
 import re
 
 from ..infra.errors import BridgeError
-from .roles import AGENT_ROLES
+from .roles import AGENT_ROLES, GENERAL_PRODUCERS, GENERAL_ROLES
 
-PRODUCER_ROLES = frozenset({"SA", "SD", "RD", "SD/RD", "SW"})
+PRODUCER_ROLES = frozenset({"SA", "SD", "RD", "SD/RD", "SW", *GENERAL_PRODUCERS})
 # Producers that change the working tree and therefore get host tests afterwards.
 BUILDER_ROLES = frozenset({"RD", "SD/RD"})
 GATE_ROLES = frozenset(AGENT_ROLES) - PRODUCER_ROLES
@@ -67,6 +67,34 @@ BUILTIN_FLOWS = {
             {"role": "SEC"},
             {"role": "QA"},
         ],
+    },
+    "life": {
+        "name": "Life planning team",
+        "summary": "Trips, shopping comparisons, everyday decisions: assistant, researcher, analyst, planner, fact checker.",
+        "legacy": False,
+        "audience": "general",
+        "steps": [{"role": role} for role in ("PA", "RS", "AN", "PL", "VC")],
+    },
+    "business": {
+        "name": "Business planning team",
+        "summary": "Proposals, market research, business analysis: assistant, researcher, analyst, consultant, writer, reviewer.",
+        "legacy": False,
+        "audience": "general",
+        "steps": [{"role": role} for role in ("PA", "RS", "AN", "CS", "WR", "RV")],
+    },
+    "content": {
+        "name": "Content creation team",
+        "summary": "Articles, posts, reports, stories: assistant, researcher, writer, editor, fact checker.",
+        "legacy": False,
+        "audience": "general",
+        "steps": [{"role": role} for role in ("PA", "RS", "WR", "ED", "VC")],
+    },
+    "decision": {
+        "name": "Decision team",
+        "summary": "Big choices and risk checks: assistant, researcher, analyst, consultant, strict reviewer.",
+        "legacy": False,
+        "audience": "general",
+        "steps": [{"role": role} for role in ("PA", "RS", "AN", "CS", "AR")],
     },
 }
 
@@ -161,10 +189,11 @@ def flow_definition(flow_id, custom=None):
     """A copy of a workflow with `id` filled in."""
     flow_id = validated_workflow(flow_id, custom)
     if flow_id in BUILTIN_FLOWS:
-        flow = {**BUILTIN_FLOWS[flow_id], "builtin": True}
+        flow = {"audience": "software", **BUILTIN_FLOWS[flow_id], "builtin": True}
     else:
         flow = {
             "name": custom[flow_id]["name"], "summary": "", "legacy": False, "builtin": False,
+            "audience": "custom",
             "steps": custom[flow_id]["steps"],
         }
     return {"id": flow_id, **flow, "steps": [dict(step) for step in flow["steps"]]}
@@ -187,6 +216,31 @@ _SMALL = re.compile(
 )
 
 
+_CODE = re.compile(
+    r"\bcode\b|\bbug\b|\bapi\b|function|repo|refactor|database|test(s|ing)?\b|deploy|程式|函式|程式碼|資料庫|部署|測試",
+    re.IGNORECASE,
+)
+_EVERYDAY = {
+    "life": re.compile(
+        r"trip|travel|itinerary|vacation|holiday|shopping|recipe|budget|move house|旅遊|旅行|行程|"
+        r"自由行|購物|日常|預算|食譜|搬家",
+        re.IGNORECASE,
+    ),
+    "business": re.compile(
+        r"proposal|market research|business plan|competitor|pitch|企劃|提案|市場|商業|競品|簡報",
+        re.IGNORECASE,
+    ),
+    "content": re.compile(
+        r"article|blog|caption|story|essay|newsletter|social post|文章|貼文|文案|故事|社群|部落格",
+        re.IGNORECASE,
+    ),
+    "decision": re.compile(
+        r"should i|which (one|option)|decide|decision|pros and cons|該不該|要不要|選哪|決定|取捨|比較",
+        re.IGNORECASE,
+    ),
+}
+
+
 def choose_workflow(requirement, catalog, default_id):
     """Pick a workflow for a task from its text. Returns (workflow id, reason).
 
@@ -195,6 +249,10 @@ def choose_workflow(requirement, catalog, default_id):
     Among workflows that qualify the shortest wins, so a task never pays for review it
     does not need."""
     text = requirement or ""
+    if not _CODE.search(text):
+        for flow_id, pattern in _EVERYDAY.items():
+            if flow_id in catalog and pattern.search(text):
+                return flow_id, "The request is everyday work, not software"
     needs = set()
     if _SECURITY.search(text):
         needs.add("SEC")
@@ -345,6 +403,54 @@ ROLE_BRIEFS = {
     ),
     "AR": "You are the adversarial reviewer: your job is to find what the others missed.",
     "SEC": "Review for security: vulnerabilities, permission and trust boundaries, secrets and unsafe input handling.",
+    "PA": (
+        "You are the personal assistant. Work out what the person actually wants: restate the "
+        "request in your own words, list what is known (dates, budget, people, preferences, limits) "
+        "and what is missing, and make sensible assumptions for the gaps, naming each assumption. "
+        "Say which questions the next steps need to answer. Put the brief in the `document` field."
+    ),
+    "RS": (
+        "You are the researcher. Find the information the request needs. For every fact give where "
+        "it came from (a link, a document or a source name) and when, and say plainly what you "
+        "could not find or are unsure of. Do not invent sources or figures. Put your notes in the "
+        "`document` field, organised by question."
+    ),
+    "AN": (
+        "You are the analyst. Compare the options using the research: set out each option's "
+        "advantages, disadvantages, costs and risks side by side, show any calculation, and state "
+        "which option you would pick and why. Put the analysis in the `document` field."
+    ),
+    "PL": (
+        "You are the planner. Turn what has been found into a concrete plan: ordered steps, who or "
+        "what each needs, timing, cost, and a fallback for the parts most likely to go wrong. Check "
+        "that the plan fits the stated limits (budget, time, people). Put the plan in the "
+        "`document` field."
+    ),
+    "CS": (
+        "You are the consultant. Give your expert judgement: is this workable, what are the real "
+        "risks, what would you change, and what would you do first. Be direct and give reasons. "
+        "Put your advice in the `document` field."
+    ),
+    "WR": (
+        "You are the writer. Write the finished piece the request asks for (an article, proposal, "
+        "report, post or story) from the research and analysis so far, in a clear structure and a "
+        "tone that fits the reader. Use only facts that were established; mark anything uncertain. "
+        "Put the complete text in the `document` field."
+    ),
+    "ED": (
+        "You are the editor. Improve the draft: fix wording and grammar, tighten the structure, cut "
+        "repetition and make it easy to read, without changing what it claims. Put the full "
+        "edited text in the `document` field and list what you changed in `findings`."
+    ),
+    "VC": (
+        "You are the fact checker. Check every claim, figure, date, name and source in the work "
+        "against evidence. A claim you cannot support is a problem: report it, with the source you "
+        "checked. Confirm what holds up."
+    ),
+    "RV": (
+        "You are the reviewer. Check the result against what was asked: is anything missing, wrong, "
+        "unclear or inconsistent, and does it actually answer the request?"
+    ),
     "SW": (
         "Write the specification for this work from everything decided so far: the requirement, "
         "the analysis, the design, and what the reviewers raised and how it was resolved. Put the "
@@ -380,6 +486,8 @@ def step_instruction(role, requirement, *, strictness="normal", max_rounds=None,
             parts.append(f"This gate can send work back at most {max_rounds} time(s).")
     if feedback:
         parts.append("The previous round was sent back. Address these points:\n" + feedback)
+    if role in GENERAL_ROLES:
+        parts.append("Answer in the same language as the request, in plain words a non-specialist can follow.")
     if requirement:
         parts.append("Requirement:\n" + requirement)
     return "\n\n".join(parts)

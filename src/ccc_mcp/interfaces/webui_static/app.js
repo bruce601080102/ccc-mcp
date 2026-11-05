@@ -942,12 +942,16 @@
     AR: ["ar", '<circle cx="12" cy="12" r="9"/><path d="M12 3v4M12 17v4M3 12h4M17 12h4"/>'],
     SEC: ["sec", '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>'],
     SW: ["sw", '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>'],
+    PA: ["pa", ""], RS: ["rs", ""], AN: ["an", ""], PL: ["pl", ""], CS: ["cs", ""], WR: ["wr", ""], ED: ["ed", ""], VC: ["vc", ""], RV: ["rv", ""],
     QA: ["qa", '<path d="m9 11 3 3 8-8"/><path d="M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h9"/>'],
     USER: ["user", '<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>'],
   };
   const ROLE_ABBREVIATIONS = { REVIEW: "CR" };
+  // Everyday roles are shown by what they do, not by an abbreviation.
+  const ROLE_FRIENDLY = { PA: "Personal assistant", RS: "Researcher", AN: "Analyst", PL: "Planner", CS: "Consultant", WR: "Writer", ED: "Editor", VC: "Fact checker", RV: "Reviewer", AR: "Strict reviewer" };
+  const EVERYDAY_ROLES = ["PA", "RS", "AN", "PL", "CS", "WR", "ED", "VC", "RV"];
   let activeRoleNames = {};
-  const roleName = (role) => activeRoleNames[role] || ROLE_ABBREVIATIONS[role] || role;
+  const roleName = (role) => activeRoleNames[role] || (ROLE_FRIENDLY[role] ? UI.translate(ROLE_FRIENDLY[role]) : ROLE_ABBREVIATIONS[role] || role);
   const roleAvatarTone = (role) => (ROLE_AVATARS[role] || ROLE_AVATARS.SA)[0];
   // Every role is a small pixel character: a chubby chibi base with its own hair, outfit and
   // accessory (PM crown, SA detective hat, SD beret, RD headphones, CR angel, SR monk,
@@ -968,7 +972,7 @@
     "..obbbbbbbbo..",
     "...oooooooo...",
   ];
-  const SPRITE_COLORS = { o: "var(--sprite-outline, #2d2a32)", s: "#ffd9b8", e: "#2a2233", W: "#ffffff", c: "#ff9aa8", m: "#c0504d", y: "#ffcf3a", a: "#bfe3ff", r: "#e5484d", x: "#9aa7b5", k: "#2b3042", p: "#d36bb8", b: "var(--av)" };
+  const SPRITE_COLORS = { o: "var(--sprite-outline, #2d2a32)", s: "#ffd9b8", e: "#2a2233", W: "#ffffff", c: "#ff9aa8", m: "#c0504d", y: "#ffcf3a", a: "#bfe3ff", r: "#e5484d", x: "#9aa7b5", g: "#4ca85a", k: "#2b3042", p: "#d36bb8", b: "var(--av)" };
   const BLOB_BODY = [[10, ".obbbbbWbbbbo."], [11, ".obbWbWbbbbbo."], [12, ".obbbWbbbbbbo."], [13, "..oooooooooo.."]];
   const SPRITES = {
     person: { hair: "#5a3b1e", edits: [] },
@@ -985,11 +989,21 @@
     robot: { hair: "#6b7a8a", skin: "#c9d3dc", edits: [[0, ".......r......"], [1, ".......k......"], [6, "x............x"], [7, "x............x"]] },
     bear: { hair: "#8b5a2b", skin: "#c8955c", edits: [[1, "..hh......hh.."], [2, "..hh......hh.."], [8, ".....WmmW....."]] },
     frog: { hair: "#5fb85a", skin: "#8ee07d", edits: [[1, "..WW......WW.."], [2, "..WeW....WeW.."], [8, "....mmmmmm...."]] },
+    assistant: { hair: "#3b2f2f", edits: [[11, ".....rWWr....."]] },
+    researcher: { hair: "#8a4b2a", body: "#f4f4f4", edits: [[10, "...........aaa"], [11, "...........aga"], [12, "...........aaa"]] },
+    analyst: { hair: "#3a3a4a", edits: [[5, "...kkkk.kkkk.."], [10, ".............y"], [11, "............yy"], [12, "...........yyy"]] },
+    planner: { hair: "#a0522d", edits: [[10, "...........WWW"], [11, "...........WkW"], [12, "...........WWW"]] },
+    consultant: { hair: "#9aa0a6", body: "#3b4252", edits: [[11, "......WW......"], [12, "......rr......"]] },
+    author: { hair: "#7a4a21", edits: [[7, "h............h"], [8, "h............h"], [9, "h............h"], [10, ".............W"], [11, "............W."], [12, "...........y.."]] },
+    editor: { hair: "#444444", edits: [[4, ".gggggggggggg."], [10, ".............r"], [11, "............r."]] },
+    checker: { hair: "#3a2a1a", edits: [[1, "....kkkkkk...."], [2, "...kkkyykkk..."], [3, ".kkkkkkkkkkkk."], [10, "...........ggg"], [11, "...........gWg"], [12, "...........ggg"], [13, ".............k"]] },
+    reviewer: { hair: "#e8e8e8", edits: [[1, "....WWWWWW...."], [2, "..WWWWWWWWWW.."], [5, "W............W"], [6, "W............W"], [7, "W............W"], [10, "...........rrr"], [11, "...........rWr"], [12, "...........rrr"]] },
     writer: { hair: "#4a3a2a", edits: [[0, ".kkkkkkkkkkkk."], [1, "...kkkkkkkk.y."], [2, "............y."], [10, ".............y"], [11, "............y."], [12, "...........y.."]] },
   };
-  const DEFAULT_AVATAR = { USER: "person", PM: "boss", SA: "detective", SD: "designer", RD: "dev", "SD/RD": "dev", REVIEW: "angel", SR: "monk", AR: "devil", SEC: "knight", QA: "tester", SW: "writer" };
-  const AVATAR_ORDER = ["boss", "detective", "designer", "dev", "angel", "monk", "devil", "knight", "tester", "person", "cat", "robot", "bear", "frog", "writer"];
+  const DEFAULT_AVATAR = { USER: "person", PM: "boss", SA: "detective", SD: "designer", RD: "dev", "SD/RD": "dev", REVIEW: "angel", SR: "monk", AR: "devil", SEC: "knight", QA: "tester", SW: "writer", PA: "assistant", RS: "researcher", AN: "analyst", PL: "planner", CS: "consultant", WR: "author", ED: "editor", VC: "checker", RV: "reviewer" };
+  const AVATAR_ORDER = ["boss", "detective", "designer", "dev", "angel", "monk", "devil", "knight", "tester", "person", "cat", "robot", "bear", "frog", "writer", "assistant", "researcher", "analyst", "planner", "consultant", "author", "editor", "checker", "reviewer"];
   let activeRoleAvatars = {};
+  let activeTouchesCode = true;
   const spriteCache = {};
   const roleAvatarIcon = (role) => spriteFor(activeRoleAvatars[role] || DEFAULT_AVATAR[role] || "person");
   const spriteFor = (id) => {
@@ -1367,7 +1381,7 @@
     bindChatDetailButtons(events);
   }
 
-  const TASK_ROLE_LABELS = { SA: "Analysis", "SD/RD": "Development", SD: "Design", RD: "Development", REVIEW: "Review", SR: "Specification review", AR: "Adversarial review", SEC: "Security review", QA: "Quality assurance", SW: "Specification writing", PM: "Summary" };
+  const TASK_ROLE_LABELS = { SA: "Analysis", "SD/RD": "Development", SD: "Design", RD: "Development", REVIEW: "Review", SR: "Specification review", AR: "Adversarial review", SEC: "Security review", QA: "Quality assurance", SW: "Specification writing", PA: "Coordination", RS: "Research", AN: "Data analysis", PL: "Planning", CS: "Advice", WR: "Writing", ED: "Editing", VC: "Fact checking", RV: "Review", PM: "Summary" };
 
   function statusPill(kind, text) {
     return `<span class="pill ${kind}">${esc(UI.translate(text))}</span>`;
@@ -1459,7 +1473,7 @@
     if (type === "agent_started") summary = "Execution dispatched; waiting for the result.";
     if (type === "task_completed") summary = event.legacy ?
       "This work round completed. Restart the UI server to view the saved test evidence." :
-      "This work round completed. Review the host test evidence below before accepting the result.";
+      (activeTouchesCode ? "This work round completed. Review the host test evidence below before accepting the result." : "This work round completed. Open the Results tab to read what each step produced.");
     if (type === "task_cancelled") summary = "No further work will be dispatched. Existing file changes were not rolled back.";
     if (type === "pause_requested") summary = "Further agent dispatch is paused. An active operation may finish at a safe point.";
     if (type === "task_paused") summary = "No task operation is running. Work will stay paused until you continue it.";
@@ -1593,7 +1607,13 @@
     const diffRows = artifacts.filter((a) => a.path.endsWith("/CHANGES.diff"));
     const testRows = artifacts.filter((a) => /\/executions\/TEST-[^/]+\/TEST-RESULT\.md$/.test(a.path));
     const reportRows = artifacts.filter((a) => /\/(SA-REPORT|SD-REPORT|SW-REPORT|SPEC|SR-REPORT|AR-REPORT|SEC-REPORT|QA-REPORT|IMPLEMENTATION|REVIEW|CONTEXT-UPDATES)\.md$/.test(a.path));
-    const latestSpec = artifacts.filter((a) => a.path.endsWith("/SPEC.md") && !a.path.includes("/executions/")).at(-1);
+    // Documents the steps handed over (the specification, or an everyday team's research, plan,
+    // draft...), newest first; the code cards below only matter when something changes code.
+    const docRole = (path) => { const m = path.match(/\/(SPEC|([A-Z]{2})-DOCUMENT)\.md$/); return m ? (m[1] === "SPEC" ? "SW" : m[2]) : null; };
+    const deliverables = artifacts.filter((a) => docRole(a.path)).sort((a, b) => String(b.created).localeCompare(String(a.created)));
+    const touchesCode = !flowSteps || flowSteps.some((role) => role === "RD" || role === "SD/RD");
+    activeTouchesCode = touchesCode;
+    const deliverableCard = deliverables.length ? `<section class="task-result-card spec-card"><h2>${esc(UI.translate(touchesCode ? "Documents from each step" : "Results"))}</h2><p class="muted">${esc(UI.translate("Newest first. Each step hands its document to the next."))}</p>${deliverables.map((a, index) => `<details ${index === 0 ? "open" : ""}><summary><strong data-no-i18n>${esc(roleName(docRole(a.path)))}</strong> · ${esc(UI.translate(TASK_ROLE_LABELS[docRole(a.path)] || "Result"))}</summary><pre class="mono task-spec">${esc(a.content || "")}</pre></details>`).join("")}</section>` : "";
     const latestDiff = diffRows.at(-1);
     const latestTest = testRows.at(-1);
     return {
@@ -1609,10 +1629,10 @@
       progress: steps.map(([name, done]) => `<span class="conversation-step ${done ? "done" : ""}"><i aria-hidden="true"></i>${esc(UI.translate(name))}</span>`).join(""),
       feed: taskConversation(events, typingIds),
       next: gateCard || (handoff.next_action && !terminal ? `<div class="task-next"><strong>${esc(UI.translate("Next step"))}</strong><p>${esc(handoff.next_action)}</p></div>` : ""),
-      results: `${latestSpec ? `<section class="task-result-card spec-card"><h2>${esc(UI.translate("Specification"))}</h2><p class="muted">${esc(UI.translate("Written by the specification writer for later steps and for you to review."))}</p><pre class="mono task-spec">${esc(latestSpec.content || "")}</pre></section>` : ""}<section class="task-result-grid">
+      results: `${deliverableCard}${touchesCode ? `<section class="task-result-grid">
       <div class="task-result-card"><h2>${esc(UI.translate("Changed files and diff"))}</h2>${latestDiff ? `<pre class="mono task-diff">${esc(latestDiff.content || "")}</pre>` : `<p class="muted">${esc(UI.translate("No saved diff yet."))}</p>`}</div>
       <div class="task-result-card"><h2>${esc(UI.translate("Host test evidence"))}</h2>${verificationLine(brief.tests)}${latestTest ? `<details><summary>${esc(UI.translate("View saved test result"))}</summary><pre class="mono">${esc(latestTest.content)}</pre></details>` : `<p class="muted">${esc(UI.translate("No host test evidence yet."))}</p>`}</div>
-    </section><section class="task-result-card evaluation-section"><div class="evaluation-section-head"><div><h2>${esc(UI.translate("Evaluation and evidence"))}</h2><p>${esc(UI.translate("Scores are separate from task completion."))}</p></div>${settings.editable?.evaluation_engine?.enabled ? `<button class="btn small" id="task-evaluate">${esc(UI.translate("Evaluate latest executions"))}</button>` : `<button class="btn small" id="task-enable-evaluation">${esc(UI.translate("Enable evaluation"))}</button>`}</div>${evaluations.length ? `<div class="evaluation-list">${evaluations.slice().reverse().map(evaluationReport).join("")}</div>` : `<p class="muted">${esc(UI.translate("No evaluations for this task yet."))}</p>`}</section>`,
+    </section><section class="task-result-card evaluation-section"><div class="evaluation-section-head"><div><h2>${esc(UI.translate("Evaluation and evidence"))}</h2><p>${esc(UI.translate("Scores are separate from task completion."))}</p></div>${settings.editable?.evaluation_engine?.enabled ? `<button class="btn small" id="task-evaluate">${esc(UI.translate("Evaluate latest executions"))}</button>` : `<button class="btn small" id="task-enable-evaluation">${esc(UI.translate("Enable evaluation"))}</button>`}</div>${evaluations.length ? `<div class="evaluation-list">${evaluations.slice().reverse().map(evaluationReport).join("")}</div>` : `<p class="muted">${esc(UI.translate("No evaluations for this task yet."))}</p>`}</section>` : ""}`,
       technical: `<div class="task-technical"><section class="task-result-card"><h2>${esc(UI.translate("Execution history"))}</h2><div class="task-table-scroll"><table><thead><tr><th>Execution</th><th>Role</th><th>Status</th><th>Error</th></tr></thead><tbody>${(status.executions || []).map((e) => `<tr><td class="mono">${esc(e.id)}</td><td>${esc(e.role)}</td><td>${esc(UI.translate(e.status))}</td><td>${esc(e.error || "")}</td></tr>`).join("")}</tbody></table></div></section>
       <section class="task-result-card"><h2>${esc(UI.translate("Original reports"))}</h2>${reportRows.length ? reportRows.map((a) => `<details><summary>${esc(a.path.split("/").at(-1))} · ${esc(a.created)}</summary><pre class="mono">${esc(a.content)}</pre></details>`).join("") : `<p class="muted">${esc(UI.translate("No original reports yet."))}</p>`}</section>
       <section class="task-result-card"><h2>${esc(UI.translate("Context and handoff"))}</h2><details><summary>${esc(UI.translate("View current handoff"))}</summary><pre class="mono">${esc(JSON.stringify(handoff, null, 2))}</pre></details><details><summary>${esc(UI.translate("View task status and events"))}</summary><pre class="mono">${esc(JSON.stringify(status, null, 2))}</pre></details><button class="btn small" id="task-load-context">${esc(UI.translate("Load project context"))}</button><div id="task-context-output"></div></section>
@@ -1874,7 +1894,7 @@
       return `<option value="">${esc(UI.translate("CLI default"))}</option>` +
         list.map((e) => `<option value="${esc(e)}" ${current === e ? "selected" : ""}>${esc(e)}</option>`).join("");
     };
-    const ROLE_HELP = { SA: "Analysis", SD: "Design", RD: "Implementation", "SD/RD": "Design and implementation in one step (Classic workflow only)", REVIEW: "Code review (CR)", SR: "Specification review", AR: "Adversarial review", SEC: "Security review", QA: "Quality assurance", SW: "Specification writing" };
+    const ROLE_HELP = { SA: "Analysis", SD: "Design", RD: "Implementation", "SD/RD": "Design and implementation in one step (Classic workflow only)", REVIEW: "Code review (CR)", SR: "Specification review", AR: "Adversarial review", SEC: "Security review", QA: "Quality assurance", SW: "Specification writing", PA: "Understands the request and hands over the result", RS: "Looks things up and collects information", AN: "Compares options and weighs pros and cons", PL: "Turns findings into a plan with steps and costs", CS: "Gives expert advice and judges what is workable", WR: "Writes the article, proposal or report", ED: "Polishes wording and structure", VC: "Checks claims, sources and figures", RV: "Checks the result for problems and gaps" };
     activeRoleNames = overview.editable.role_names || {};
     activeRoleAvatars = overview.editable.role_avatars || {};
     const nameField = (role) => `<div class="field role-name-field"><label for="role-name-${esc(role.replace("/", "-"))}">${esc(UI.translate("Chat name"))}</label><input type="text" id="role-name-${esc(role.replace("/", "-"))}" class="role-name-input" maxlength="24" value="${esc(activeRoleNames[role] || "")}" placeholder="${esc(ROLE_ABBREVIATIONS[role] || role)}" data-no-i18n /></div>`;
@@ -1895,7 +1915,7 @@
     // hidden whenever no workflow in use needs it.
     const ROLE_LIST_ORDER = ["SA", "SW", "SD", "RD", "REVIEW", "SR", "AR", "SEC", "QA", "SD/RD"];
     const needsCombinedRole = () => catalog.workflows.some((flow) => (flow.id === catalog.selected || !flow.builtin) && flow.steps.some((step) => step.role === "SD/RD"));
-    const roleRows = pmRow + ROLE_LIST_ORDER.filter((role) => roles[role]).map((role) => {
+    const roleRow = (role) => {
       const cfg = roles[role] || {};
       const isChatgpt = cfg.provider === "chatgpt";
       return `<div class="role-config-row" data-role="${esc(role)}" ${role === "SD/RD" ? `data-legacy-role ${needsCombinedRole() ? "" : "hidden"}` : ""}>
@@ -1909,7 +1929,13 @@
           <div class="field"><label>${esc(UI.translate("Quota fallback"))}</label><select class="role-field" data-field="quota_fallback"><option value="" ${!cfg.quota_fallback ? "selected" : ""}>${esc(UI.translate("None"))}</option>${providers.map((p) => `<option value="${esc(p)}" ${cfg.quota_fallback === p ? "selected" : ""}>${esc(p)}</option>`).join("")}</select></div>
         </div>
       </div>`;
-    }).join("");
+    };
+    // Roles are grouped by who they are for; a group opens when the selected workflow, or one of
+    // your own, uses a role from it, so someone who only plans trips sees just their team.
+    const EVERYDAY_LIST = ["PA", "RS", "AN", "PL", "CS", "WR", "ED", "VC", "RV"];
+    const usedRoles = new Set(catalog.workflows.filter((flow) => flow.id === catalog.selected || !flow.builtin).flatMap((flow) => flow.steps.map((step) => step.role)));
+    const roleGroup = (title, list, always) => `<details class="role-group" ${always || list.some((role) => usedRoles.has(role)) ? "open" : ""}><summary>${esc(UI.translate(title))}</summary><div class="role-config-list">${list.filter((role) => roles[role]).map(roleRow).join("")}</div></details>`;
+    const roleRows = pmRow + roleGroup("Everyday team roles", EVERYDAY_LIST, false) + roleGroup("Software team roles", ROLE_LIST_ORDER, false);
     const selectedWorkflow = overview.editable.workflow || "classic";
     const reviewGate = overview.editable.review_gate || {};
     const gateSelect = (name, value, options) => `<select id="${name}">${options.map(([key, label]) => `<option value="${key}" ${value === key ? "selected" : ""}>${esc(UI.translate(label))}</option>`).join("")}</select>`;
@@ -2146,7 +2172,7 @@
       finally { button.disabled = false; }
     });
     const AGENT_ROLE_ORDER = ["SA", "SW", "SD", "RD", "SD/RD", "REVIEW", "SR", "AR", "SEC", "QA"];
-    const PRODUCER_ROLES = ["SA", "SW", "SD", "RD", "SD/RD"];
+    const PRODUCER_ROLES = ["SA", "SW", "SD", "RD", "SD/RD", "PA", "RS", "AN", "PL", "CS", "WR", "ED"];
     let editing = null;
     const refreshCatalog = async () => {
       catalog = await api(`/projects/${encodeURIComponent(id)}/workflows`);
@@ -2171,8 +2197,11 @@
       const panel = document.getElementById("workflow-panel");
       if (!panel) return;
       if (editing) {
-        const roleOptions = (index, current) => AGENT_ROLE_ORDER.filter((role) => index > 0 || PRODUCER_ROLES.includes(role))
-          .map((role) => `<option value="${esc(role)}" ${role === current ? "selected" : ""}>${esc(roleName(role))} (${esc(UI.translate(ROLE_HELP[role] || role))})</option>`).join("");
+        const roleOption = (current) => (role) => `<option value="${esc(role)}" ${role === current ? "selected" : ""}>${esc(roleName(role))} (${esc(UI.translate(ROLE_HELP[role] || role))})</option>`;
+        const roleOptions = (index, current) => {
+          const allowed = (role) => index > 0 || PRODUCER_ROLES.includes(role);
+          return `<optgroup label="${esc(UI.translate("Everyday team roles"))}">${EVERYDAY_ROLES.filter(allowed).map(roleOption(current)).join("")}</optgroup><optgroup label="${esc(UI.translate("Software team roles"))}">${AGENT_ROLE_ORDER.filter(allowed).map(roleOption(current)).join("")}</optgroup>`;
+        };
         panel.innerHTML = `<div class="wf-editor">
           <div class="field narrow-field"><label for="wf-name">${esc(UI.translate("Workflow name"))}</label><input type="text" id="wf-name" maxlength="40" value="${esc(editing.name)}" placeholder="${esc(UI.translate("Named automatically if left empty"))}" /></div>
           <ol class="wf-steps">${editing.steps.map((role, index) => `<li class="wf-step">
@@ -2222,7 +2251,12 @@
         });
         return;
       }
-      panel.innerHTML = `<div class="workflow-list">${catalog.workflows.map(workflowItem).join("")}</div>
+      const groups = [["general", "Everyday teams"], ["software", "Software workflows"], ["custom", "Your own workflows"]]
+        .map(([audience, title]) => ({ title, flows: catalog.workflows.filter((flow) => flow.audience === audience) }))
+        .filter((group) => group.flows.length);
+      // The group holding the selected workflow comes first.
+      groups.sort((a, b) => Number(b.flows.some((flow) => flow.id === catalog.selected)) - Number(a.flows.some((flow) => flow.id === catalog.selected)));
+      panel.innerHTML = `${groups.map((group) => `<h3 class="workflow-group-title">${esc(UI.translate(group.title))}</h3><div class="workflow-list">${group.flows.map(workflowItem).join("")}</div>`).join("")}
         <div class="wf-add-row"><button class="btn small primary" type="button" id="wf-new">${esc(UI.translate("New workflow"))}</button></div>
         <div class="field narrow-field wf-selection"><label for="wf-selection">${esc(UI.translate("Who chooses the workflow for a new task"))}</label>${gateSelect("wf-selection", catalog.selection, SELECTION_LABELS)}
           <div class="hint">${esc(UI.translate("With ChatGPT choosing, it sees every workflow and picks the best fit for each task. With ccc-mcp choosing, security work gets SEC, large refactors get SD and AR, and small edits get the shortest workflow."))}</div></div>`;

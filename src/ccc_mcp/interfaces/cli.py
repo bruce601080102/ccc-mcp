@@ -928,8 +928,8 @@ def config_role(
     role: Annotated[
         str, typer.Argument(
             help=t(
-                "SA、SD、RD、SD/RD、REVIEW(CR)、SR、AR、SEC、QA 或 SW",
-                "SA, SD, RD, SD/RD, REVIEW (CR), SR, AR, SEC, QA, or SW",
+                "SA、SD、RD、SD/RD、REVIEW(CR)、SR、AR、SEC、QA、SW，或 PA、RS、AN、PL、CS、WR、ED、VC、RV",
+                "SA, SD, RD, SD/RD, REVIEW (CR), SR, AR, SEC, QA, SW, or PA, RS, AN, PL, CS, WR, ED, VC, RV",
             )
         )
     ],
@@ -981,7 +981,7 @@ def config_role(
 def config_role_name(
     ctx: typer.Context,
     role: Annotated[
-        str, typer.Argument(help=t("PM、SA、SD、RD、SD/RD、REVIEW、SR、AR、SEC、QA 或 SW", "PM, SA, SD, RD, SD/RD, REVIEW, SR, AR, SEC, QA, or SW"))
+        str, typer.Argument(help=t("PM、SA、SD、RD、SD/RD、REVIEW、SR、AR、SEC、QA、SW，或 PA、RS、AN、PL、CS、WR、ED、VC、RV", "PM, SA, SD, RD, SD/RD, REVIEW, SR, AR, SEC, QA, SW, or PA, RS, AN, PL, CS, WR, ED, VC, RV"))
     ],
     name: Annotated[
         str | None,
@@ -995,16 +995,16 @@ def config_role_name(
     "role-avatar",
     help=t(
         "替角色（含 PM）選聊天室的像素頭像；不填頭像就恢復該角色的預設。"
-        "可選：boss、detective、designer、dev、angel、monk、devil、knight、tester、person、cat、robot、bear、frog、writer。"
+        "可選：boss、detective、designer、dev、angel、monk、devil、knight、tester、person、cat、robot、bear、frog、writer、assistant、researcher、analyst、planner、consultant、author、editor、checker、reviewer。"
         "例如：ccc-mcp config role-avatar QA cat",
         "Choose the pixel avatar a role (PM included) wears in the chat room; omit the avatar to "
         "restore the role's own. Choices: boss, detective, designer, dev, angel, monk, devil, knight, "
-        "tester, person, cat, robot, bear, frog, writer. Example: ccc-mcp config role-avatar QA cat",
+        "tester, person, cat, robot, bear, frog, writer, assistant, researcher, analyst, planner, consultant, author, editor, checker, reviewer. Example: ccc-mcp config role-avatar QA cat",
     ),
 )
 def config_role_avatar(
     ctx: typer.Context,
-    role: Annotated[str, typer.Argument(help=t("PM、SA、SD、RD、SD/RD、REVIEW、SR、AR、SEC、QA 或 SW", "PM, SA, SD, RD, SD/RD, REVIEW, SR, AR, SEC, QA, or SW"))],
+    role: Annotated[str, typer.Argument(help=t("PM、SA、SD、RD、SD/RD、REVIEW、SR、AR、SEC、QA、SW，或 PA、RS、AN、PL、CS、WR、ED、VC、RV", "PM, SA, SD, RD, SD/RD, REVIEW, SR, AR, SEC, QA, SW, or PA, RS, AN, PL, CS, WR, ED, VC, RV"))],
     avatar: Annotated[str | None, typer.Argument(help=t("頭像名稱；留空恢復預設", "Avatar name; omit to reset"))] = None,
 ):
     output(bridge(ctx).configure_role_avatar(project_id(ctx), role, avatar))

@@ -20,7 +20,14 @@ from ..infra.security import canonical, digest, reject_secrets
 from .approval import local_identity
 from .context import identifier
 from .flows import GATE_ROLES
-from .roles import AGENT_ROLES, READ_ONLY_ROLES, REPORT_FILES, RUNNING_STATE, writes_files
+from .roles import (
+    AGENT_ROLES,
+    DOCUMENT_FILES,
+    READ_ONLY_ROLES,
+    REPORT_FILES,
+    RUNNING_STATE,
+    writes_files,
+)
 from .models import (
     AgentReport,
     ClarificationRequest,
@@ -3560,9 +3567,9 @@ class TaskHub:
                     self.record_agent_context_result(
                         conn, row, report, report_path, digest(report_content.encode())
                     )
-                    if row["role"] == "SW" and (report.get("document") or "").strip():
+                    if row["role"] in DOCUMENT_FILES and (report.get("document") or "").strip():
                         self.save_artifact(
-                            conn, project_id, task_id, "SPEC.md", execution_id,
+                            conn, project_id, task_id, DOCUMENT_FILES[row["role"]], execution_id,
                             attribution(language, row["agent"], row["role"])
                             + report["document"].strip() + "\n",
                         )

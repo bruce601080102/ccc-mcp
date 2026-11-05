@@ -58,6 +58,23 @@ The roles: PM (the ChatGPT conversation that starts and accepts the work), SA sy
 
 Each gate verdict is stored (`flow_gate_results`) and a gate's failed rounds are counted from those rows, so the limit survives a crash or a resumed dispatch. Gate steps that end in `PASS` advance automatically; SA still needs the PM's plan, as before.
 
+### Everyday roles and team templates
+
+For work that is not software there are nine more roles, shown by what they do instead of an abbreviation: `PA` personal assistant, `RS` researcher, `AN` analyst, `PL` planner, `CS` consultant, `WR` writer, `ED` editor, `VC` fact checker and `RV` reviewer (the strict reviewer is the existing `AR`). PA, RS, AN, PL, CS, WR and ED **produce**: each hands over a document (saved as `PA-DOCUMENT.md`, `RS-DOCUMENT.md`, ...) that every later step reads. VC and RV are **gates** that send work back to the nearest earlier producer, like the software reviewers. None of them ever changes files, and their answers are written in plain language in the language of the request.
+
+Four team templates are built in, listed under "Everyday teams" in Settings → Workflow:
+
+| Template | Steps | For |
+|---|---|---|
+| `life` | PA → RS → AN → PL → VC | trips, shopping comparisons, everyday decisions |
+| `business` | PA → RS → AN → CS → WR → RV | proposals, market research, business analysis |
+| `content` | PA → RS → WR → ED → VC | articles, posts, reports, stories |
+| `decision` | PA → RS → AN → CS → AR | big choices, option comparison, risk checks |
+
+Pick one with `config workflow life`, or let `config workflow-selection auto` choose from the request (trip, budget, proposal, article, "should I..." and similar words; anything that mentions code stays on a software workflow). You can mix any roles in your own workflow, and the first step may be any producer, so `PA → WR → ED` is a valid "letter" workflow. The task page shows an everyday task's documents on its Results tab, newest first, and hides the diff and test cards, which only apply when a step changes code.
+
+**Providers.** The everyday roles default to ChatGPT, not Codex or Claude Code: the CLI agents here can only read the project folder, so a researcher or fact checker running on them cannot look anything up. With ChatGPT each step is done by the ChatGPT conversation itself, which can browse, and the PM advances the workflow after each step. A role can still be pointed at Codex or Claude Code in Settings → Roles when its job needs no outside information (for example WR or ED working from the researcher's notes).
+
 ### The specification writer (SW)
 
 SW turns what the discussion concluded (the requirement, SA's analysis, SD's design, and what the reviewers raised and how it was settled) into one specification written for an AI to implement from: purpose and non-goals, a glossary, decisions with their reasons and the alternatives rejected, numbered testable requirements (`REQ-001`, MUST/SHOULD/MAY), exact interfaces and data shapes, Given/When/Then acceptance criteria, and open questions listed rather than guessed. The document is saved as `SPEC.md` (the report itself as `SW-REPORT.md`) and handed to SD, RD and every reviewer that runs after it; the console shows it on the task's Results tab. SW only reads the repository; it never changes files. It is a producer, so a gate after it sends work back to it. No built-in workflow includes SW yet: add it in Settings → Workflow, for example `SA → AR → SR → SW → RD → CR`, so the spec is written after the discussion has settled.
