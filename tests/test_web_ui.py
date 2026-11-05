@@ -1117,3 +1117,60 @@ def test_named_connection_can_start_with_its_saved_key(tmp_path, client, monkeyp
     again = client.post("/api/connect/start", json={"profile_id": saved["id"]})
     assert again.status_code == 400
     assert seen == [(TUNNEL, "sk-work")]
+
+
+def test_workflow_and_review_gate_can_be_set_from_the_console(tmp_path, client):
+    repo = mkrepo(tmp_path, "flows")
+    assert client.post("/api/projects/add", json={"path": str(repo), "id": "flows"}).status_code == 200
+
+    catalog = client.get("/api/projects/flows/workflows").json()
+    assert catalog["selected"] == "standard"  # a project added through the console
+    assert [flow["id"] for flow in catalog["workflows"]] == ["classic", "standard", "full"]
+
+    assert client.post("/api/projects/flows/config/workflow", json={"workflow": "full"}).status_code == 200
+    assert client.post("/api/projects/flows/config/workflow", json={"workflow": "x"}).status_code == 400
+    gate = {"ar_strictness": "extreme", "max_rounds": 4, "escalation": "auto_pm"}
+    assert client.post("/api/projects/flows/config/review-gate", json=gate).status_code == 200
+    assert client.post(
+        "/api/projects/flows/config/review-gate", json={"max_rounds": 6}
+    ).status_code == 400
+
+    editable = client.get("/api/projects/flows/settings").json()["editable"]
+    assert editable["workflow"] == "full"
+    assert editable["review_gate"] == gate
+
+
+def test_gate_decision_needs_a_pending_gate(tmp_path, client):
+    repo = mkrepo(tmp_path, "gates")
+    assert client.post("/api/projects/add", json={"path": str(repo), "id": "gates"}).status_code == 200
+    client.app.state.bridge.create_task("gates", "Something")
+    response = client.post(
+        "/api/projects/gates/tasks/TASK-0001/gate-decision", json={"decision": "proceed"}
+    )
+    assert response.status_code == 400
+    assert "No gate decision is pending" in response.text
+
+
+def test_custom_workflows_can_be_managed_from_the_console(tmp_path, client):
+    repo = mkrepo(tmp_path, "mine")
+    assert client.post("/api/projects/add", json={"path": str(repo), "id": "mine"}).status_code == 200
+
+    saved = client.post("/api/projects/mine/workflows", json={"steps": ["SD", "AR", "RD"]})
+    assert saved.status_code == 200
+    assert saved.json()["id"] == "flow-2"
+    renamed = client.post(
+        "/api/projects/mine/workflows",
+        json={"id": "flow-2", "steps": ["SD", "RD"], "name": "Short"},
+    )
+    assert renamed.json()["name"] == "Short"
+    assert client.post("/api/projects/mine/workflows", json={"steps": ["QA"]}).status_code == 400
+
+    assert client.post(
+        "/api/projects/mine/config/workflow-selection", json={"selection": "pm"}
+    ).status_code == 200
+    catalog = client.get("/api/projects/mine/workflows").json()
+    assert (catalog["selection"], [f["id"] for f in catalog["workflows"]]) == (
+        "pm", ["classic", "standard", "full", "flow-2"]
+    )
+    assert client.post("/api/projects/mine/workflows/flow-2/delete", json={}).json()["deleted"] == "flow-2"
+    assert client.post("/api/projects/mine/workflows/full/delete", json={}).status_code == 400

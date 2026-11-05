@@ -32,9 +32,14 @@ ccc-mcp --project 專案ID config role ROLE PROVIDER [--model 模型ID] [--effor
 | `SD` | 系統設計 | 專案已授權時自動承接計畫 |
 | `RD` | 程式實作 | 專案已授權時自動承接計畫 |
 | `SD/RD` | 同一次工作一起設計與實作，本範例使用此角色 | 專案已授權時自動承接計畫 |
-| `REVIEW` | 審查成果與問題 | 唯讀 |
+| `REVIEW` | 程式碼審查（聊天室顯示為 CR），審查成果與問題 | 唯讀 |
+| `SR` | 規格審查：需求矛盾、遺漏與可實作性 | 唯讀；用於 `full` 與自訂工作流 |
+| `AR` | 對抗式審查：挑戰假設、找漏洞、要求證據 | 唯讀；用於 `full` 與自訂工作流 |
+| `SEC` | 資安審查：漏洞、權限與安全風險 | 唯讀；用於 `full` 與自訂工作流 |
+| `QA` | 功能與整合測試、驗收 | 唯讀；用於 `full` 與自訂工作流 |
+| `SW` | 規格寫手：把討論結論整理成讓 AI 能照著實作的規格書（`SPEC.md`） | 唯讀；只能用在自訂工作流 |
 
-五種角色**各自獨立設定**；設定 `SD/RD` 不會同時修改 `SD`、`RD`。每種角色都可選 `codex`、`claude` 或 `chatgpt`，也可全部選同一種。
+十種角色**各自獨立設定**；設定 `SD/RD` 不會同時修改 `SD`、`RD`。每種角色都可選 `codex`、`claude` 或 `chatgpt`，也可全部選同一種。
 
 | 參數 | 意思與可填內容 |
 |---|---|
@@ -75,6 +80,13 @@ ccc-mcp --project demo-app config role SD/RD chatgpt
 ccc-mcp --project demo-app config role REVIEW chatgpt
 ```
 
+替角色（含 `PM`）取聊天室顯示名稱；不填名稱就恢復預設（角色縮寫）。名稱最多 24 字，只影響顯示，不影響流程：
+
+```text
+ccc-mcp --project demo-app config role-name SA 小分析
+ccc-mcp --project demo-app config role-name SA
+```
+
 `ccc-mcp --project demo-app config show` 會回報目前的 `profile`（`chatgpt-only`／`best-model`／`custom`）；要切回最佳模型工作流，執行 `ccc-mcp --project demo-app config profile best-model`——這個 `best-model` 會依本機實際裝了哪些 CLI 動態決定（兩個都裝＝原本的 Codex/Claude 分工；只裝一個＝全部角色用那一個；一個都沒裝會直接拒絕），不是固定寫死的組合。
 
 `config meeting-mode on|off [--min-rounds N] [--max-rounds N] [--escalation ask-user|auto-pm]` 開關[第 4 步](4-workflow.md#5a-meeting-modesdrd-動工前先問一輪預設關閉)描述的 SD/RD↔SA 澄清對話，預設關閉，`max_rounds` 硬上限 5，`--escalation` 預設為 `ask-user`。解決升級給 PM 的澄清沒有對應 CLI 指令（`resolve_clarification` 是給 PM／ChatGPT 呼叫的 MCP 工具）——跟 `advance_project`／`propose_context_patch`／`commit_context_patch` 一樣都沒有 CLI 版本。
@@ -89,6 +101,8 @@ ccc-mcp --project demo-app task reevaluate TASK_ID EXECUTION_ID [--task-type 標
 ccc-mcp reputation [--agent PROVIDER] [--role ROLE] [--task-type 標籤]
 ccc-mcp validate-scoring CASES.jsonl [--labels REPORT.json] [--rows]
 ```
+
+`config workflow ID`（`classic`、`standard`、`full` 或自訂的）選擇新任務使用的工作流；`config workflows` 列出可用的工作流，`config workflow-save --steps SA,SD,RD,REVIEW [--name 名稱] [--id flow-2]` 建立或修改自己的，`config workflow-delete ID` 刪除，`config workflow-selection fixed|pm|auto` 決定誰來挑新任務的工作流（見[自訂工作流](4-workflow.md#自訂工作流以及誰來挑)）。`config review-gate [--ar normal|strict|extreme] [--max-rounds 1-5] [--escalation ask-user|auto-pm]` 設定審查關卡的力道，說明見[步驟 4](4-workflow.md#工作流與審查關卡)。省略的 `review-gate` 選項維持原值。關卡決定要用 MCP 工具 `resolve_flow_gate` 或任務頁面，CLI 沒有對應指令。
 
 `config evaluation-engine` 預設關閉；開啟後 `task evaluate` 會對這個任務每個角色最新一次成功執行做一次證據導向評分（純規則運算，不呼叫 LLM），已評過的執行預設會跳過，加 `--force` 才會強制重新評估（保留舊版本，不覆蓋）。`task evaluations` 是唯讀列表，含每次重新評估保留的舊版本。`task reevaluate` 強制重新評估一個指定的 `EXECUTION_ID`（用 `task evaluations` 查）。`reputation` 唯讀、跨所有專案，依 agent／模型／角色／任務類型統計 Beta-Bernoulli 可靠度，只計入已驗證的 `PASSED`／`FAILED`；樣本數太少時 `low_sample` 會是 `true`，`REVIEW` 角色另外附上 `review_precision`（`review_recall` 永遠是 `null`，因為沒有完整缺陷真值集合可以老實算出 Recall）。`quality_score`／`evidence_coverage` 的確切公式見[技術參考](10-technical-reference.md#評估引擎)。`validate-scoring` 不需要專案：讀入已記錄的案例，與 SWE-bench 風格的 resolved／unresolved 標準答案比對（AUROC、各及格線準確率、誤判通過清單），說明見[技術參考](10-technical-reference.md#用標準答案檢驗評分)。
 

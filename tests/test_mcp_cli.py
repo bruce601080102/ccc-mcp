@@ -341,7 +341,7 @@ async def test_chatgpt_discover_then_list_and_write_without_initialize(bridge, h
                 },
             },
         )
-        assert not started["isError"]
+        assert not started["isError"], started
         assert started["structuredContent"]["sa_execution"]["status"] == "AWAITING_CHATGPT"
         assert started["structuredContent"]["task_id"] == "TASK-0001"
         assert started["structuredContent"]["requested_task_id_ignored"] == "TASK-legacy-client"

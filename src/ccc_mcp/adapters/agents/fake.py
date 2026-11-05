@@ -12,6 +12,10 @@ CLARIFICATION_REQUEST_SCENARIOS = {"ask_question", "no_blocking_question"}
 CLARIFICATION_RESPONSE_SCENARIOS = {"confirmed", "recommendation", "pm_decision_required"}
 
 
+GATE_FINDINGS_ROLES = {"REVIEW", "SR", "AR", "SEC", "QA"}
+SPEC_DOCUMENT = "# Specification\n\n## Requirements\n- REQ-001 The system MUST do the thing.\n"
+
+
 class FakeAgentAdapter(BaseAgentAdapter):
     """Deterministic simulation; no credentials, subprocess model or code mutation."""
 
@@ -56,12 +60,21 @@ class FakeAgentAdapter(BaseAgentAdapter):
                 response_type=self.scenario,
                 content=self.clarification_text or f"Simulated SA {self.scenario} answer.",
             ).model_dump()
-        revision = self.scenario == "revision"
+        revision = self.scenario in {"revision", "reject", "unsupported_claim"}
+        findings = ["Fake adapter validated the handoff; no actual code analysis performed."]
+        if package["role"] in GATE_FINDINGS_ROLES:
+            # Written the way a real reviewer is told to, so the gate rules can be exercised.
+            findings = {
+                "revision": ["[major] Scripted blocking problem | evidence: fake adapter scenario 'revision'"],
+                "reject": ["[blocker] Scripted fundamental flaw | evidence: fake adapter scenario 'reject'"],
+                "unsupported_claim": ["[major] Scripted claim with no support"],
+            }.get(self.scenario, findings)
         return AgentReport(
             summary=f"Simulated {package['role']} for {package['task_id']}",
-            findings=["Fake adapter validated the handoff; no actual code analysis performed."],
+            findings=findings,
             risks=["Simulation only; real code and tests require verification."],
             next_action="修正 Review 問題後重新檢查。" if revision else "PM 閱讀結果並決定下一步。",
             needs_revision=revision,
             simulated=True,
+            document=SPEC_DOCUMENT if package["role"] == "SW" else "",
         ).model_dump()

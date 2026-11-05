@@ -114,6 +114,9 @@ class AgentReport(StrictModel):
     needs_revision: bool = False
     simulated: bool = False
     context_updates: list[str] = Field(default_factory=list)
+    # The Specification Writer's deliverable: a full Markdown document, saved as SPEC.md.
+    # Every other role leaves it empty.
+    document: str = ""
 
 
 class ClarificationRequest(StrictModel):

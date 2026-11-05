@@ -72,6 +72,11 @@
       },
       "title": "Context Updates",
       "type": "array"
+    },
+    "document": {
+      "default": "",
+      "title": "Document",
+      "type": "string"
     }
   },
   "required": [
@@ -82,7 +87,8 @@
     "tests",
     "needs_revision",
     "simulated",
-    "context_updates"
+    "context_updates",
+    "document"
   ],
   "title": "AgentReport",
   "type": "object"

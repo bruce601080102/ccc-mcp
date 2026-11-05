@@ -172,6 +172,14 @@ def create_server(
         "case, confirming it is a genuine stop). \"auto_pm\" is the opposite: decide immediately using "
         "your own judgement as PM, call resolve_clarification in this same turn "
         "(must_continue_in_this_turn is true), and then tell the user what you decided and why. "
+        "Workflows: a project can run several workflows (ordered role steps). When list_workflows "
+        "reports workflow_selection \"pm\", choose the best fit for each new task and pass its id as "
+        "`workflow` to start_project_request, then tell the user which one and why; with \"fixed\" or "
+        "\"auto\" ccc-mcp chooses and a `workflow` argument is ignored. "
+        "If waiting_on is PM_FLOW_DECISION, a workflow review gate ran out of rounds or rejected "
+        "the approach: read brief.workflow.pending_decision. escalation \"ask_user\" is a genuine stop "
+        "(put the findings to the real user, wait for their reply, then call resolve_flow_gate with "
+        "proceed, retry or stop); \"auto_pm\" means decide immediately yourself and tell the user why. "
         "When project_access.mode=read-write, that durable project authorization also authorizes plans "
         "and successful reviewed rounds; never ask for per-plan approve or task accept. "
         "Do not report completion unless the implementation execution succeeded and context_sync has no pending reports. "
@@ -394,8 +402,12 @@ def create_server(
             requirement: str,
             acceptance: list[str] | None = None,
             wait_seconds: int = 50,
+            workflow: str | None = None,
         ) -> dict[str, Any]:
-            """Begin a NEW authorized project change, dispatch SA, and wait for progress.
+            """Begin a NEW authorized project change, dispatch the workflow's first step, and
+            wait for progress. `workflow` names which workflow to run; it is honoured only when
+            the project's workflow_selection is "pm" (call list_workflows first) and ignored
+            otherwise, when the project fixes or auto-picks the workflow.
             Never use this to continue, retry, recover, or inspect an existing task;
             doing so starts a new round and invalidates its prior plan approval. The
             caller must continue in this turn whenever workflow says so.
@@ -403,7 +415,10 @@ def create_server(
             it immediately (usually wait_for_task again). If it has a non-null
             meeting_mode_notice, your reply to the user MUST begin with
             meeting_mode_notice.text verbatim as its first line."""
-            result = await call(bridge.start_project_request, project_id, requirement, acceptance)
+            result = await call(
+                bridge.start_project_request, project_id, requirement, acceptance,
+                "real", "success", workflow,
+            )
             task_id = result["workstream"]["id"]
             result["workflow"] = await call(
                 bridge.wait_for_task, project_id, task_id, wait_seconds
@@ -419,14 +434,18 @@ def create_server(
             acceptance: list[str] | None = None,
             task_id: str | None = None,
             wait_seconds: int = 50,
+            workflow: str | None = None,
         ) -> dict[str, Any]:
-            """Compatibility alias: start the project request, dispatch SA, and wait.
+            """Compatibility alias: start the project request, dispatch the first step, and wait.
             Do not call dispatch_agent again; continue according to workflow.
             If the result has a non-null action_required, do NOT end your turn: perform
             it immediately (usually wait_for_task again). If it has a non-null
             meeting_mode_notice, your reply to the user MUST begin with
             meeting_mode_notice.text verbatim as its first line."""
-            result = await call(bridge.start_project_request, project_id, requirement, acceptance)
+            result = await call(
+                bridge.start_project_request, project_id, requirement, acceptance,
+                "real", "success", workflow,
+            )
             result["id"] = result["workstream"]["id"]
             result["task_id"] = result["workstream"]["id"]
             if task_id is not None:
@@ -666,6 +685,30 @@ def create_server(
             clarification round or the real implementation automatically; never call
             dispatch_agent or advance_project for this instead."""
             return await call(bridge.resolve_clarification, project_id, task_id, decision)
+
+        @server.tool(annotations=readonly)
+        async def list_workflows(project_id: str) -> dict[str, Any]:
+            """The workflows this project can run: each one's id, name and ordered steps, which is
+            selected, and workflow_selection (who picks a new task's workflow). When selection is
+            "pm", choose the one that fits the task (a security-sensitive change wants SEC, a
+            large or risky one wants SD and AR, a small one the shortest) and pass its id as
+            `workflow` to start_project_request; tell the user which you chose and why. When it is
+            "fixed" or "auto", do not choose: ccc-mcp does."""
+            return await call(bridge.workflow_catalog, project_id)
+
+        @server.tool(annotations=mutation)
+        async def resolve_flow_gate(
+            project_id: str, task_id: str, decision: str, note: str = ""
+        ) -> dict[str, Any]:
+            """PM decides a workflow review gate that ran out of rounds or rejected the approach
+            (get_task_status.brief.waiting_on == PM_FLOW_DECISION; brief.workflow.pending_decision
+            has the gate, the reason and the findings). decision is "proceed" (accept the work and
+            continue to the next step), "retry" (send it back once more) or "stop" (cancel the
+            task). Check brief.workflow.pending_decision.escalation first: "ask_user" means the
+            real human user must decide — put the findings to them in chat and wait for their
+            actual reply before calling this; "auto_pm" means you may decide immediately, then tell
+            the user what you chose and why. The next step dispatches automatically."""
+            return await call(bridge.resolve_flow_gate, project_id, task_id, decision, note)
 
     return server
 

@@ -19,6 +19,8 @@ from ..infra.errors import BridgeError, PermissionDenied, VersionConflict
 from ..infra.security import canonical, digest, reject_secrets
 from .approval import local_identity
 from .context import identifier
+from .flows import GATE_ROLES
+from .roles import AGENT_ROLES, READ_ONLY_ROLES, REPORT_FILES, RUNNING_STATE, writes_files
 from .models import (
     AgentReport,
     ClarificationRequest,
@@ -45,6 +47,8 @@ _LIVE_TASK = (
     "NOT EXISTS (SELECT 1 FROM task_deletions d "
     "WHERE d.project_id=tasks.project_id AND d.task_id=tasks.id)"
 )
+
+_READ_ONLY_SQL = ",".join(f"'{role}'" for role in sorted(READ_ONLY_ROLES))
 
 STATES = {
     "CREATED",
@@ -75,7 +79,7 @@ TRANSITIONS = {
         "IMPLEMENTING",
     },
     "AWAITING_USER_APPROVAL": {"APPROVED", "REJECTED", "AWAITING_PM_DECISION"},
-    "APPROVED": {"IMPLEMENTING", "ANALYZING", "AWAITING_PM_DECISION"},
+    "APPROVED": {"IMPLEMENTING", "ANALYZING", "AWAITING_PM_DECISION", "REVIEWING"},
     "IMPLEMENTING": {
         "AWAITING_PM_REVIEW",
         "REVIEWING",
@@ -96,7 +100,10 @@ TRANSITIONS = {
         "COMPLETED",
         "AWAITING_PM_DECISION",
     },
-    "NEEDS_REVISION": {"IMPLEMENTING", "ANALYZING", "AWAITING_PM_DECISION", "REVIEWING"},
+    # AWAITING_PM_REVIEW: a workflow gate's blocking claim was discarded as unsupported.
+    "NEEDS_REVISION": {
+        "IMPLEMENTING", "ANALYZING", "AWAITING_PM_DECISION", "REVIEWING", "AWAITING_PM_REVIEW",
+    },
     "FAILED": {"ANALYZING", "IMPLEMENTING", "REVIEWING", "AWAITING_PM_DECISION"},
     "BLOCKED": {"ANALYZING", "IMPLEMENTING", "REVIEWING", "AWAITING_PM_DECISION"},
     "CANCELLED": set(),
@@ -109,7 +116,9 @@ TRANSITIONS = {
 # "agent_report" is every normal SA/SD/RD/REVIEW dispatch; the other two are Meeting
 # Mode's read-only clarification-ask (SD/RD) and clarification-answer (SA).
 REPORT_SCHEMAS = {
-    "agent_report": {"success", "revision", "error"},
+    # reject / unsupported_claim script an adversarial reviewer: a fundamental flaw, and a
+    # blocking claim that cites no evidence.
+    "agent_report": {"success", "revision", "error", "reject", "unsupported_claim"},
     "clarification_request": {"ask_question", "no_blocking_question", "error"},
     "clarification_response": {"confirmed", "recommendation", "pm_decision_required", "error"},
 }
@@ -138,7 +147,7 @@ _TERMINAL_WAITING_ON = {"COMPLETED", "CANCELLED", "REJECTED"}
 
 def waiting_on(
     state, execution_status, orphaned, needs_pm_refinement, pending_dispatch=False,
-    chatgpt_handoff=False, pending_clarification=False,
+    chatgpt_handoff=False, pending_clarification=False, pending_flow_decision=False,
 ):
     """Collapse task.state + execution status + context_sync into one readable value.
 
@@ -157,6 +166,10 @@ def waiting_on(
         # Meeting Mode: SA punted (pm_decision_required) and no agent dispatch is
         # running; only resolve_clarification can move this task forward.
         return "PM_CLARIFICATION_DECISION"
+    if pending_flow_decision:
+        # A workflow gate ran out of rounds or rejected the approach; only
+        # resolve_flow_gate can move this task forward.
+        return "PM_FLOW_DECISION"
     if chatgpt_handoff:
         # The *current* interactive ChatGPT PM conversation must act as the role
         # (write_task_file/submit_agent_report) — distinct from an autonomous CLI
@@ -738,7 +751,7 @@ class TaskHub:
         )
         event(conn, project_id, task_id, old, new_state, reason)
 
-    def create_task(self, project_id, requirement, acceptance=None, task_id=None):
+    def create_task(self, project_id, requirement, acceptance=None, task_id=None, workflow=None):
         reject_secrets([requirement, acceptance])
         if not requirement.strip():
             raise BridgeError("Requirement is required")
@@ -759,6 +772,7 @@ class TaskHub:
             task_id = identifier(
                 task_id or (existing[-1]["id"] if reuse else self._next_task_id(project_id))
             )
+            choice = self._resolve_task_workflow(project_id, requirement, workflow)
             language = self.get_project_settings(project_id)["language"]
             acceptance = acceptance or []
             requirement_content = (
@@ -795,6 +809,7 @@ class TaskHub:
                         "CREATED",
                         "PM started a new project work round",
                     )
+                    self._pin_task_flow(conn, project_id, task_id, choice)
                 else:
                     if conn.execute(
                         "SELECT 1 FROM tasks WHERE project_id=? AND id=?", (project_id, task_id)
@@ -805,6 +820,8 @@ class TaskHub:
                         (task_id, project_id, requirement, canonical(acceptance), "CREATED", now()),
                     )
                     event(conn, project_id, task_id, None, "CREATED", "PM created requirement")
+                if continuous:
+                    self._pin_task_flow(conn, project_id, task_id, choice)
                 immutable = (
                     f"{metadata_name(self.project(project_id)['root'])}/tasks/{task_id}/"
                     f"requirements/REQ-{uuid.uuid4().hex[:16]}.md"
@@ -832,14 +849,25 @@ class TaskHub:
         result["reused"] = reuse
         return result
 
-    def start_project_request(self, project_id, requirement, acceptance=None):
+    def start_project_request(
+        self, project_id, requirement, acceptance=None, adapter="real", fake_scenario="success",
+        workflow=None,
+    ):
         """One user-facing entry point: create/reuse the workstream and dispatch SA."""
         if self.get_project_access(project_id)["mode"] != "read-write":
             raise PermissionDenied(
                 f"Project is read-only. Run ccc-mcp project authorize {project_id} locally once."
             )
-        task = self.create_task(project_id, requirement, acceptance)
+        task = self.create_task(project_id, requirement, acceptance, workflow=workflow)
         self._require_task_runnable(project_id, task["id"])
+        if self._task_flow(project_id, task["id"]):
+            first = self._flow_start(project_id, task, adapter, fake_scenario)
+            return {
+                "workstream": task,
+                "workflow_id": self._task_flow(project_id, task["id"])["id"],
+                "sa_execution": first,
+                "first_execution": first,
+            }
         dispatch = self.dispatch_agent(
             project_id,
             task["id"],
@@ -847,8 +875,10 @@ class TaskHub:
             "SA",
             self.latest(project_id)["version"],
             requirement,
+            adapter=adapter,
+            fake_scenario=fake_scenario,
         )
-        return {"workstream": task, "sa_execution": dispatch}
+        return {"workstream": task, "workflow_id": "classic", "sa_execution": dispatch}
 
     def _pending_dispatch_row(self, project_id, task_id):
         return self.store.one(
@@ -864,7 +894,8 @@ class TaskHub:
 
     def _dispatch_or_adopt(
         self, project_id, task_id, role, instruction, adapter, fake_scenario,
-        report_schema="agent_report", clarification_text=None,
+        report_schema="agent_report", clarification_text=None, flow_step=None, read_only=False,
+        fake_script=None,
     ):
         """Dispatch `role`, unless a resume attempt already dispatched it and only
         crashed before the pointer could be cleared — then adopt that live execution
@@ -887,6 +918,9 @@ class TaskHub:
             fake_scenario=fake_scenario,
             report_schema=report_schema,
             clarification_text=clarification_text,
+            flow_step=flow_step,
+            read_only=read_only,
+            fake_script=fake_script,
         )
 
     def _meeting_gate_due(self, project_id, task_id):
@@ -1002,6 +1036,8 @@ class TaskHub:
         self._require_task_runnable(project_id, task_id)
         adapter, fake_scenario = pointer["adapter"], pointer["fake_scenario"]
         result = {}
+        if self._task_flow(project_id, task_id) and not pointer.get("meeting_round_action"):
+            return self._flow_advance(project_id, pointer)
         if pointer.get("meeting_round_action"):
             # Resuming a PM clarification decision (or a retried first-attempt gate):
             # re-derive the correct next dispatch from current durable state rather
@@ -1107,7 +1143,7 @@ class TaskHub:
         role = execution["role"]
         if role == "SA" and not (plan_content or "").strip():
             raise BridgeError("An SA result requires a reviewed implementation plan")
-        if role not in {"SA", "SD", "RD", "SD/RD", "REVIEW"}:
+        if role not in AGENT_ROLES:
             raise BridgeError("Unsupported project advancement role")
         if role != "SA" and plan_content is not None:
             raise BridgeError("A plan is only accepted after SA")
@@ -1156,22 +1192,28 @@ class TaskHub:
             return {"advanced": False, "reason": str(exc)}
         if row["adapter"] != "real" and not allow_fake:
             return {"advanced": False, "reason": "Only real Agent executions auto-advance"}
-        if row["role"] not in {"SD", "RD", "SD/RD", "REVIEW"}:
+        # A step-workflow gate may legitimately say "revise": the engine decides what
+        # happens next, so that outcome is not a reason to stop for the PM.
+        in_flow = bool(self._task_flow(row["project_id"], row["task_id"]))
+        engine_gate = in_flow and row["role"] in GATE_ROLES
+        if row["role"] not in {"SD", "RD", "SD/RD", "REVIEW"} and not (in_flow and row["role"] != "SA"):
             return {"advanced": False, "reason": "SA and non-delivery roles require PM review"}
         if self.get_project_access(row["project_id"])["mode"] != "read-write":
             return {"advanced": False, "reason": "Project is not authorized for writes"}
         if self.task(row["project_id"], row["task_id"])["state"] in {
             "BLOCKED", "FAILED", "NEEDS_REVISION",
-        }:
+        } and not (
+            engine_gate and self.task(row["project_id"], row["task_id"])["state"] == "NEEDS_REVISION"
+        ):
             return {"advanced": False, "reason": "Execution outcome requires PM attention"}
 
         saved = (decode(row, "result").get("result") or {})
         report = saved.get("report") or {}
         if report.get("simulated") and not allow_fake:
             return {"advanced": False, "reason": "Simulated Agent result requires PM review"}
-        if report.get("needs_revision"):
+        if report.get("needs_revision") and not engine_gate:
             return {"advanced": False, "reason": "Agent requested revision or a decision"}
-        if row["role"] == "REVIEW" and (
+        if row["role"] == "REVIEW" and not in_flow and (
             self._host_test_failed(row["project_id"], row["task_id"])
             or self._host_tests_unverified(row["project_id"], row["task_id"])
         ):
@@ -1208,7 +1250,7 @@ class TaskHub:
             row["project_id"],
             patch,
             adapter=row["adapter"],
-            fake_scenario=options.get("scenario", "success"),
+            fake_scenario=options.get("fake_script") or options.get("scenario", "success"),
             automatic=True,
         )
         return {"advanced": True, **result}
@@ -1642,6 +1684,9 @@ class TaskHub:
         fallback_from=None,
         report_schema="agent_report",
         clarification_text=None,
+        flow_step=None,
+        read_only=False,
+        fake_script=None,
     ):
         settings = self.resolve_agent_settings(project_id, role, agent, model, effort)
         agent = settings["provider"]
@@ -1704,13 +1749,13 @@ class TaskHub:
             # Meeting Mode's clarification-ask keeps role="SD/RD" but must never be
             # treated as write-capable; only a normal report_schema="agent_report"
             # dispatch gets a worktree, pinning, and exclusivity enforcement.
-            if role not in {"SA", "REVIEW"} and report_schema == "agent_report":
+            if writes_files(role, {"read_only": read_only}, report_schema):
                 self.approved_plan(project_id, task_id)
                 if workspace_mode == "project":
                     self.prepare_project_workspace(project_id, task_id)
                 prior = self.store.one(
                     "SELECT options FROM agent_executions WHERE project_id=? AND task_id=? "
-                    "AND worktree IS NOT NULL AND role NOT IN ('SA','REVIEW') ORDER BY created DESC LIMIT 1",
+                    f"AND worktree IS NOT NULL AND role NOT IN ({_READ_ONLY_SQL}) ORDER BY created DESC LIMIT 1",
                     (project_id, task_id),
                 )
                 if (
@@ -1720,7 +1765,7 @@ class TaskHub:
                 ):
                     raise BridgeError("Existing task workspace mode is pinned; create a new task")
                 live = self.store.all(
-                    "SELECT options FROM agent_executions WHERE project_id=? AND role NOT IN ('SA','REVIEW') "
+                    f"SELECT options FROM agent_executions WHERE project_id=? AND role NOT IN ({_READ_ONLY_SQL}) "
                     "AND status IN ('QUEUED','RUNNING')",
                     (project_id,),
                 )
@@ -1744,6 +1789,7 @@ class TaskHub:
                     f"{package['budget_omitted']}"
                 )
             package["target_agent"] = agent
+            package["read_only"] = bool(read_only)
             package["agent_settings"] = settings
             package["workspace_mode"] = workspace_mode
             package["report_schema"] = report_schema
@@ -1756,7 +1802,7 @@ class TaskHub:
             state = (
                 "AWAITING_SA_CLARIFICATION"
                 if report_schema == "clarification_response"
-                else {"SA": "ANALYZING", "REVIEW": "REVIEWING"}.get(role, "IMPLEMENTING")
+                else RUNNING_STATE.get(role, "IMPLEMENTING")
             )
             with self.store.transaction() as conn:
                 self._require_task_runnable(project_id, task_id, conn)
@@ -1790,6 +1836,9 @@ class TaskHub:
                                 "fallback_from": fallback_from,
                                 "report_schema": report_schema,
                                 "clarification_text": clarification_text,
+                                "flow_step": flow_step,
+                                "read_only": bool(read_only),
+                                "fake_script": fake_script,
                             }
                         ),
                         "QUEUED",
@@ -1957,6 +2006,17 @@ class TaskHub:
                     and sum(1 for r in meeting_rows if r["status"] == "RESOLVED")
                     < meeting_settings["min_rounds"],
                 }
+            flow_decision = self.pending_flow_decision(project_id, task_id)
+            flow_info = self._task_flow(project_id, task_id)
+            step_row = (
+                self.store.one(
+                    "SELECT json_extract(options,'$.flow_step') AS step,status FROM agent_executions "
+                    "WHERE project_id=? AND task_id=? ORDER BY created DESC LIMIT 1",
+                    (project_id, task_id),
+                )
+                if flow_info
+                else None
+            )
             task["brief"] = {
                 "task_id": task_id,
                 "state": task["state"],
@@ -1968,6 +2028,7 @@ class TaskHub:
                     pending_dispatch=bool(pointer),
                     chatgpt_handoff=chatgpt_handoff,
                     pending_clarification=bool(pending_clarification),
+                    pending_flow_decision=bool(flow_decision),
                 ),
                 "agent": latest["agent"] if latest else None,
                 "role": latest["role"] if latest else None,
@@ -2009,6 +2070,17 @@ class TaskHub:
                     if pointer
                     else None
                 ),
+                "workflow": {
+                    "id": flow_info["id"] if flow_info else "classic",
+                    "name": flow_info["name"] if flow_info else "Classic",
+                    "selected_by": flow_info.get("selected_by") if flow_info else None,
+                    "reason": flow_info.get("reason") if flow_info else None,
+                    "steps": [step["role"] for step in flow_info["steps"]] if flow_info else None,
+                    "pending_decision": flow_decision,
+                    # Index of the step the latest execution belongs to, and whether it finished.
+                    "current_step": step_row["step"] if step_row else None,
+                    "current_step_done": bool(step_row and step_row["status"] == "SUCCEEDED"),
+                },
                 "clarification": {
                     "enabled": meeting_settings["enabled"],
                     "min_rounds": meeting_settings["min_rounds"],
@@ -2084,6 +2156,7 @@ class TaskHub:
             "context_version": brief["context_version"],
             "tests": brief["tests"],
             "clarification": brief["clarification"],
+            "workflow": brief["workflow"],
             "meeting_mode_notice": (
                 {
                     "text": notice,
@@ -2167,6 +2240,33 @@ class TaskHub:
                     "user's decision — do not decide it yourself. Present the question and SA's "
                     "recommendation to the user in chat and wait for their actual reply before "
                     "calling resolve_clarification with a decision."
+                )
+        elif waiting_on == "PM_FLOW_DECISION":
+            pending = brief["workflow"]["pending_decision"]
+            points = "; ".join(
+                f"[{item['severity']}] {item['claim']}" for item in pending["findings"]
+            ) or "no itemised findings"
+            if pending["escalation"] == "auto_pm":
+                result["next_action"] = (
+                    f"{pending['role']} 關卡需要 PM 決定：{pending['reason']}（問題：{points}）。"
+                    "本專案設定為 auto-pm：你可依自己的判斷呼叫 resolve_flow_gate"
+                    "（proceed 接受並繼續、retry 再退回一次、stop 停止任務），並事後告知使用者原因。"
+                    if zh
+                    else f"The {pending['role']} gate needs a PM decision: {pending['reason']} "
+                    f"(findings: {points}). This project is configured auto-pm: decide with your own "
+                    "judgement by calling resolve_flow_gate (proceed to accept and continue, retry to "
+                    "send it back once more, stop to end the task), then tell the user what you chose and why."
+                )
+            else:
+                result["next_action"] = (
+                    f"{pending['role']} 關卡需要 PM 決定：{pending['reason']}（問題：{points}）。"
+                    "本專案設定為 ask-user：這需要真人使用者決定，不可自行判斷——請把問題呈現給使用者，"
+                    "等使用者實際回覆後，才呼叫 resolve_flow_gate。"
+                    if zh
+                    else f"The {pending['role']} gate needs a PM decision: {pending['reason']} "
+                    f"(findings: {points}). This project is configured ask-user: this needs the real "
+                    "human user's decision, do not decide it yourself. Put it to the user in chat and "
+                    "call resolve_flow_gate only after they actually reply."
                 )
         elif waiting_on == "PM_REFINEMENT":
             result["next_action"] = self.context_sync_status(project_id)["workflow"]
@@ -2306,6 +2406,8 @@ class TaskHub:
             # escalation="ask_user" (default): a real decision/approval requiring the
             # actual human's input, so it stays a legitimate stop like USER_APPROVAL.
             must_continue = handoff["clarification"]["escalation"] == "auto_pm"
+        if waiting_on == "PM_FLOW_DECISION":
+            must_continue = handoff["workflow"]["pending_decision"]["escalation"] == "auto_pm"
         action_required = None
         if must_continue:
             # The same fact as must_continue_in_this_turn, restated as a top-level,
@@ -2348,6 +2450,8 @@ class TaskHub:
         task = self.task(project_id, task_id)
         if task["state"] in {"COMPLETED", "CANCELLED", "REJECTED"}:
             return None
+        if self._task_flow(project_id, task_id):
+            return self._flow_next_role(project_id, task_id)
         pointer = self._pending_dispatch_row(project_id, task_id)
         if pointer:
             return self._NEXT_AUTO_ROLE.get(pointer["role"], "SA")
@@ -2444,7 +2548,11 @@ class TaskHub:
         # nothing left to check here at all.
         chatgpt_next = False
         chatgpt_other_roles = []
-        for role in ROLES if next_role is not None else ():
+        for role in (
+            (self._flow_roles(project_id, task_id) or ("SA", "SD", "RD", "SD/RD", "REVIEW"))
+            if next_role is not None
+            else ()
+        ):
             provider = self.resolve_agent_settings(project_id, role)["provider"]
             is_next = role == next_role
             if provider == "chatgpt":
@@ -3432,8 +3540,9 @@ class TaskHub:
                         execution_id,
                         updates_content,
                     )
-                    name = {"SA": "SA-REPORT.md", "REVIEW": "REVIEW.md"}.get(
-                        row["role"], "IMPLEMENTATION.md"
+                    design_only = bool(json.loads(row["options"]).get("read_only"))
+                    name = REPORT_FILES.get(
+                        row["role"], "SD-REPORT.md" if design_only else "IMPLEMENTATION.md"
                     )
                     report_content = (
                         f"# {name}\n\n"
@@ -3451,7 +3560,13 @@ class TaskHub:
                     self.record_agent_context_result(
                         conn, row, report, report_path, digest(report_content.encode())
                     )
-                    if row["role"] not in {"SA", "REVIEW"}:
+                    if row["role"] == "SW" and (report.get("document") or "").strip():
+                        self.save_artifact(
+                            conn, project_id, task_id, "SPEC.md", execution_id,
+                            attribution(language, row["agent"], row["role"])
+                            + report["document"].strip() + "\n",
+                        )
+                    if row["role"] not in READ_ONLY_ROLES and not design_only:
                         self.save_artifact(
                             conn,
                             project_id,

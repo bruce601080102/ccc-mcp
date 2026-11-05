@@ -340,6 +340,7 @@
   const WAITING_LABELS = {
     DISPATCH_RETRY_NEEDED: "Dispatch needs retry",
     PM_CLARIFICATION_DECISION: "Clarification decision needed",
+    PM_FLOW_DECISION: "Gate decision needed",
     CHATGPT_HANDOFF_PENDING: "ChatGPT handoff pending",
     PM_REFINEMENT: "Context review needed",
     USER_APPROVAL: "Approval needed",
@@ -928,6 +929,91 @@
     }).catch((err) => toast(err.message, true));
   }
 
+  // Who is speaking: every role has an avatar (icon + colour) and a display name that
+  // defaults to its abbreviation and can be renamed in Settings.
+  const ROLE_AVATARS = {
+    PM: ["pm", '<path d="M5 21V4"/><path d="M5 4h11l-2 4 2 4H5"/>'],
+    SA: ["sa", '<circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/>'],
+    SD: ["sd", '<path d="m12 3 9 5-9 5-9-5z"/><path d="m3 13 9 5 9-5"/>'],
+    RD: ["rd", '<path d="m8 7-5 5 5 5"/><path d="m16 7 5 5-5 5"/><path d="m14 4-4 16"/>'],
+    "SD/RD": ["rd", '<path d="m8 7-5 5 5 5"/><path d="m16 7 5 5-5 5"/><path d="m14 4-4 16"/>'],
+    REVIEW: ["cr", '<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>'],
+    SR: ["sr", '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="m9 14 2 2 4-4"/>'],
+    AR: ["ar", '<circle cx="12" cy="12" r="9"/><path d="M12 3v4M12 17v4M3 12h4M17 12h4"/>'],
+    SEC: ["sec", '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>'],
+    SW: ["sw", '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>'],
+    QA: ["qa", '<path d="m9 11 3 3 8-8"/><path d="M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h9"/>'],
+    USER: ["user", '<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>'],
+  };
+  const ROLE_ABBREVIATIONS = { REVIEW: "CR" };
+  let activeRoleNames = {};
+  const roleName = (role) => activeRoleNames[role] || ROLE_ABBREVIATIONS[role] || role;
+  const roleAvatarTone = (role) => (ROLE_AVATARS[role] || ROLE_AVATARS.SA)[0];
+  // Every role is a small pixel character: a chubby chibi base with its own hair, outfit and
+  // accessory (PM crown, SA detective hat, SD beret, RD headphones, CR angel, SR monk,
+  // AR devil, SEC knight, QA tester). "." keeps the base pixel, anything else replaces it.
+  const SPRITE_BASE = [
+    "..............",
+    "..............",
+    "...oooooooo...",
+    "..ohhhhhhhho..",
+    ".ohhhhhhhhhho.",
+    ".ohhsssssshho.",
+    ".osseWsseWsso.",
+    ".osseesseesso.",
+    ".oscssmmsscso.",
+    "..osssssssso..",
+    "...oooooooo...",
+    "..obbbbbbbbo..",
+    "..obbbbbbbbo..",
+    "...oooooooo...",
+  ];
+  const SPRITE_COLORS = { o: "var(--sprite-outline, #2d2a32)", s: "#ffd9b8", e: "#2a2233", W: "#ffffff", c: "#ff9aa8", m: "#c0504d", y: "#ffcf3a", a: "#bfe3ff", r: "#e5484d", x: "#9aa7b5", k: "#2b3042", p: "#d36bb8", b: "var(--av)" };
+  const BLOB_BODY = [[10, ".obbbbbWbbbbo."], [11, ".obbWbWbbbbbo."], [12, ".obbbWbbbbbbo."], [13, "..oooooooooo.."]];
+  const SPRITES = {
+    person: { hair: "#5a3b1e", edits: [] },
+    boss: { hair: "#4a3a2a", edits: [[0, "....y.yy.y...."], [1, "....yyyyyy...."], [11, "......rr......"], [12, "......rr......"]] },
+    detective: { hair: "#6b4423", edits: [[1, "....kkkkkk...."], [2, "...kkrrrrkk..."], [3, ".kkkkkkkkkkkk."], [10, "...........ooo"], [11, "...........oWo"], [12, "...........ooo"], [13, ".............k"]] },
+    designer: { hair: "#d36bb8", edits: [[0, ".......p......"], [1, "....pppppp...."], [2, "...pppppppp..."]] },
+    dev: { hair: "#2f3b52", edits: [[2, "...kkkkkkkk..."], [3, "..k........k.."], [4, ".k..........k."], [5, "kk..........kk"], [6, "kk..........kk"], [7, "kk..........kk"]] },
+    angel: { hair: "#ffe08a", body: "#ffffff", edits: [[0, "....yyyyyy...."], [1, "...y......y..."], [8, "a............a"], [9, "aa..........aa"], [10, "aaa........aaa"], [11, "aa..........aa"]] },
+    monk: { hair: "#2b2b3a", body: "#f0b429", edits: [[0, "......kk......"], [1, ".....kkkk....."], [5, "......rr......"], [6, "..ssssssssss.."], [7, "s............s"], [8, "s............s"], [9, "s............s"]] },
+    devil: { hair: "#5b2a86", edits: [[0, ".rr........rr."], [1, "..r........r.."], [5, "....kk..kk...."], [9, "......WW......"], [11, ".............r"], [12, "............rr"]] },
+    knight: { hair: "#9aa7b5", edits: [[0, "......rr......"], [1, ".....rrrr....."], [2, "...xxxxxxxx..."], [3, "..xxxxxxxxxx.."], [4, ".xxxxxxxxxxxx."], [5, "..xx......xx.."], [10, "...........xxx"], [11, "...........xyx"], [12, "...........xxx"]] },
+    tester: { hair: "#3f8f4a", edits: BLOB_BODY },
+    cat: { hair: "#f0a04b", skin: "#f7c27a", edits: [[1, "..hh......hh.."], [2, "..hhh....hhh.."], [7, "k............k"], [9, "k............k"], [8, "kk..........kk"]] },
+    robot: { hair: "#6b7a8a", skin: "#c9d3dc", edits: [[0, ".......r......"], [1, ".......k......"], [6, "x............x"], [7, "x............x"]] },
+    bear: { hair: "#8b5a2b", skin: "#c8955c", edits: [[1, "..hh......hh.."], [2, "..hh......hh.."], [8, ".....WmmW....."]] },
+    frog: { hair: "#5fb85a", skin: "#8ee07d", edits: [[1, "..WW......WW.."], [2, "..WeW....WeW.."], [8, "....mmmmmm...."]] },
+    writer: { hair: "#4a3a2a", edits: [[0, ".kkkkkkkkkkkk."], [1, "...kkkkkkkk.y."], [2, "............y."], [10, ".............y"], [11, "............y."], [12, "...........y.."]] },
+  };
+  const DEFAULT_AVATAR = { USER: "person", PM: "boss", SA: "detective", SD: "designer", RD: "dev", "SD/RD": "dev", REVIEW: "angel", SR: "monk", AR: "devil", SEC: "knight", QA: "tester", SW: "writer" };
+  const AVATAR_ORDER = ["boss", "detective", "designer", "dev", "angel", "monk", "devil", "knight", "tester", "person", "cat", "robot", "bear", "frog", "writer"];
+  let activeRoleAvatars = {};
+  const spriteCache = {};
+  const roleAvatarIcon = (role) => spriteFor(activeRoleAvatars[role] || DEFAULT_AVATAR[role] || "person");
+  const spriteFor = (id) => {
+    if (spriteCache[id]) return spriteCache[id];
+    const sprite = SPRITES[id] || SPRITES.person;
+    const grid = SPRITE_BASE.map((row) => row.split(""));
+    for (const [y, text] of sprite.edits) [...text].forEach((char, x) => { if (char !== ".") grid[y][x] = char; });
+    const fill = (char) => (char === "h" ? sprite.hair : char === "s" && sprite.skin ? sprite.skin : char === "b" && sprite.body ? sprite.body : SPRITE_COLORS[char]);
+    const rects = [];
+    grid.forEach((row, y) => {
+      let x = 0;
+      while (x < row.length) {
+        const char = row[x];
+        if (char === ".") { x += 1; continue; }
+        let end = x;
+        while (end + 1 < row.length && row[end + 1] === char) end += 1;
+        rects.push(`<rect x="${x}" y="${y}" width="${end - x + 1}" height="1" fill="${fill(char)}"/>`);
+        x = end + 1;
+      }
+    });
+    return (spriteCache[id] = `<svg class="role-sprite" viewBox="0 0 14 14" shape-rendering="crispEdges" aria-hidden="true">${rects.join("")}</svg>`);
+  };
+
+  const chatParticipants = (roles) => [...(roles || ["SA", "SD/RD", "REVIEW"]), "PM"].map((role) => `<span class="chat-avatar av-${roleAvatarTone(role)}" title="${esc(roleName(role))}">${roleAvatarIcon(role).replace('width="18" height="18"', 'width="15" height="15"')}</span>`).join("");
   const PAGE_ICONS = {
     profile: '<path d="m12 2 10 5-10 5L2 7z"/><path d="m2 17 10 5 10-5"/><path d="m2 12 10 5 10-5"/>',
     roles: '<circle cx="9" cy="7" r="4"/><path d="M2 21v-2a4 4 0 0 1 4-4h6a4 4 0 0 1 4 4v2"/><path d="M16 3.1a4 4 0 0 1 0 7.8"/><path d="M22 21v-2a4 4 0 0 0-3-3.9"/>',
@@ -936,6 +1022,8 @@
     runtime: '<rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 2v2M15 2v2M9 20v2M15 20v2M2 9h2M2 15h2M20 9h2M20 15h2"/>',
     meeting: '<path d="M14 9a2 2 0 0 1-2 2H6l-4 4V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2z"/><path d="M18 9h2a2 2 0 0 1 2 2v11l-4-4h-6a2 2 0 0 1-2-2v-1"/>',
     evaluation: '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
+    workflow: '<circle cx="6" cy="6" r="3"/><circle cx="18" cy="18" r="3"/><path d="M9 6h6a3 3 0 0 1 3 3v6"/>',
+    gate: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M12 8v4"/><path d="M12 16h.01"/>',
     check: '<path d="M20 6 9 17l-5-5"/>',
     shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/>',
     danger: '<path d="m21.7 18-8-14a2 2 0 0 0-3.4 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.7-3z"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
@@ -1268,7 +1356,7 @@
     const events = [...transitions, ...executions].sort((a, b) => (a.timestamp || "").localeCompare(b.timestamp || "") || a.event_id.localeCompare(b.event_id));
     layout(`<div class="task-workspace">
       <header class="task-workspace-head"><div><a class="task-back" href="#/p/${encodeURIComponent(projectId)}/tasks">← ${esc(UI.translate("Back to tasks"))}</a><h1>${esc(UI.translate("Task discussion"))}</h1><div class="task-identifiers"><span>${esc(projectId)}</span><span class="mono">${esc(taskId)}</span><span class="pill warning">${esc(UI.translate(status.state || "UNKNOWN"))}</span></div></div></header>
-      <div class="task-conversation-room"><div class="chat-room-bar"><div class="chat-room-title"><span class="chat-room-mark" aria-hidden="true">#</span><div><strong>${esc(UI.translate("Task meeting room"))}</strong><small>${esc(taskId)} · ${esc(UI.translate("Read-only conversation"))}</small></div></div><div class="chat-participants" aria-label="${esc(UI.translate("Meeting participants"))}"><span>SA</span><span>SD</span><span>RV</span><span>PM</span></div></div>
+      <div class="task-conversation-room"><div class="chat-room-bar"><div class="chat-room-title"><span class="chat-room-mark" aria-hidden="true">#</span><div><strong>${esc(UI.translate("Task meeting room"))}</strong><small>${esc(taskId)} · ${esc(UI.translate("Read-only conversation"))}</small></div></div><div class="chat-participants" aria-label="${esc(UI.translate("Meeting participants"))}">${chatParticipants()}</div></div>
         <div class="chat-sync-warning" role="alert"><strong>${esc(UI.translate("Restart the local UI server"))}</strong><span>${esc(UI.translate("The browser has the new task page, but the running ccc-mcp UI server does not provide its required API. Stop that server, run ccc-mcp ui again, then open its newly printed URL."))}</span><small class="mono">${esc(missingPaths.join(", "))}</small></div>
         <div class="conversation-feed" role="log" aria-label="${esc(UI.translate("Work conversation"))}">${taskConversation(events)}</div>
         <div class="task-composer"><label>${esc(UI.translate("Correction or instruction"))}</label><textarea rows="2" disabled placeholder="${esc(UI.translate("Restart the UI server to send a correction."))}"></textarea></div>
@@ -1279,7 +1367,7 @@
     bindChatDetailButtons(events);
   }
 
-  const TASK_ROLE_LABELS = { SA: "Analysis", "SD/RD": "Development", SD: "Development", RD: "Development", REVIEW: "Review", PM: "Summary" };
+  const TASK_ROLE_LABELS = { SA: "Analysis", "SD/RD": "Development", SD: "Design", RD: "Development", REVIEW: "Review", SR: "Specification review", AR: "Adversarial review", SEC: "Security review", QA: "Quality assurance", SW: "Specification writing", PM: "Summary" };
 
   function statusPill(kind, text) {
     return `<span class="pill ${kind}">${esc(UI.translate(text))}</span>`;
@@ -1401,17 +1489,19 @@
     if (!isUser && !isAgent && !isPm) {
       return `<div class="chat-system-entry ${type === "task_cancelled" || event.detail?.passed === false ? "is-negative" : ""}" data-event-id="${esc(event.event_id)}"><div class="chat-notice"><span class="chat-notice-dot" aria-hidden="true"></span><span><strong>${esc(UI.translate(label))}</strong> · ${esc(UI.translate(summary || "System update"))}</span><time datetime="${esc(event.timestamp || "")}">${esc(date)}</time></div>${details}</div>`;
     }
-    const avatar = isUser ? "你" : role === "REVIEW" ? "RV" : role === "SD/RD" ? "SD" : role;
+    const speaker = isUser ? "USER" : role;
+    const avatar = `<div class="chat-avatar av-${roleAvatarTone(speaker)}" aria-hidden="true">${roleAvatarIcon(speaker)}</div>`;
+    const speakerName = isUser ? UI.translate("You") : roleName(role);
     if (type === "agent_started" && typingIds && typingIds.has(event.execution_id)) {
       return `<article class="chat-post is-typing" data-event-id="${esc(event.event_id)}">
-        <div class="chat-avatar" aria-hidden="true">${esc(avatar)}</div>
-        <div class="chat-post-body"><div class="chat-post-meta"><strong>${esc(UI.translate(role))}</strong><span>${esc(UI.translate(label))}</span><span class="typing-label">${esc(UI.translate("is typing…"))}</span></div>
-        <div class="chat-bubble typing-bubble" role="status" aria-label="${esc(role)} ${esc(UI.translate("is typing…"))}"><span class="typing-dots" aria-hidden="true"><i></i><i></i><i></i></span></div></div>
+        ${avatar}
+        <div class="chat-post-body"><div class="chat-post-meta"><strong data-no-i18n>${esc(speakerName)}</strong><span>${esc(UI.translate(label))}</span><span class="typing-label">${esc(UI.translate("is typing…"))}</span></div>
+        <div class="chat-bubble typing-bubble" role="status" aria-label="${esc(speakerName)} ${esc(UI.translate("is typing…"))}"><span class="typing-dots" aria-hidden="true"><i></i><i></i><i></i></span></div></div>
       </article>`;
     }
     return `<article class="chat-post ${isUser ? "is-user" : ""} ${isPm ? "is-pm" : ""} ${type === "agent_failed" ? "has-error" : ""}" data-event-id="${esc(event.event_id)}">
-      <div class="chat-avatar" aria-hidden="true">${esc(avatar)}</div>
-      <div class="chat-post-body"><div class="chat-post-meta"><strong>${esc(UI.translate(role))}</strong><span>${esc(UI.translate(label))}</span><time datetime="${esc(event.timestamp || "")}">${esc(date)}</time></div>
+      ${avatar}
+      <div class="chat-post-body"><div class="chat-post-meta"><strong data-no-i18n>${esc(speakerName)}</strong><span>${esc(UI.translate(label))}</span><time datetime="${esc(event.timestamp || "")}">${esc(date)}</time></div>
       <div class="chat-bubble"><p>${esc(UI.translate(summary || "No summary was saved for this execution."))}</p>${details}</div></div>
     </article>`;
   }
@@ -1465,6 +1555,8 @@
   // update share one source of truth.
   function buildTaskParts(id, taskId, data) {
     const { status, timeline, evaluations, artifacts, settings, handoff } = data;
+    activeRoleNames = settings?.role_names || settings?.editable?.role_names || {};
+    activeRoleAvatars = settings?.role_avatars || settings?.editable?.role_avatars || {};
     const brief = status.brief || {};
     const control = brief.control || { status: "ACTIVE" };
     const terminal = ["COMPLETED", "CANCELLED", "REJECTED"].includes(status.state);
@@ -1474,12 +1566,25 @@
     const events = timeline.events || [];
     const typingIds = new Set((status.executions || []).filter((e) => ["RUNNING", "QUEUED"].includes(e.status)).map((e) => e.id));
     const doneRoles = new Set(events.filter((e) => e.event_type === "agent_completed").map((e) => e.role));
-    const steps = [
+    const workflow = brief.workflow || {};
+    const flowSteps = Array.isArray(workflow.steps) ? workflow.steps : null;
+    const flowDone = (index) => status.state === "COMPLETED" || (workflow.current_step != null &&
+      (index < workflow.current_step || (index === workflow.current_step && workflow.current_step_done)));
+    const steps = flowSteps ? flowSteps.map((role, index) => [roleName(role), flowDone(index)]) : [
       ["Analysis", doneRoles.has("SA")],
       ["Development", ["SD", "RD", "SD/RD"].some((r) => doneRoles.has(r))],
       ["Host tests", events.some((e) => e.event_type === "host_test_completed" && e.detail?.executed_by_host)],
       ["Review", doneRoles.has("REVIEW")],
     ];
+    const gateDecision = workflow.pending_decision && !terminal ? workflow.pending_decision : null;
+    const gateCard = gateDecision ? `<div class="task-next gate-decision"><strong>${esc(UI.translate("Gate decision needed"))}</strong>
+      <p>${esc(roleName(gateDecision.role))} · ${esc(gateDecision.reason)}</p>
+      ${gateDecision.findings.length ? `<ul class="gate-findings">${gateDecision.findings.map((f) => `<li><span class="pill ${f.severity === "blocker" ? "negative" : "warning"}">${esc(f.severity)}</span> ${esc(f.claim)}${f.evidence ? ` <small>${esc(f.evidence)}</small>` : ""}</li>`).join("")}</ul>` : ""}
+      <div class="gate-decision-actions">
+        <button class="btn small primary" type="button" data-gate-decision="proceed">${esc(UI.translate("Accept and continue"))}</button>
+        <button class="btn small" type="button" data-gate-decision="retry">${esc(UI.translate("Send back once more"))}</button>
+        <button class="btn small danger" type="button" data-gate-decision="stop">${esc(UI.translate("Stop task"))}</button>
+      </div></div>` : "";
     const canMessage = !terminal && !control.stop_requested;
     const pauseButton = canMessage ?
       `<button class="btn small" id="task-pause-resume">${esc(UI.translate(control.paused ? "Continue work" : "Pause work"))}</button>` : "";
@@ -1487,7 +1592,8 @@
     const deleteButton = REMOVABLE_STATES.has(status.state) ? `<button class="btn small danger" id="task-delete">${esc(UI.translate("Delete task"))}</button>` : "";
     const diffRows = artifacts.filter((a) => a.path.endsWith("/CHANGES.diff"));
     const testRows = artifacts.filter((a) => /\/executions\/TEST-[^/]+\/TEST-RESULT\.md$/.test(a.path));
-    const reportRows = artifacts.filter((a) => /\/(SA-REPORT|IMPLEMENTATION|REVIEW|CONTEXT-UPDATES)\.md$/.test(a.path));
+    const reportRows = artifacts.filter((a) => /\/(SA-REPORT|SD-REPORT|SW-REPORT|SPEC|SR-REPORT|AR-REPORT|SEC-REPORT|QA-REPORT|IMPLEMENTATION|REVIEW|CONTEXT-UPDATES)\.md$/.test(a.path));
+    const latestSpec = artifacts.filter((a) => a.path.endsWith("/SPEC.md") && !a.path.includes("/executions/")).at(-1);
     const latestDiff = diffRows.at(-1);
     const latestTest = testRows.at(-1);
     return {
@@ -1496,12 +1602,14 @@
       pill: { text: UI.translate(displayState), tone: stateTone },
       actions: `${pauseButton}${stopButton}${deleteButton}`,
       steps: steps.map(([, done]) => done),
-      nextText: handoff.next_action && !terminal ? handoff.next_action : "",
+      nextText: handoff.next_action && !terminal ? handoff.next_action + (gateDecision ? `|${gateDecision.escalation_id}` : "") : "",
+      hasGateDecision: Boolean(gateDecision),
+      workflowRoles: flowSteps ? [...new Set(flowSteps)] : null,
       head: `<div><a class="task-back" href="#/p/${encodeURIComponent(id)}/tasks">← ${esc(UI.translate("Back to tasks"))}</a><h1>${esc(UI.translate("Task discussion"))}</h1><div class="task-identifiers"><span>${esc(id)}</span><span class="mono">${esc(taskId)}</span><span class="pill ${stateTone}">${esc(UI.translate(displayState))}</span></div></div><div class="task-head-actions">${pauseButton}${stopButton}${deleteButton}</div>`,
       progress: steps.map(([name, done]) => `<span class="conversation-step ${done ? "done" : ""}"><i aria-hidden="true"></i>${esc(UI.translate(name))}</span>`).join(""),
       feed: taskConversation(events, typingIds),
-      next: handoff.next_action && !terminal ? `<div class="task-next"><strong>${esc(UI.translate("Next step"))}</strong><p>${esc(handoff.next_action)}</p></div>` : "",
-      results: `<section class="task-result-grid">
+      next: gateCard || (handoff.next_action && !terminal ? `<div class="task-next"><strong>${esc(UI.translate("Next step"))}</strong><p>${esc(handoff.next_action)}</p></div>` : ""),
+      results: `${latestSpec ? `<section class="task-result-card spec-card"><h2>${esc(UI.translate("Specification"))}</h2><p class="muted">${esc(UI.translate("Written by the specification writer for later steps and for you to review."))}</p><pre class="mono task-spec">${esc(latestSpec.content || "")}</pre></section>` : ""}<section class="task-result-grid">
       <div class="task-result-card"><h2>${esc(UI.translate("Changed files and diff"))}</h2>${latestDiff ? `<pre class="mono task-diff">${esc(latestDiff.content || "")}</pre>` : `<p class="muted">${esc(UI.translate("No saved diff yet."))}</p>`}</div>
       <div class="task-result-card"><h2>${esc(UI.translate("Host test evidence"))}</h2>${verificationLine(brief.tests)}${latestTest ? `<details><summary>${esc(UI.translate("View saved test result"))}</summary><pre class="mono">${esc(latestTest.content)}</pre></details>` : `<p class="muted">${esc(UI.translate("No host test evidence yet."))}</p>`}</div>
     </section><section class="task-result-card evaluation-section"><div class="evaluation-section-head"><div><h2>${esc(UI.translate("Evaluation and evidence"))}</h2><p>${esc(UI.translate("Scores are separate from task completion."))}</p></div>${settings.editable?.evaluation_engine?.enabled ? `<button class="btn small" id="task-evaluate">${esc(UI.translate("Evaluate latest executions"))}</button>` : `<button class="btn small" id="task-enable-evaluation">${esc(UI.translate("Enable evaluation"))}</button>`}</div>${evaluations.length ? `<div class="evaluation-list">${evaluations.slice().reverse().map(evaluationReport).join("")}</div>` : `<p class="muted">${esc(UI.translate("No evaluations for this task yet."))}</p>`}</section>`,
@@ -1602,7 +1710,7 @@
         <button class="tab ${taskDetailPane === "technical" ? "active" : ""}" data-task-pane="technical" role="tab" aria-selected="${taskDetailPane === "technical"}">${esc(UI.translate("Technical record"))}</button>
       </nav>
       <div class="task-pane" data-pane="conversation" ${conversationActive ? "" : "hidden"}><div class="task-conversation-room">
-        <div class="chat-room-bar"><div class="chat-room-title"><span class="chat-room-mark" aria-hidden="true">#</span><div><strong>${esc(UI.translate("Task meeting room"))}</strong><small>${esc(taskId)} · ${esc(UI.translate("Saved work conversation"))}</small></div></div><div class="chat-participants" aria-label="${esc(UI.translate("Meeting participants"))}"><span>SA</span><span>SD</span><span>RV</span><span>PM</span></div></div>
+        <div class="chat-room-bar"><div class="chat-room-title"><span class="chat-room-mark" aria-hidden="true">#</span><div><strong>${esc(UI.translate("Task meeting room"))}</strong><small>${esc(taskId)} · ${esc(UI.translate("Saved work conversation"))}</small></div></div><div class="chat-participants" aria-label="${esc(UI.translate("Meeting participants"))}">${chatParticipants(parts.workflowRoles)}</div></div>
         <div class="conversation-feed" role="log" aria-live="polite" aria-label="${esc(UI.translate("Work conversation"))}">${parts.feed}</div>
         <div class="task-next-slot">${parts.next}</div>
         <form class="task-composer" id="task-message-form"><label for="task-message">${esc(UI.translate("Correction or instruction"))}</label><textarea id="task-message" rows="2" maxlength="8000" placeholder="${esc(UI.translate("Tell the PM what should change…"))}" ${parts.canMessage ? "" : "disabled"}></textarea><div class="task-composer-foot"><label class="task-check"><input type="checkbox" id="task-message-pause" checked ${parts.canMessage ? "" : "disabled"}> ${esc(UI.translate("Pause before the next agent"))}</label><button class="btn primary" type="submit" ${parts.canMessage ? "" : "disabled"}>${esc(UI.translate("Send correction"))}</button></div><p class="muted">${esc(UI.translate("This records guidance for the workflow. It does not start a separate AI chat."))}</p></form>
@@ -1636,6 +1744,20 @@
         fields: [{ label: "Reason (optional)", placeholder: "Why are you stopping this task?" }], danger: true,
         confirmLabel: "Stop task", onSubmit: async ([reason]) => { await api(`${taskBase}/stop`, { method: "POST", body: { reason } }); toast("Stop requested."); refresh(); },
       });
+      document.querySelectorAll("[data-gate-decision]").forEach((button) => { button.onclick = () => {
+        const decision = button.dataset.gateDecision;
+        const copy = {
+          proceed: ["Accept this work and continue?", "The reviewer's findings are overridden and the next step runs."],
+          retry: ["Send this back once more?", "The step that made this work redoes it using the findings, then the gate runs again."],
+          stop: ["Stop this task?", "Stopping prevents further agent work. Changes already made to files will not be rolled back."],
+        }[decision];
+        showModal({
+          title: copy[0], body: copy[1], danger: decision === "stop",
+          fields: [{ label: "Note (optional)", placeholder: "Anything the next step should know" }],
+          confirmLabel: decision === "proceed" ? "Accept and continue" : decision === "retry" ? "Send back once more" : "Stop task",
+          onSubmit: async ([note]) => { await api(`${taskBase}/gate-decision`, { method: "POST", body: { decision, note } }); toast("Decision sent."); refresh(); },
+        });
+      }; });
       const deleteTask = document.getElementById("task-delete");
       if (deleteTask) deleteTask.onclick = () => confirmDeleteTask(id, taskId, () => navTo(`/p/${encodeURIComponent(id)}/tasks`));
       const enableEvaluation = document.getElementById("task-enable-evaluation");
@@ -1683,7 +1805,7 @@
       const slot = root.querySelector(".task-next-slot");
       const nextBody = slot?.querySelector(".task-next p");
       if (slot && parts.nextText !== next.nextText) {
-        if (nextBody && next.nextText) nextBody.textContent = next.nextText;
+        if (nextBody && next.nextText && !next.hasGateDecision && !parts.hasGateDecision) nextBody.textContent = next.nextText;
         else { slot.innerHTML = next.next; UI.localize(slot); }
       }
       [['[data-pane="results"]', "results"], ['[data-pane="technical"]', "technical"]].forEach(([selector, key]) => {
@@ -1737,8 +1859,12 @@
     const gen = renderGen;
     const id = parseRoute().project;
     layout(`<div class="empty">Loading…</div>`);
-    let overview;
-    try { overview = await api(`/projects/${encodeURIComponent(id)}/settings`); }
+    let overview, catalog;
+    try {
+      [overview, catalog] = await Promise.all([
+        api(`/projects/${encodeURIComponent(id)}/settings`), api(`/projects/${encodeURIComponent(id)}/workflows`),
+      ]);
+    }
     catch (err) { if (!stale(gen)) errorView(err); return; }
     if (stale(gen)) return;
     const roles = overview.editable.roles || {};
@@ -1748,17 +1874,35 @@
       return `<option value="">${esc(UI.translate("CLI default"))}</option>` +
         list.map((e) => `<option value="${esc(e)}" ${current === e ? "selected" : ""}>${esc(e)}</option>`).join("");
     };
-    const ROLE_HELP = { SA: "Analysis", SD: "Design", RD: "Implementation", "SD/RD": "Design and implementation", REVIEW: "Review" };
-    const roleRows = Object.keys(roles).map((role) => {
+    const ROLE_HELP = { SA: "Analysis", SD: "Design", RD: "Implementation", "SD/RD": "Design and implementation in one step (Classic workflow only)", REVIEW: "Code review (CR)", SR: "Specification review", AR: "Adversarial review", SEC: "Security review", QA: "Quality assurance", SW: "Specification writing" };
+    activeRoleNames = overview.editable.role_names || {};
+    activeRoleAvatars = overview.editable.role_avatars || {};
+    const nameField = (role) => `<div class="field role-name-field"><label for="role-name-${esc(role.replace("/", "-"))}">${esc(UI.translate("Chat name"))}</label><input type="text" id="role-name-${esc(role.replace("/", "-"))}" class="role-name-input" maxlength="24" value="${esc(activeRoleNames[role] || "")}" placeholder="${esc(ROLE_ABBREVIATIONS[role] || role)}" data-no-i18n /></div>`;
+    const avatarPicker = (role) => `<div class="field avatar-field"><label>${esc(UI.translate("Avatar"))}</label><div class="avatar-picker" role="radiogroup" aria-label="${esc(UI.translate("Avatar"))}" data-avatar-role="${esc(role)}">${AVATAR_ORDER.map((avatar) => {
+      const current = activeRoleAvatars[role] || DEFAULT_AVATAR[role] || "person";
+      return `<button type="button" class="avatar-option ${current === avatar ? "selected" : ""}" role="radio" aria-checked="${current === avatar}" data-avatar="${avatar}" title="${esc(UI.translate(avatar))}"><span class="chat-avatar av-${roleAvatarTone(role)}" aria-hidden="true">${spriteFor(avatar)}</span></button>`;
+    }).join("")}</div></div>`;
+    const roleHead = (role, help, pill) => `<div class="role-config-head">
+          <span class="role-avatar chat-avatar av-${roleAvatarTone(role)}" aria-hidden="true">${roleAvatarIcon(role)}</span>
+          <div class="role-config-title"><strong data-no-i18n>${esc(ROLE_ABBREVIATIONS[role] || role)}</strong><small>${esc(UI.translate(help))}</small></div>
+          ${pill}
+        </div>`;
+    const pmRow = `<div class="role-config-row" data-role="PM" data-name-only>
+        ${roleHead("PM", "Project manager: the ChatGPT conversation that drives the workflow", "")}
+        <div class="role-config-fields">${nameField("PM")}${avatarPicker("PM")}</div>
+      </div>`;
+    // The combined SD/RD role only exists for the Classic workflow; it is listed last and
+    // hidden whenever no workflow in use needs it.
+    const ROLE_LIST_ORDER = ["SA", "SW", "SD", "RD", "REVIEW", "SR", "AR", "SEC", "QA", "SD/RD"];
+    const needsCombinedRole = () => catalog.workflows.some((flow) => (flow.id === catalog.selected || !flow.builtin) && flow.steps.some((step) => step.role === "SD/RD"));
+    const roleRows = pmRow + ROLE_LIST_ORDER.filter((role) => roles[role]).map((role) => {
       const cfg = roles[role] || {};
       const isChatgpt = cfg.provider === "chatgpt";
-      return `<div class="role-config-row" data-role="${esc(role)}">
-        <div class="role-config-head">
-          <span class="role-config-badge" aria-hidden="true" data-no-i18n>${esc(role.replace("/", ""))}</span>
-          <div class="role-config-title"><strong data-no-i18n>${esc(role)}</strong><small>${esc(UI.translate(ROLE_HELP[role] || "Workflow role"))}</small></div>
-          <span class="pill role-provider-pill" data-no-i18n>${esc(cfg.provider || "")}</span>
-        </div>
+      return `<div class="role-config-row" data-role="${esc(role)}" ${role === "SD/RD" ? `data-legacy-role ${needsCombinedRole() ? "" : "hidden"}` : ""}>
+        ${roleHead(role, ROLE_HELP[role] || "Workflow role", `<span class="pill role-provider-pill" data-no-i18n>${esc(cfg.provider || "")}</span>`)}
         <div class="role-config-fields">
+          ${nameField(role)}
+          ${avatarPicker(role)}
           <div class="field"><label>${esc(UI.translate("Provider"))}</label><select class="role-field" data-field="provider">${providers.map((p) => `<option value="${esc(p)}" ${cfg.provider === p ? "selected" : ""}>${esc(p)}</option>`).join("")}</select></div>
           <div class="field"><label>${esc(UI.translate("Model"))}</label><input type="text" class="role-field" data-field="model" value="${esc(cfg.model || "")}" placeholder="${esc(UI.translate("CLI default"))}" ${isChatgpt ? "disabled" : ""} /></div>
           <div class="field"><label>${esc(UI.translate("Effort"))}</label><select class="role-field" data-field="effort" ${isChatgpt ? "disabled" : ""}>${effortOptions(cfg.provider, cfg.effort)}</select></div>
@@ -1766,6 +1910,9 @@
         </div>
       </div>`;
     }).join("");
+    const selectedWorkflow = overview.editable.workflow || "classic";
+    const reviewGate = overview.editable.review_gate || {};
+    const gateSelect = (name, value, options) => `<select id="${name}">${options.map(([key, label]) => `<option value="${key}" ${value === key ? "selected" : ""}>${esc(UI.translate(label))}</option>`).join("")}</select>`;
     const mm = overview.editable.meeting_mode || {};
     const ee = overview.editable.evaluation_engine || {};
     const scoringRoles = ["SA", "SD/RD", "REVIEW"];
@@ -1817,6 +1964,16 @@
             ${profileOption("best-model", "Codex for SA and REVIEW, Claude for implementation, when both are installed.")}
           </div>`)}
         ${pageCard("roles", "Roles", "Provider, model, effort and quota fallback for each workflow role.", `<div class="role-config-list">${roleRows}</div>`)}
+        ${pageCard("workflow", "Workflow", "The steps a new task goes through. A task keeps the workflow it started with.",
+          `<div id="workflow-panel"></div>`)}
+        ${pageCard("gate", "Review gates", "How hard reviewers push back, and how many times work may be sent back before you decide.",
+          `<div class="settings-grid">
+            <div class="field"><label for="gate-ar">${esc(UI.translate("Adversarial review strictness"))}</label>${gateSelect("gate-ar", reviewGate.ar_strictness, [["normal", "Normal: only clear faults"], ["strict", "Strict: minor problems too"], ["extreme", "Extreme: challenge every assumption"]])}</div>
+            <div class="field"><label for="gate-rounds">${esc(UI.translate("Max rounds per gate (1-5)"))}</label><input type="text" inputmode="numeric" id="gate-rounds" value="${esc(reviewGate.max_rounds ?? 2)}" /></div>
+            <div class="field"><label for="gate-escalation">${esc(UI.translate("When a gate gives up"))}</label>${gateSelect("gate-escalation", reviewGate.escalation, [["ask_user", "Ask me"], ["auto_pm", "ChatGPT decides"]])}</div>
+          </div>
+          <div class="hint">${esc(UI.translate("Every adversarial finding must cite evidence, or it does not count. A gate that still finds blocking problems after its last round, or reports a fundamental flaw, waits for a decision instead of looping."))}</div>`,
+          `<button class="btn small primary" id="save-review-gate">Save</button>`)}
         ${pageCard("language", "Language", "What Codex/Claude/ChatGPT receive in reports.",
           `<div class="field narrow-field"><select id="language-select" aria-label="${esc(UI.translate("Language"))}">
             ${["zh-TW", "ch", "en"].map((l) => `<option value="${l}" ${overview.editable.language === l ? "selected" : ""}>${l}</option>`).join("")}
@@ -1864,6 +2021,25 @@
     `, { narrow: true, contentClass: "settings-wide" });
     document.querySelectorAll(".role-config-row").forEach((row) => {
       const role = row.dataset.role;
+      row.querySelectorAll(".avatar-option").forEach((button) => button.addEventListener("click", async () => {
+        try {
+          await api(`/projects/${encodeURIComponent(id)}/config/role-avatar`, { method: "POST", body: { role, avatar: button.dataset.avatar } });
+          const next = { ...activeRoleAvatars };
+          if (button.dataset.avatar === (DEFAULT_AVATAR[role] || "person")) delete next[role]; else next[role] = button.dataset.avatar;
+          activeRoleAvatars = next;
+          row.querySelectorAll(".avatar-option").forEach((other) => { const on = other === button; other.classList.toggle("selected", on); other.setAttribute("aria-checked", String(on)); });
+          const head = row.querySelector(".role-config-head .chat-avatar");
+          if (head) head.innerHTML = roleAvatarIcon(role);
+          toast("Avatar saved.");
+        } catch (err) { toast(err.message, true); }
+      }));
+      row.querySelector(".role-name-input")?.addEventListener("change", async (event) => {
+        try {
+          await api(`/projects/${encodeURIComponent(id)}/config/role-name`, { method: "POST", body: { role, name: event.target.value.trim() } });
+          toast("Name saved.");
+        } catch (err) { toast(err.message, true); }
+      });
+      if (row.hasAttribute("data-name-only")) return;
       const providerSel = row.querySelector('[data-field="provider"]');
       const modelInput = row.querySelector('[data-field="model"]');
       const effortSel = row.querySelector('[data-field="effort"]');
@@ -1968,6 +2144,133 @@
           : `${UI.translate("Runtime unavailable or version mismatch")}: ${result.reason}`;
       } catch (err) { if (!stale(gen)) runtimeStatus.textContent = err.message; }
       finally { button.disabled = false; }
+    });
+    const AGENT_ROLE_ORDER = ["SA", "SW", "SD", "RD", "SD/RD", "REVIEW", "SR", "AR", "SEC", "QA"];
+    const PRODUCER_ROLES = ["SA", "SW", "SD", "RD", "SD/RD"];
+    let editing = null;
+    const refreshCatalog = async () => {
+      catalog = await api(`/projects/${encodeURIComponent(id)}/workflows`);
+      const legacy = document.querySelector("[data-legacy-role]");
+      if (legacy) legacy.hidden = !needsCombinedRole();
+    };
+    const stepChips = (flow) => flow.steps.map((step, index) => `${index ? '<i class="flow-arrow" aria-hidden="true">›</i>' : ""}<span class="flow-step"><span class="chat-avatar av-${roleAvatarTone(step.role)}" aria-hidden="true">${roleAvatarIcon(step.role).replace('width="18" height="18"', 'width="12" height="12"')}</span><span data-no-i18n>${esc(roleName(step.role))}</span></span>`).join("");
+    const workflowItem = (flow) => `<div class="workflow-item">
+        <button class="profile-option workflow-option ${catalog.selected === flow.id ? "selected" : ""}" type="button" data-workflow="${esc(flow.id)}" aria-pressed="${catalog.selected === flow.id}">
+          <span class="profile-option-name" data-no-i18n>${esc(flow.builtin ? UI.translate(flow.name) : flow.name)}</span>
+          ${flow.summary ? `<span class="profile-option-desc">${esc(UI.translate(flow.summary))}</span>` : ""}
+          <span class="flow-steps" aria-label="${esc(UI.translate("Steps"))}">${stepChips(flow)}</span>
+          <span class="profile-option-check" aria-hidden="true">${pageIcon("check")}</span>
+        </button>
+        <div class="workflow-item-actions">
+          <button class="btn small" type="button" data-wf-edit="${esc(flow.id)}">${esc(UI.translate(flow.builtin ? "Save a copy to edit" : "Edit"))}</button>
+          ${flow.builtin ? "" : `<button class="btn small danger" type="button" data-wf-delete="${esc(flow.id)}">${esc(UI.translate("Delete"))}</button>`}
+        </div>
+      </div>`;
+    const SELECTION_LABELS = [["fixed", "Always the selected workflow"], ["pm", "ChatGPT chooses for each task"], ["auto", "ccc-mcp chooses from the task"]];
+    const paintWorkflow = () => {
+      const panel = document.getElementById("workflow-panel");
+      if (!panel) return;
+      if (editing) {
+        const roleOptions = (index, current) => AGENT_ROLE_ORDER.filter((role) => index > 0 || PRODUCER_ROLES.includes(role))
+          .map((role) => `<option value="${esc(role)}" ${role === current ? "selected" : ""}>${esc(roleName(role))} (${esc(UI.translate(ROLE_HELP[role] || role))})</option>`).join("");
+        panel.innerHTML = `<div class="wf-editor">
+          <div class="field narrow-field"><label for="wf-name">${esc(UI.translate("Workflow name"))}</label><input type="text" id="wf-name" maxlength="40" value="${esc(editing.name)}" placeholder="${esc(UI.translate("Named automatically if left empty"))}" /></div>
+          <ol class="wf-steps">${editing.steps.map((role, index) => `<li class="wf-step">
+            <span class="wf-index" aria-hidden="true">${index + 1}</span>
+            <span class="chat-avatar av-${roleAvatarTone(role)}" aria-hidden="true">${roleAvatarIcon(role)}</span>
+            <select class="wf-role" data-index="${index}" aria-label="${esc(UI.translate("Step"))} ${index + 1}">${roleOptions(index, role)}</select>
+            <button class="btn small ghost" type="button" data-wf-move="${index}:-1" aria-label="${esc(UI.translate("Move up"))}" ${index === 0 ? "disabled" : ""}>↑</button>
+            <button class="btn small ghost" type="button" data-wf-move="${index}:1" aria-label="${esc(UI.translate("Move down"))}" ${index === editing.steps.length - 1 ? "disabled" : ""}>↓</button>
+            <button class="btn small ghost" type="button" data-wf-remove="${index}" aria-label="${esc(UI.translate("Remove step"))}" ${editing.steps.length === 1 ? "disabled" : ""}>×</button>
+          </li>`).join("")}</ol>
+          <div class="wf-add-row"><button class="btn small" type="button" id="wf-add" ${editing.steps.length >= 12 ? "disabled" : ""}>${esc(UI.translate("Add step"))}</button></div>
+          <div class="hint">${esc(UI.translate("The first step must make something (SA, SD, RD or SD/RD). A reviewer that finds a problem sends work back to the nearest step before it that makes something; everything after that step then runs again. Up to 12 steps."))}</div>
+          <div class="wf-actions"><button class="btn small" type="button" id="wf-cancel">${esc(UI.translate("Cancel"))}</button><button class="btn small primary" type="button" id="wf-save">${esc(UI.translate("Save workflow"))}</button></div>
+        </div>`;
+        UI.localize(panel);
+        const keepName = () => { editing.name = document.getElementById("wf-name").value; };
+        panel.querySelectorAll(".wf-role").forEach((select) => select.addEventListener("change", () => { keepName(); editing.steps[Number(select.dataset.index)] = select.value; paintWorkflow(); }));
+        panel.querySelectorAll("[data-wf-move]").forEach((button) => button.addEventListener("click", () => {
+          keepName();
+          const [from, delta] = button.dataset.wfMove.split(":").map(Number);
+          const to = from + delta;
+          if (to < 0 || to >= editing.steps.length) return;
+          [editing.steps[from], editing.steps[to]] = [editing.steps[to], editing.steps[from]];
+          // The first step has to be a producer; keep that true when something else moved up.
+          if (!PRODUCER_ROLES.includes(editing.steps[0])) { [editing.steps[from], editing.steps[to]] = [editing.steps[to], editing.steps[from]]; toast("The first step must be SA, SD, RD or SD/RD.", true); }
+          paintWorkflow();
+        }));
+        panel.querySelectorAll("[data-wf-remove]").forEach((button) => button.addEventListener("click", () => {
+          keepName();
+          const next = editing.steps.filter((_, index) => index !== Number(button.dataset.wfRemove));
+          if (!PRODUCER_ROLES.includes(next[0])) { toast("The first step must be SA, SD, RD or SD/RD.", true); return; }
+          editing.steps = next;
+          paintWorkflow();
+        }));
+        document.getElementById("wf-add").addEventListener("click", () => { keepName(); editing.steps.push("REVIEW"); paintWorkflow(); });
+        document.getElementById("wf-cancel").addEventListener("click", () => { editing = null; paintWorkflow(); });
+        document.getElementById("wf-save").addEventListener("click", async () => {
+          keepName();
+          try {
+            const saved = await api(`/projects/${encodeURIComponent(id)}/workflows`, { method: "POST", body: { id: editing.id || undefined, name: editing.name.trim() || undefined, steps: editing.steps } });
+            toast("Workflow saved.");
+            editing = null;
+            await refreshCatalog();
+            paintWorkflow();
+            return saved;
+          } catch (err) { toast(err.message, true); }
+        });
+        return;
+      }
+      panel.innerHTML = `<div class="workflow-list">${catalog.workflows.map(workflowItem).join("")}</div>
+        <div class="wf-add-row"><button class="btn small primary" type="button" id="wf-new">${esc(UI.translate("New workflow"))}</button></div>
+        <div class="field narrow-field wf-selection"><label for="wf-selection">${esc(UI.translate("Who chooses the workflow for a new task"))}</label>${gateSelect("wf-selection", catalog.selection, SELECTION_LABELS)}
+          <div class="hint">${esc(UI.translate("With ChatGPT choosing, it sees every workflow and picks the best fit for each task. With ccc-mcp choosing, security work gets SEC, large refactors get SD and AR, and small edits get the shortest workflow."))}</div></div>`;
+      UI.localize(panel);
+      panel.querySelectorAll("[data-workflow]").forEach((button) => button.addEventListener("click", async () => {
+        try {
+          await api(`/projects/${encodeURIComponent(id)}/config/workflow`, { method: "POST", body: { workflow: button.dataset.workflow } });
+          toast("Workflow saved.");
+          await refreshCatalog();
+          paintWorkflow();
+        } catch (err) { toast(err.message, true); }
+      }));
+      panel.querySelectorAll("[data-wf-edit]").forEach((button) => button.addEventListener("click", () => {
+        const flow = catalog.workflows.find((item) => item.id === button.dataset.wfEdit);
+        editing = { id: flow.builtin ? null : flow.id, name: flow.builtin ? "" : flow.name, steps: flow.steps.map((step) => step.role) };
+        paintWorkflow();
+      }));
+      panel.querySelectorAll("[data-wf-delete]").forEach((button) => button.addEventListener("click", () => {
+        const flow = catalog.workflows.find((item) => item.id === button.dataset.wfDelete);
+        showModal({
+          title: "Delete this workflow?", body: `${flow.name}\n${UI.translate("Tasks already running it keep going. If it is the selected workflow, new tasks use Classic.")}`,
+          confirmLabel: "Delete", danger: true,
+          onSubmit: async () => { await api(`/projects/${encodeURIComponent(id)}/workflows/${encodeURIComponent(flow.id)}/delete`, { method: "POST" }); toast("Workflow deleted."); await refreshCatalog(); paintWorkflow(); },
+        });
+      }));
+      document.getElementById("wf-new").addEventListener("click", () => { editing = { id: null, name: "", steps: ["SA", "RD", "REVIEW"] }; paintWorkflow(); });
+      document.getElementById("wf-selection").addEventListener("change", async (event) => {
+        try {
+          await api(`/projects/${encodeURIComponent(id)}/config/workflow-selection`, { method: "POST", body: { selection: event.target.value } });
+          toast("Workflow saved.");
+          await refreshCatalog();
+        } catch (err) { toast(err.message, true); }
+      });
+    };
+    paintWorkflow();
+    document.getElementById("save-review-gate").addEventListener("click", async () => {
+      const rounds = parseInt(document.getElementById("gate-rounds").value, 10);
+      try {
+        await api(`/projects/${encodeURIComponent(id)}/config/review-gate`, {
+          method: "POST",
+          body: {
+            ar_strictness: document.getElementById("gate-ar").value,
+            max_rounds: isNaN(rounds) ? undefined : rounds,
+            escalation: document.getElementById("gate-escalation").value,
+          },
+        });
+        toast("Review gates saved.");
+      } catch (err) { toast(err.message, true); }
     });
     document.getElementById("save-meeting-mode").addEventListener("click", async () => {
       const enabled = document.getElementById("mm-enabled").checked;

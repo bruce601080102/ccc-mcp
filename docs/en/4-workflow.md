@@ -40,6 +40,44 @@ Off by default. `ccc-mcp --project hello-demo config meeting-mode on --min-round
 
 See [reliability and security](7-reliability-and-security.md) for test gates, quota fallback, and recovery guarantees.
 
+## Workflows and review gates
+
+A new task runs the workflow the project selected when the task starts (`config workflow classic|full`, or Settings → Workflow). A task keeps that workflow for its whole life; changing the setting later never moves work in flight.
+
+| Workflow | Steps |
+|---|---|
+| `standard` (default for projects added with the CLI or the console) | SA → SD → RD → CR. Design and development are separate steps: SD produces a design report (read-only), then RD implements it. |
+| `classic` (default for projects that never chose) | SA → SD/RD → CR. SD and RD in one combined step; its behaviour is unchanged. Meeting Mode only applies here. |
+| `full` | SA → SD → AR → SR → SEC → RD → CR → SEC → QA |
+
+The roles: PM (the ChatGPT conversation that starts and accepts the work), SA system analyst, SD system designer (design only, never edits files), RD developer, CR code reviewer (stored as `REVIEW`), SR specification reviewer, AR adversarial reviewer, SEC security reviewer, QA quality assurance, SW specification writer. SA, SD, RD and SW **produce**; CR, SR, AR, SEC and QA are **gates** that judge. Each role has its own provider (`config role`) and a chat-room name (`config role-name`, default the abbreviation).
+
+**A gate sends work back.** When a gate finds blocking problems, the nearest earlier producer redoes the work with the findings, and every later step runs again, so no reviewer judges a stale result. A gate may send work back at most `max_rounds` times (`config review-gate --max-rounds`, 1–5, default 2). After that the task stops with `waiting_on: PM_FLOW_DECISION` instead of looping; the PM calls `resolve_flow_gate` with `proceed` (accept and continue), `retry` (send it back once more) or `stop`. `--escalation ask-user` (default) makes ChatGPT put the decision to the real user; `auto-pm` lets ChatGPT decide and report why.
+
+**AR cannot hold the workflow up with unsupported claims.** Every AR finding is written as `[blocker|major|minor|assumption] claim | evidence: ...`. A finding with no evidence is discarded. Strictness (`--ar normal|strict|extreme`) sets which severities can block: normal blocks on `major` and above, strict also on `minor`, extreme also on `assumption`. A `blocker` means the approach itself is unsound: it goes straight to the PM (`REJECT`) rather than back to the producer. The verdict is computed by ccc-mcp from the findings, not taken from the model. Other gates trust the reviewer's own `needs_revision`; CR and QA also fail whenever host-run tests failed or verified nothing.
+
+Each gate verdict is stored (`flow_gate_results`) and a gate's failed rounds are counted from those rows, so the limit survives a crash or a resumed dispatch. Gate steps that end in `PASS` advance automatically; SA still needs the PM's plan, as before.
+
+### The specification writer (SW)
+
+SW turns what the discussion concluded (the requirement, SA's analysis, SD's design, and what the reviewers raised and how it was settled) into one specification written for an AI to implement from: purpose and non-goals, a glossary, decisions with their reasons and the alternatives rejected, numbered testable requirements (`REQ-001`, MUST/SHOULD/MAY), exact interfaces and data shapes, Given/When/Then acceptance criteria, and open questions listed rather than guessed. The document is saved as `SPEC.md` (the report itself as `SW-REPORT.md`) and handed to SD, RD and every reviewer that runs after it; the console shows it on the task's Results tab. SW only reads the repository; it never changes files. It is a producer, so a gate after it sends work back to it. No built-in workflow includes SW yet: add it in Settings → Workflow, for example `SA → AR → SR → SW → RD → CR`, so the spec is written after the discussion has settled.
+
+### Your own workflows, and who picks one
+
+Settings → Workflow (or `config workflow-save --steps SD,AR,RD,REVIEW [--name N]`) lets you build a workflow from any ordered list of roles, up to 12 steps. The first step must make something (SA, SD, RD or SD/RD) so a reviewer always has something to judge and a producer to send work back to. A workflow you save is named `工作流 2`, then `工作流 3` (`Workflow 2`, `Workflow 3` when the project language is English), and you can rename it; the two built-in workflows cannot be changed, only copied. A project holds at most 20 of its own. Deleting one never disturbs a task already running it, and if it was the selected workflow new tasks go back to `classic`.
+
+A workflow with no SA, for example `SD → AR → RD → CR`, uses your requirement and acceptance criteria as the approved plan, so the PM goes straight to SD.
+
+`config workflow-selection fixed|pm|auto` decides who picks a new task's workflow:
+
+| Mode | Behaviour |
+|---|---|
+| `fixed` (default) | Always the selected workflow. |
+| `pm` | ChatGPT calls `list_workflows`, chooses the best fit per task and passes its id as `workflow` to `start_project_request`; with no choice the selected workflow runs. |
+| `auto` | ccc-mcp picks from the task text. Security work (login, password, token, permission, payment…) needs a workflow with SEC; a large or risky change (refactor, migrate, architecture, schema…) needs SD and AR; a small edit (typo, rename, docs…) gets the shortest workflow; anything else keeps the selected one. Among workflows that qualify the shortest wins. |
+
+The chosen workflow, how it was chosen and why are stored with the task (`task status` → `brief.workflow`). A `workflow` argument is ignored unless the mode is `pm`.
+
 ## Task detail 2.0: conversation and user intervention
 
 The local UI now opens each task on a work conversation. It rebuilds events from existing `task_events`, `agent_executions`, and saved per-run `TEST-RESULT.md` evidence, then includes persisted user interventions. Older tasks need no migration. Agent summaries come from saved reports; a test is described as verified only when the host actually ran it. Results and Technical record retain the original reports, diff, evaluation, Context, and handoff.

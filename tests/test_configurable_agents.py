@@ -177,7 +177,7 @@ def test_provider_overview_separates_editable_from_read_only(bridge, human):
 
     assert set(overview["editable"]) == {
         "roles", "language", "test_command", "context_token_budget", "meeting_mode", "runtime",
-        "evaluation_engine",
+        "evaluation_engine", "role_names", "role_avatars", "workflow", "workflows", "workflow_selection", "review_gate",
     }
     assert overview["read_only_status"]["project_access"]["mode"] == "read-write"
     assert overview["available_providers"]["codex"]
@@ -428,7 +428,7 @@ def test_role_prompt_preview_matches_what_dispatch_would_actually_send(bridge, r
 
 def test_role_prompt_preview_rejects_unknown_role(bridge):
     with pytest.raises(BridgeError):
-        bridge.role_prompt_preview("demo", "QA")
+        bridge.role_prompt_preview("demo", "ZZ")
 
 
 def test_role_prompt_preview_tool_access_follows_cli_lang_but_payload_does_not(bridge, monkeypatch):
@@ -929,3 +929,61 @@ def test_pm_can_read_native_worktree_without_granting_write_access(bridge, human
     )
     with pytest.raises(PermissionDenied):
         bridge.write_task_file("demo", queued["execution_id"], "bad.py", "pass")
+
+
+def test_new_review_roles_default_to_codex_and_are_configurable(bridge):
+    settings = bridge.get_project_settings("demo")["roles"]
+    for role in ("SR", "AR", "SEC", "QA", "SW"):
+        assert settings[role]["provider"] == "codex"
+    bridge.configure_role("demo", "AR", "chatgpt")
+    assert bridge.get_project_settings("demo")["roles"]["AR"]["provider"] == "chatgpt"
+
+
+def test_role_names_default_to_nothing_and_can_be_set_and_reset(bridge):
+    assert bridge.get_project_settings("demo")["role_names"] == {}
+
+    bridge.configure_role_name("demo", "SA", "  Analyst   Amy ")
+    bridge.configure_role_name("demo", "PM", "Boss")
+    assert bridge.get_project_settings("demo")["role_names"] == {"SA": "Analyst Amy", "PM": "Boss"}
+
+    bridge.configure_role_name("demo", "SA", "")
+    assert bridge.get_project_settings("demo")["role_names"] == {"PM": "Boss"}
+
+
+@pytest.mark.parametrize("role,name", [("NOPE", "x"), ("SA", "x" * 25), ("SA", "bad\x00name"), ("SA", 7)])
+def test_role_names_reject_bad_input(bridge, role, name):
+    with pytest.raises(BridgeError):
+        bridge.configure_role_name("demo", role, name)
+
+
+def test_role_name_cli_sets_and_resets(bridge):
+    prefix = ["--home", str(bridge.home), "--project", "demo", "config", "role-name"]
+    assert CliRunner().invoke(app, prefix + ["QA", "Tester Tom"]).exit_code == 0
+    assert bridge.get_project_settings("demo")["role_names"] == {"QA": "Tester Tom"}
+    assert CliRunner().invoke(app, prefix + ["QA"]).exit_code == 0
+    assert bridge.get_project_settings("demo")["role_names"] == {}
+
+
+def test_role_avatars_default_to_each_roles_own_and_can_be_changed_and_reset(bridge):
+    assert bridge.get_project_settings("demo")["role_avatars"] == {}
+    bridge.configure_role_avatar("demo", "QA", "cat")
+    bridge.configure_role_avatar("demo", "PM", "robot")
+    assert bridge.get_project_settings("demo")["role_avatars"] == {"QA": "cat", "PM": "robot"}
+
+    bridge.configure_role_avatar("demo", "QA", "")
+    bridge.configure_role_avatar("demo", "PM", "boss")  # its own default: same as no choice
+    assert bridge.get_project_settings("demo")["role_avatars"] == {}
+
+
+@pytest.mark.parametrize("role,avatar", [("NOPE", "cat"), ("QA", "dragon"), ("QA", 3)])
+def test_role_avatars_reject_bad_input(bridge, role, avatar):
+    with pytest.raises(BridgeError):
+        bridge.configure_role_avatar("demo", role, avatar)
+
+
+def test_role_avatar_cli_sets_and_resets(bridge):
+    prefix = ["--home", str(bridge.home), "--project", "demo", "config", "role-avatar"]
+    assert CliRunner().invoke(app, prefix + ["AR", "frog"]).exit_code == 0
+    assert bridge.get_project_settings("demo")["role_avatars"] == {"AR": "frog"}
+    assert CliRunner().invoke(app, prefix + ["AR"]).exit_code == 0
+    assert bridge.get_project_settings("demo")["role_avatars"] == {}

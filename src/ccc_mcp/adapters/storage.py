@@ -144,6 +144,37 @@ CREATE TRIGGER IF NOT EXISTS task_deletions_no_update BEFORE UPDATE ON task_dele
  BEGIN SELECT RAISE(ABORT, 'Task deletion history is immutable'); END;
 CREATE TRIGGER IF NOT EXISTS task_deletions_no_delete BEFORE DELETE ON task_deletions
  BEGIN SELECT RAISE(ABORT, 'Task deletion history is immutable'); END;
+-- Workflow engine (core/flow_engine.py). task_flows pins the workflow a task runs, as the
+-- steps it had when the task started, so editing a workflow never changes work in flight.
+-- Tasks with no row run the Classic workflow on the original state machine.
+CREATE TABLE IF NOT EXISTS task_flows (
+ project_id TEXT NOT NULL REFERENCES projects(id), task_id TEXT NOT NULL,
+ flow_id TEXT NOT NULL, snapshot TEXT NOT NULL, created TEXT NOT NULL,
+ PRIMARY KEY(project_id, task_id));
+-- One verdict per gate execution, append-only. A gate's failed rounds are counted from
+-- these rows, so the retry limit survives a crash or a resumed dispatch.
+CREATE TABLE IF NOT EXISTS flow_gate_results (
+ id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
+ task_id TEXT NOT NULL, step_index INTEGER NOT NULL, role TEXT NOT NULL,
+ source_execution_id TEXT NOT NULL UNIQUE, verdict TEXT NOT NULL,
+ strictness TEXT, detail TEXT NOT NULL, created TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_flow_gate_results_task
+ ON flow_gate_results(project_id, task_id, step_index);
+CREATE TRIGGER IF NOT EXISTS flow_gate_results_no_update BEFORE UPDATE ON flow_gate_results
+ BEGIN SELECT RAISE(ABORT, 'Gate verdict history is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS flow_gate_results_no_delete BEFORE DELETE ON flow_gate_results
+ BEGIN SELECT RAISE(ABORT, 'Gate verdict history is immutable'); END;
+-- A gate that ran out of rounds, or rejected the approach outright, waits here for the PM.
+CREATE TABLE IF NOT EXISTS flow_escalations (
+ id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
+ task_id TEXT NOT NULL, step_index INTEGER NOT NULL, role TEXT NOT NULL,
+ reason TEXT NOT NULL, detail TEXT NOT NULL, adapter TEXT NOT NULL,
+ fake_scenario TEXT NOT NULL, escalation TEXT NOT NULL,
+ status TEXT NOT NULL, decision TEXT, decision_note TEXT, decided TEXT, created TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_flow_escalations_task
+ ON flow_escalations(project_id, task_id, status);
+CREATE TRIGGER IF NOT EXISTS flow_escalations_no_delete BEFORE DELETE ON flow_escalations
+ BEGIN SELECT RAISE(ABORT, 'Gate escalation history is immutable'); END;
 -- Read-path indexes only: every query below already filters by project_id (often also
 -- task_id) and these columns have no other supporting index, so lookups on these tables
 -- were full scans. Purely additive (IF NOT EXISTS), so they cannot change any query's

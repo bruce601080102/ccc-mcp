@@ -2,6 +2,7 @@ import json
 import os
 from pathlib import Path
 
+from ...core.roles import AGENT_ROLES, READ_ONLY_ROLES
 from ...infra.errors import AgentProcessError, BridgeError
 from ...infra.security import redact
 from ...infra.telemetry import record_output
@@ -27,14 +28,18 @@ def error_detail(stdout):
 
 class ClaudeCodeAdapter(BaseAgentAdapter):
     def run(self, package, instruction, cwd, timeout, cancelled):
-        if package["role"] not in {"SA", "REVIEW", "SD", "RD", "SD/RD"}:
+        if package["role"] not in AGENT_ROLES:
             raise BridgeError("Unsupported Claude role")
         report_schema = package.get("report_schema", "agent_report")
         model = REPORT_MODELS[report_schema]
         # Requesting anything other than the normal AgentReport schema is itself the
         # read-only signal (Meeting Mode's clarification-ask, role SD/RD, and
         # clarification-answer, role SA which is already read-only anyway).
-        readonly = package["role"] in {"SA", "REVIEW"} or report_schema != "agent_report"
+        readonly = (
+            package["role"] in READ_ONLY_ROLES
+            or report_schema != "agent_report"
+            or bool(package.get("read_only"))
+        )
         options = package.get("agent_settings", {})
         # Only servers an operator installed with the local CLI (`skill install mcp`).
         mcp = package.get("mcp_servers") or {}

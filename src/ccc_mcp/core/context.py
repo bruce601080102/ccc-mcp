@@ -17,6 +17,7 @@ from ..infra.config import metadata_name
 from ..infra.errors import BridgeError, PermissionDenied, VersionConflict
 from ..infra.security import atomic_write, canonical, digest, reject_secrets, safe_path
 from .models import PROTOCOL_VERSION, ContextPatch, ContextSnapshot, SourceRef
+from .roles import AGENT_ROLES, READ_ONLY_ROLES, REVIEWER_ROLES
 
 DOCUMENTS = {
     "project": "context/PROJECT.md",
@@ -845,6 +846,7 @@ class ContextHub:
                         if (
                             execution
                             and execution["role"] == "REVIEW"
+                            and not self._task_flow(project_id, execution["task_id"], conn)
                             and execution["status"] == "SUCCEEDED"
                             and not report.get("needs_revision")
                             and not self._host_test_failed(project_id, execution["task_id"])
@@ -1354,7 +1356,7 @@ class ContextHub:
         }
 
     def build_handoff(self, project_id, role="PM", task_id=None, token_budget=None):
-        if role not in {"PM", "SA", "SD", "RD", "SD/RD", "REVIEW"}:
+        if role not in {"PM", *AGENT_ROLES}:
             raise BridgeError("Unsupported role")
         latest = self.latest(project_id)
         snapshot = latest["snapshot"]
@@ -1379,7 +1381,7 @@ class ContextHub:
         }
         refs = snapshot["source_document_refs"][:]
         refs += [result["source_document_ref"] for result in snapshot["agent_results"]]
-        if role in {"SA", "REVIEW"}:
+        if role in READ_ONLY_ROLES:
             content["architecture"] = snapshot["architecture"]
             content["architecture_validation"] = self.validate_context(project_id)
             content["technical_decisions"] = self.store.all(
@@ -1416,19 +1418,28 @@ class ContextHub:
                 "AND delivered_execution_id IS NULL ORDER BY seq",
                 (project_id, task_id),
             )
-            if role in {"SD", "RD", "SD/RD", "REVIEW"}:
+            if role in {"SD", "RD", "SD/RD", "SW", *REVIEWER_ROLES}:
                 content["approved_plan"] = self.approved_plan(
                     project_id,
                     task_id,
-                    require_current_context=role != "REVIEW",
+                    require_current_context=role not in REVIEWER_ROLES,
                 )
+            reviewed = [
+                "REQUIREMENT.md", "SA-REPORT.md", "APPROVED-PLAN.md", "SD-REPORT.md", "SPEC.md",
+                "IMPLEMENTATION.md", "TEST-RESULT.md",
+            ]
             names = {
                 "SA": ["REQUIREMENT.md"],
                 "PM": TASK_DOCUMENTS,
-                "SD": ["REQUIREMENT.md", "SA-REPORT.md", "APPROVED-PLAN.md"],
-                "RD": ["REQUIREMENT.md", "SA-REPORT.md", "APPROVED-PLAN.md"],
-                "SD/RD": ["REQUIREMENT.md", "SA-REPORT.md", "APPROVED-PLAN.md"],
+                "SD": ["REQUIREMENT.md", "SA-REPORT.md", "APPROVED-PLAN.md", "SPEC.md"],
+                "RD": ["REQUIREMENT.md", "SA-REPORT.md", "APPROVED-PLAN.md", "SD-REPORT.md", "SPEC.md"],
+                "SD/RD": ["REQUIREMENT.md", "SA-REPORT.md", "APPROVED-PLAN.md", "SPEC.md"],
+                "SW": [
+                    "REQUIREMENT.md", "SA-REPORT.md", "APPROVED-PLAN.md", "SD-REPORT.md",
+                    "SR-REPORT.md", "AR-REPORT.md", "SEC-REPORT.md", "REVIEW.md", "SPEC.md",
+                ],
                 "REVIEW": ["REQUIREMENT.md", "SA-REPORT.md", "IMPLEMENTATION.md", "TEST-RESULT.md"],
+                **dict.fromkeys(["SR", "AR", "SEC", "QA"], reviewed),
             }[role]
             reports = {}
             for name in names:

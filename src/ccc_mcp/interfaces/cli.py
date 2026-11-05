@@ -402,7 +402,9 @@ def init(
     language: str = "zh-TW",
 ):
     deprecated("ccc-mcp project add")
-    output(bridge(ctx).register_project(path, id, purpose, language))
+    registered = bridge(ctx).register_project(path, id, purpose, language)
+    bridge(ctx).apply_new_project_workflow(registered["id"])
+    output(registered)
 
 
 @app.command(
@@ -460,6 +462,7 @@ def project_add(
     ] = False,
 ):
     registered = bridge(ctx).register_project(path, id, purpose, language)
+    bridge(ctx).apply_new_project_workflow(registered["id"])
     if not write:
         output(registered)
         return
@@ -578,6 +581,7 @@ def project_create(
     ] = False,
 ):
     created = bridge(ctx).create_project(id, path, language, profile)
+    bridge(ctx).apply_new_project_workflow(created["id"])
     if not write:
         output(created)
         return
@@ -746,6 +750,133 @@ def config_meeting_mode(
 
 
 @config_app.command(
+    "workflow",
+    help=t(
+        "選擇新任務使用的工作流：classic（SA → SD/RD → CR，預設）或 full（SA → SD → AR → SR → SEC → RD → CR → SEC → QA）。"
+        "任務開始時就固定使用當時的工作流，之後改設定不影響進行中的任務。"
+        "例如：ccc-mcp config workflow full",
+        "Choose the workflow new tasks run: classic (SA -> SD/RD -> CR, the default) or full "
+        "(SA -> SD -> AR -> SR -> SEC -> RD -> CR -> SEC -> QA). A task keeps the workflow it "
+        "started with, so changing this never affects work in flight. "
+        "Example: ccc-mcp config workflow full",
+    ),
+)
+def config_workflow(
+    ctx: typer.Context,
+    workflow: Annotated[str, typer.Argument(help=t("工作流 ID，例如 classic、full 或 flow-2", "A workflow ID such as classic, full or flow-2"))],
+):
+    output(bridge(ctx).configure_workflow(project_id(ctx), workflow))
+
+
+@config_app.command(
+    "workflows",
+    help=t(
+        "列出這個專案可用的工作流（內建與自訂）、目前選的是哪一條，以及誰來挑選（fixed／pm／auto）。",
+        "List the workflows this project can run (built-in and your own), which is selected, "
+        "and who picks a new task's workflow (fixed / pm / auto).",
+    ),
+)
+def config_workflows(ctx: typer.Context):
+    output(bridge(ctx).workflow_catalog(project_id(ctx)))
+
+
+@config_app.command(
+    "workflow-save",
+    help=t(
+        "建立或修改自己的工作流。--steps 用逗號分隔角色，第一步必須是 SA、SD、RD 或 SD/RD。"
+        "不給 --id 就新增一條，預設命名為「工作流 2」「工作流 3」…；給 --id 則修改該條。"
+        "例如：ccc-mcp config workflow-save --steps SD,AR,RD,REVIEW --name 快速流程",
+        "Create or change a workflow of your own. --steps is a comma-separated list of roles; the "
+        "first must be SA, SD, RD or SD/RD. Without --id a new one is added, named 'Workflow 2', "
+        "'Workflow 3', ...; with --id that one is changed. "
+        "Example: ccc-mcp config workflow-save --steps SD,AR,RD,REVIEW --name Quick",
+    ),
+)
+def config_workflow_save(
+    ctx: typer.Context,
+    steps: Annotated[str, typer.Option("--steps", help=t("例如 SA,SD,AR,RD,REVIEW,QA", "For example SA,SD,AR,RD,REVIEW,QA"))],
+    name: Annotated[str | None, typer.Option("--name", help=t("顯示名稱；省略則自動命名", "Display name; omit to auto-name"))] = None,
+    workflow_id: Annotated[str | None, typer.Option("--id", help=t("要修改的工作流 ID", "ID of the workflow to change"))] = None,
+):
+    output(
+        bridge(ctx).save_workflow(
+            project_id(ctx), [part.strip() for part in steps.split(",") if part.strip()], name, workflow_id
+        )
+    )
+
+
+@config_app.command(
+    "workflow-delete",
+    help=t(
+        "刪除自己的工作流（內建的不能刪）。已在跑這條工作流的任務不受影響；若它是目前選的，之後的新任務改回 classic。",
+        "Delete a workflow of your own (built-in ones cannot be deleted). Tasks already running it "
+        "are unaffected; if it was the selected one, new tasks go back to classic.",
+    ),
+)
+def config_workflow_delete(
+    ctx: typer.Context, workflow_id: Annotated[str, typer.Argument(help=t("工作流 ID", "Workflow ID"))]
+):
+    output(bridge(ctx).delete_workflow(project_id(ctx), workflow_id))
+
+
+@config_app.command(
+    "workflow-selection",
+    help=t(
+        "誰來挑新任務的工作流：fixed（預設，固定用選定的那條）、pm（由 ChatGPT 依任務挑，沒挑就用選定的）、"
+        "auto（ccc-mcp 依任務內容自動挑：碰到登入、權限等安全相關帶 SEC，大型重構帶 SD 與 AR，小修改用最短的）。",
+        "Who picks a new task's workflow: fixed (default, always the selected one), pm (ChatGPT "
+        "chooses per task, the selected one if it does not), auto (ccc-mcp picks from the task's "
+        "text: security work gets SEC, large refactors get SD and AR, small edits the shortest).",
+    ),
+)
+def config_workflow_selection(
+    ctx: typer.Context, selection: Annotated[str, typer.Argument(help=t("fixed、pm 或 auto", "fixed, pm, or auto"))]
+):
+    output(bridge(ctx).configure_workflow_selection(project_id(ctx), selection))
+
+
+@config_app.command(
+    "review-gate",
+    help=t(
+        "設定審查關卡的力道。--ar 為 AR 對抗式審查強度：normal（只擋明確錯誤）、strict（連次要問題也擋）、"
+        "extreme（挑戰每個假設）；AR 每個發現都必須附證據，沒證據的不算。--max-rounds 是一個關卡最多可退回幾次（1–5），"
+        "超過後交給 PM 決定；--escalation 決定誰來決定：ask-user（預設）要求 ChatGPT 問真人使用者，auto-pm 讓 ChatGPT 自行決定。"
+        "省略的選項維持現有設定。例如：ccc-mcp config review-gate --ar strict --max-rounds 3",
+        "Set how hard the review gates push back. --ar is the adversarial reviewer's strictness: "
+        "normal (blocks only clear faults), strict (also minor problems), extreme (challenges every "
+        "assumption); every AR finding must cite evidence or it does not count. --max-rounds is how "
+        "many times a gate may send work back (1-5) before the PM decides; --escalation says who "
+        "decides: ask-user (default) makes ChatGPT ask the real user, auto-pm lets ChatGPT decide. "
+        "Omitted options keep their current setting. Example: ccc-mcp config review-gate --ar strict --max-rounds 3",
+    ),
+)
+def config_review_gate(
+    ctx: typer.Context,
+    ar: Annotated[
+        str | None,
+        typer.Option("--ar", help=t("normal、strict 或 extreme", "normal, strict, or extreme")),
+    ] = None,
+    max_rounds: Annotated[
+        int | None,
+        typer.Option("--max-rounds", help=t("1–5；系統硬上限 5", "1-5; hard system cap of 5")),
+    ] = None,
+    escalation: Annotated[
+        str | None,
+        typer.Option("--escalation", help=t("ask-user 或 auto-pm", "ask-user or auto-pm")),
+    ] = None,
+):
+    if escalation is not None and escalation not in {"ask-user", "auto-pm"}:
+        raise BridgeError(
+            t("--escalation 請輸入 ask-user 或 auto-pm", "--escalation must be ask-user or auto-pm")
+        )
+    output(
+        bridge(ctx).configure_review_gate(
+            project_id(ctx), ar, max_rounds, escalation.replace("-", "_") if escalation else None
+        )
+    )
+
+
+@config_app.command(
     "evaluation-engine",
     help=t(
         "預設關閉：開啟後可用 `ccc-mcp task evaluate` 對已完成的 SA/SD/RD/REVIEW 執行"
@@ -795,7 +926,12 @@ def config_evaluation_engine(
 def config_role(
     ctx: typer.Context,
     role: Annotated[
-        str, typer.Argument(help=t("SA、SD、RD、SD/RD 或 REVIEW", "SA, SD, RD, SD/RD, or REVIEW"))
+        str, typer.Argument(
+            help=t(
+                "SA、SD、RD、SD/RD、REVIEW(CR)、SR、AR、SEC、QA 或 SW",
+                "SA, SD, RD, SD/RD, REVIEW (CR), SR, AR, SEC, QA, or SW",
+            )
+        )
     ],
     provider: Annotated[
         str, typer.Argument(help=t("codex、claude 或 chatgpt", "codex, claude, or chatgpt"))
@@ -831,6 +967,47 @@ def config_role(
     output(
         bridge(ctx).configure_role(project_id(ctx), role, provider, model, effort, quota_fallback)
     )
+
+
+@config_app.command(
+    "role-name",
+    help=t(
+        "替角色取一個聊天室顯示名稱（PM 也可以）；不填名稱就恢復預設（角色縮寫）。"
+        "例如：ccc-mcp config role-name SA 小分析",
+        "Give a role (PM included) a display name for the chat room; omit the name to restore "
+        "the default (the role's abbreviation). Example: ccc-mcp config role-name SA Analyst Amy",
+    ),
+)
+def config_role_name(
+    ctx: typer.Context,
+    role: Annotated[
+        str, typer.Argument(help=t("PM、SA、SD、RD、SD/RD、REVIEW、SR、AR、SEC、QA 或 SW", "PM, SA, SD, RD, SD/RD, REVIEW, SR, AR, SEC, QA, or SW"))
+    ],
+    name: Annotated[
+        str | None,
+        typer.Argument(help=t("顯示名稱（最多 24 字）；留空恢復預設", "Display name (up to 24 characters); omit to reset")),
+    ] = None,
+):
+    output(bridge(ctx).configure_role_name(project_id(ctx), role, name))
+
+
+@config_app.command(
+    "role-avatar",
+    help=t(
+        "替角色（含 PM）選聊天室的像素頭像；不填頭像就恢復該角色的預設。"
+        "可選：boss、detective、designer、dev、angel、monk、devil、knight、tester、person、cat、robot、bear、frog、writer。"
+        "例如：ccc-mcp config role-avatar QA cat",
+        "Choose the pixel avatar a role (PM included) wears in the chat room; omit the avatar to "
+        "restore the role's own. Choices: boss, detective, designer, dev, angel, monk, devil, knight, "
+        "tester, person, cat, robot, bear, frog, writer. Example: ccc-mcp config role-avatar QA cat",
+    ),
+)
+def config_role_avatar(
+    ctx: typer.Context,
+    role: Annotated[str, typer.Argument(help=t("PM、SA、SD、RD、SD/RD、REVIEW、SR、AR、SEC、QA 或 SW", "PM, SA, SD, RD, SD/RD, REVIEW, SR, AR, SEC, QA, or SW"))],
+    avatar: Annotated[str | None, typer.Argument(help=t("頭像名稱；留空恢復預設", "Avatar name; omit to reset"))] = None,
+):
+    output(bridge(ctx).configure_role_avatar(project_id(ctx), role, avatar))
 
 
 @config_app.command(

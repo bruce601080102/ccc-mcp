@@ -295,6 +295,7 @@ async def add_project(request: Request):
         body.get("purpose"),
         body.get("language", "zh-TW"),
     )
+    await run(bridge.apply_new_project_workflow, registered["id"])
     if body.get("enable_write"):
         confirm = body.get("confirm", "")
         registered = {
@@ -318,6 +319,7 @@ async def create_project(request: Request):
         body.get("language", "zh-TW"),
         body.get("profile"),
     )
+    await run(bridge.apply_new_project_workflow, created["id"])
     if body.get("enable_write"):
         confirm = body.get("confirm", "")
         created = {
@@ -427,6 +429,31 @@ async def get_settings(request: Request):
 
 
 @endpoint
+async def set_role_name(request: Request):
+    bridge = bridge_of(request)
+    body = await _body(request)
+    result = await run(
+        bridge.configure_role_name,
+        request.path_params["project_id"],
+        body.get("role"),
+        body.get("name"),
+    )
+    return JSONResponse(result)
+
+
+@endpoint
+async def set_role_avatar(request: Request):
+    bridge = bridge_of(request)
+    body = await _body(request)
+    return JSONResponse(await run(
+        bridge.configure_role_avatar,
+        request.path_params["project_id"],
+        body.get("role"),
+        body.get("avatar"),
+    ))
+
+
+@endpoint
 async def set_role(request: Request):
     bridge = bridge_of(request)
     body = await _body(request)
@@ -506,6 +533,77 @@ async def set_meeting_mode(request: Request):
         body.get("escalation"),
     )
     return JSONResponse(result)
+
+
+@endpoint
+async def set_workflow(request: Request):
+    bridge = bridge_of(request)
+    body = await _body(request)
+    return JSONResponse(await run(
+        bridge.configure_workflow, request.path_params["project_id"], body.get("workflow"),
+    ))
+
+
+@endpoint
+async def set_review_gate(request: Request):
+    bridge = bridge_of(request)
+    body = await _body(request)
+    return JSONResponse(await run(
+        bridge.configure_review_gate,
+        request.path_params["project_id"],
+        body.get("ar_strictness"),
+        body.get("max_rounds"),
+        body.get("escalation"),
+    ))
+
+
+@endpoint
+async def set_workflow_selection(request: Request):
+    bridge = bridge_of(request)
+    body = await _body(request)
+    return JSONResponse(await run(
+        bridge.configure_workflow_selection, request.path_params["project_id"], body.get("selection"),
+    ))
+
+
+@endpoint
+async def save_workflow(request: Request):
+    bridge = bridge_of(request)
+    body = await _body(request)
+    return JSONResponse(await run(
+        bridge.save_workflow,
+        request.path_params["project_id"],
+        body.get("steps"),
+        body.get("name"),
+        body.get("id"),
+    ))
+
+
+@endpoint
+async def delete_workflow(request: Request):
+    bridge = bridge_of(request)
+    return JSONResponse(await run(
+        bridge.delete_workflow, request.path_params["project_id"], request.path_params["workflow_id"],
+    ))
+
+
+@endpoint
+async def list_workflows(request: Request):
+    bridge = bridge_of(request)
+    return JSONResponse(await run(bridge.workflow_catalog, request.path_params["project_id"]))
+
+
+@endpoint
+async def task_gate_decision(request: Request):
+    bridge = bridge_of(request)
+    body = await _body(request)
+    return JSONResponse(await run(
+        bridge.resolve_flow_gate,
+        request.path_params["project_id"],
+        request.path_params["task_id"],
+        body.get("decision"),
+        body.get("note") or "",
+    ))
 
 
 @endpoint
@@ -1081,12 +1179,26 @@ ROUTES = [
     ),
     Route("/api/projects/{project_id}/settings", get_settings, methods=["GET"]),
     Route("/api/projects/{project_id}/config/role", set_role, methods=["POST"]),
+    Route("/api/projects/{project_id}/config/role-name", set_role_name, methods=["POST"]),
+    Route("/api/projects/{project_id}/config/role-avatar", set_role_avatar, methods=["POST"]),
     Route("/api/projects/{project_id}/config/profile", set_profile, methods=["POST"]),
     Route("/api/projects/{project_id}/config/language", set_language, methods=["POST"]),
     Route("/api/projects/{project_id}/config/test-command", set_test_command, methods=["POST"]),
     Route("/api/projects/{project_id}/config/runtime", set_runtime, methods=["POST"]),
     Route("/api/projects/{project_id}/config/runtime/check", check_runtime, methods=["POST"]),
     Route("/api/projects/{project_id}/config/meeting-mode", set_meeting_mode, methods=["POST"]),
+    Route("/api/projects/{project_id}/config/workflow", set_workflow, methods=["POST"]),
+    Route("/api/projects/{project_id}/config/review-gate", set_review_gate, methods=["POST"]),
+    Route("/api/projects/{project_id}/workflows", list_workflows, methods=["GET"]),
+    Route("/api/projects/{project_id}/workflows", save_workflow, methods=["POST"]),
+    Route(
+        "/api/projects/{project_id}/workflows/{workflow_id}/delete", delete_workflow,
+        methods=["POST"],
+    ),
+    Route(
+        "/api/projects/{project_id}/config/workflow-selection", set_workflow_selection,
+        methods=["POST"],
+    ),
     Route(
         "/api/projects/{project_id}/config/evaluation-engine",
         set_evaluation_engine, methods=["POST"],
@@ -1121,6 +1233,10 @@ ROUTES = [
     Route("/api/projects/{project_id}/tasks/{task_id}/stop", task_stop, methods=["POST"]),
     Route("/api/projects/{project_id}/tasks/{task_id}/messages", task_message, methods=["POST"]),
     Route("/api/projects/{project_id}/tasks/{task_id}/delete", task_delete, methods=["POST"]),
+    Route(
+        "/api/projects/{project_id}/tasks/{task_id}/gate-decision", task_gate_decision,
+        methods=["POST"],
+    ),
     Route("/api/skills", list_skills, methods=["GET"]),
     Route("/api/skills/discover", discover_skills, methods=["GET"]),
     Route("/api/skills/install-discovered", install_discovered_skill, methods=["POST"]),

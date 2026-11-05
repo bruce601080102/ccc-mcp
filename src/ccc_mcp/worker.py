@@ -6,6 +6,7 @@ import portalocker
 
 from .adapters.agents import ADAPTERS, FakeAgentAdapter
 from .adapters.git import git, tracked_snapshot, working_snapshot, worktree
+from .core.roles import REVIEWER_ROLES, writes_files
 from .infra.errors import AgentCancelled, AgentTimeout, BridgeError
 from .infra.security import canonical, comment_check, redact, reject_secrets, same_text_content
 from .infra.telemetry import audit_scope, is_quota_error
@@ -85,8 +86,8 @@ def run_execution(bridge, execution_id):
                 raise AgentCancelled("Execution cancelled before start")
             # Meeting Mode's clarification-ask dispatch keeps role="SD/RD" but requests a
             # non-AgentReport schema; it must never get a worktree or write access.
-            implementation = row["role"] not in {"SA", "REVIEW"} and (
-                options.get("report_schema", "agent_report") == "agent_report"
+            implementation = writes_files(
+                row["role"], options, options.get("report_schema", "agent_report")
             )
             cwd = root
             before = {}
@@ -107,7 +108,7 @@ def run_execution(bridge, execution_id):
                     "UPDATE agent_executions SET worktree=? WHERE id=?", (str(cwd), execution_id)
                 )
                 package["repository_reference"] = str(cwd)
-            elif row["role"] == "REVIEW":
+            elif row["role"] in REVIEWER_ROLES:
                 prior = bridge.store.one(
                     "SELECT project_id,task_id,options,worktree FROM agent_executions WHERE project_id=? AND task_id=? "
                     "AND worktree IS NOT NULL ORDER BY created DESC LIMIT 1",

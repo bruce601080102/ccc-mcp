@@ -144,6 +144,44 @@ ccc-mcp --project my-project config meeting-mode on --min-rounds 1 --max-rounds 
 
 只需 `bootstrap_project` 即能取得完整恢復入口。沒有 MCP 時貼入 `context export`。兩種方式都不要求歷史聊天、ChatGPT 個人 Memory 或先前模型 Session ID。
 
+## 工作流與審查關卡
+
+新任務使用「任務開始當下」專案所選的工作流（`config workflow classic|full`，或設定 → 工作流）。任務一旦開始就固定使用該工作流，之後改設定不會影響進行中的任務。
+
+| 工作流 | 步驟 |
+|---|---|
+| `standard`（用 CLI 或控制台新增的專案預設） | SA → SD → RD → CR。設計與開發是分開的兩步：SD 先產出設計報告（唯讀），再由 RD 實作。 |
+| `classic`（從沒選過的專案預設） | SA → SD/RD → CR。SD 與 RD 合成一步，行為不變。Meeting Mode 只適用於這條。 |
+| `full` | SA → SD → AR → SR → SEC → RD → CR → SEC → QA |
+
+角色：PM（發起並驗收的 ChatGPT 對話）、SA 系統分析、SD 系統設計（只做設計、不改檔案）、RD 開發、CR 程式碼審查（內部代號 `REVIEW`）、SR 規格審查、AR 對抗式審查、SEC 資安審查、QA 品質驗證、SW 規格寫手。SA、SD、RD、SW 是**產出**步驟；CR、SR、AR、SEC、QA 是**關卡**，負責評判。每個角色可各自設定 provider（`config role`），也能取聊天室名稱（`config role-name`，預設是縮寫）。
+
+**關卡會退回。** 關卡發現阻擋問題時，由它前面最近的產出步驟依發現重做，之後的每一步都重新跑，所以不會有審查者評判過期的成果。一個關卡最多退回 `max_rounds` 次（`config review-gate --max-rounds`，1–5，預設 2）。超過後任務會停在 `waiting_on: PM_FLOW_DECISION`，不再循環；PM 呼叫 `resolve_flow_gate`，選 `proceed`（接受並繼續）、`retry`（再退回一次）或 `stop`。`--escalation ask-user`（預設）要求 ChatGPT 把決定交給真人使用者；`auto-pm` 則讓 ChatGPT 自行決定並說明理由。
+
+**AR 不能用沒有證據的主張卡住流程。** AR 的每個發現都寫成 `[blocker|major|minor|assumption] 主張 | evidence: ...`，沒有證據的發現會被捨棄。強度（`--ar normal|strict|extreme`）決定哪些嚴重度能擋下流程：normal 擋 `major` 以上，strict 連 `minor` 也擋，extreme 連 `assumption` 也擋。`blocker` 表示整個做法有根本問題：直接交給 PM（`REJECT`），不退回產出步驟。判定由 ccc-mcp 依發現計算，不採信模型自己的結論。其他關卡信任審查者自己的 `needs_revision`；CR 與 QA 在 host 執行的測試失敗或沒驗證到任何東西時，也一律不通過。
+
+每個關卡的判定都會保存（`flow_gate_results`），關卡已退回幾次是從這些紀錄算出來的，所以上限在當機或續派後仍然有效。結果為 `PASS` 的關卡會自動前進；SA 仍如以往需要 PM 提供方案。
+
+### 規格寫手（SW）
+
+SW 把討論得出的結論（需求、SA 的分析、SD 的設計，以及審查者提出的問題與解決方式）整理成一份「讓 AI 讀得懂、能照著實作」的規格書：目的與不做的事、名詞表、每個決定及其理由與被否決的替代方案、編號且可測試的需求（`REQ-001`，用 MUST/SHOULD/MAY）、精確的介面與資料格式、Given/When/Then 驗收條件，以及未解決的疑問（列出來，不亂猜）。文件存成 `SPEC.md`（報告本身是 `SW-REPORT.md`），之後的 SD、RD 和所有審查者都會拿到；控制台在任務的「執行成果」頁會顯示它。SW 只讀專案，不會改檔案。它是產出步驟，所以排在它後面的關卡退回時會退給它。目前沒有內建工作流包含 SW：到設定 → 工作流自己加，例如 `SA → AR → SR → SW → RD → CR`，讓規格在討論定案之後才寫。
+
+### 自訂工作流，以及誰來挑
+
+設定 → 工作流（或 `config workflow-save --steps SD,AR,RD,REVIEW [--name 名稱]`）可以用任意角色順序組出自己的工作流，最多 12 步。第一步必須是會產出東西的角色（SA、SD、RD 或 SD/RD），這樣審查者才有東西可審、也有人可以退回。存下來的工作流會自動命名為「工作流 2」「工作流 3」…（專案語言為英文時是 `Workflow 2`），之後可以改名；兩條內建工作流不能修改，只能另存一份。一個專案最多 20 條自訂工作流。刪除工作流不會影響正在跑它的任務；如果刪的是目前選的那條，新任務改回 `classic`。
+
+沒有 SA 的工作流（例如 `SD → AR → RD → CR`）會直接拿你的需求與驗收條件當作核准的計畫，PM 一開始就直接對 SD。
+
+`config workflow-selection fixed|pm|auto` 決定誰來挑新任務的工作流：
+
+| 模式 | 行為 |
+|---|---|
+| `fixed`（預設） | 固定用選定的那條。 |
+| `pm` | ChatGPT 先呼叫 `list_workflows`，依任務挑最合適的，並把 id 當作 `workflow` 傳給 `start_project_request`；沒挑就用選定的那條。 |
+| `auto` | ccc-mcp 依任務文字自動挑。安全相關（登入、密碼、token、權限、付款…）需要含 SEC 的工作流；大型或有風險的改動（重構、遷移、架構、schema…）需要 SD 與 AR；小修改（錯字、改名、文件…）用最短的；其他維持選定的那條。符合條件的裡面選步驟最少的。 |
+
+選了哪條、怎麼選的、為什麼，都會和任務一起保存（`task status` → `brief.workflow`）。只有 `pm` 模式才會採用 `workflow` 參數，其他模式會忽略。
+
 ## 任務詳情 2.0：工作對話與使用者介入
 
 本機 Web 控制台的任務詳情預設顯示「工作對話」。它從既有 `task_events`、`agent_executions` 和每次保存的 `TEST-RESULT.md` 重建事件，再合併使用者介入紀錄；舊任務無需遷移即可閱讀。Agent 摘要採用已保存的原始報告，主機測試只採用 host 執行的證據。原始報告、Diff、評估與 Context 可在「執行成果」及「技術紀錄」展開查看。

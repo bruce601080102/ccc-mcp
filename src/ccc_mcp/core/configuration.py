@@ -14,12 +14,29 @@ from ..infra.errors import BridgeError, PermissionDenied
 from ..infra.security import atomic_write, canonical, redact, reject_secrets, safe_path
 from .context import context_policy, identifier
 from .models import PROTOCOL_VERSION
+from .flows import (
+    DEFAULT_REVIEW_GATE,
+    DEFAULT_SELECTION,
+    DEFAULT_WORKFLOW,
+    MAX_CUSTOM_WORKFLOWS,
+    NEW_PROJECT_WORKFLOW,
+    next_custom_id,
+    next_custom_name,
+    validated_custom_workflows,
+    validated_review_gate,
+    validated_selection,
+    validated_steps,
+    validated_workflow,
+    validated_workflow_name,
+)
+from .flows import BUILTIN_FLOWS
+from .roles import AGENT_ROLES, NAMEABLE_ROLES, READ_ONLY_ROLES, default_provider, validated_role_avatars, validated_role_name, validated_role_names
 
 # "chatgpt" is interactive, not CLI-dispatched, so it is not in the ADAPTERS registry
 # but is still a configurable provider.
 PROVIDERS = set(ADAPTERS) | {"chatgpt"}
 LANGUAGES = {"zh-TW", "ch", "en"}
-ROLES = ("SA", "SD", "RD", "SD/RD", "REVIEW")
+ROLES = AGENT_ROLES
 EFFORTS = {
     "codex": {"minimal", "low", "medium", "high", "xhigh", "max", "ultra"},
     "claude": {"low", "medium", "high", "xhigh", "max", "ultracode"},
@@ -76,7 +93,7 @@ def best_model_roles(available=None):
         available = _detect_available_native_providers()
     codex, claude = "codex" in available, "claude" in available
     if codex and claude:
-        return {role: "codex" if role in {"SA", "REVIEW"} else "claude" for role in ROLES}
+        return {role: default_provider(role) for role in ROLES}
     if codex:
         return dict.fromkeys(ROLES, "codex")
     if claude:
@@ -257,6 +274,20 @@ class ConfigurationHub:
             )
         if "meeting_mode" in document:
             updated["meeting_mode"] = self._validated_meeting_mode(document["meeting_mode"])
+        if "role_names" in document:
+            updated["role_names"] = validated_role_names(document["role_names"])
+        if "role_avatars" in document:
+            updated["role_avatars"] = validated_role_avatars(document["role_avatars"])
+        if "workflows" in document:
+            updated["workflows"] = validated_custom_workflows(document["workflows"])
+        if "workflow" in document:
+            updated["workflow"] = validated_workflow(
+                document["workflow"], updated.get("workflows", settings.get("workflows"))
+            )
+        if "workflow_selection" in document:
+            updated["workflow_selection"] = validated_selection(document["workflow_selection"])
+        if "review_gate" in document:
+            updated["review_gate"] = validated_review_gate(document["review_gate"])
         if "evaluation_engine" in document:
             updated["evaluation_engine"] = validated_evaluation_engine(document["evaluation_engine"])
         if "runtime" in document:
@@ -300,7 +331,7 @@ class ConfigurationHub:
         project = self.project(project_id)
         defaults = {
             role: {
-                "provider": "codex" if role in {"SA", "REVIEW"} else "claude",
+                "provider": default_provider(role),
                 "model": None,
                 "effort": None,
                 "quota_fallback": None,
@@ -368,6 +399,13 @@ class ConfigurationHub:
             # Merge (not replace) so a project saved before `escalation` existed still
             # reads a complete dict instead of KeyError-ing downstream.
             "meeting_mode": {**DEFAULT_MEETING_MODE, **settings.get("meeting_mode", {})},
+            # Chat-room display names; a role without an entry shows its abbreviation.
+            "role_names": settings.get("role_names", {}),
+            "role_avatars": settings.get("role_avatars", {}),
+            "workflow": self._effective_workflow(settings),
+            "workflows": settings.get("workflows", {}),
+            "workflow_selection": settings.get("workflow_selection", DEFAULT_SELECTION),
+            "review_gate": {**DEFAULT_REVIEW_GATE, **settings.get("review_gate", {})},
             # Off by default (brief #4 "預設關閉自動評估"); merge for the same reason
             # as meeting_mode above.
             "evaluation_engine": {**DEFAULT_EVALUATION_ENGINE, **settings.get("evaluation_engine", {})},
@@ -400,6 +438,131 @@ class ConfigurationHub:
         with self.lock(project_id):
             settings = self.get_project_settings(project_id)
             settings["roles"][role] = updated
+            return self._save_settings(project_id, settings)
+
+    def configure_role_name(self, project_id, role, name):
+        """Give a role (or PM) a display name for the chat room; blank resets it to the
+        role's abbreviation."""
+        if role not in NAMEABLE_ROLES:
+            raise BridgeError("Unsupported role")
+        cleaned = validated_role_name(name)
+        with self.lock(project_id):
+            settings = self.get_project_settings(project_id)
+            names = dict(settings.get("role_names", {}))
+            if cleaned:
+                names[role] = cleaned
+            else:
+                names.pop(role, None)
+            settings["role_names"] = names
+            return self._save_settings(project_id, settings)
+
+    def configure_workflow(self, project_id, workflow):
+        """Pick the workflow new tasks run. A task keeps the workflow it started with."""
+        with self.lock(project_id):
+            settings = self.get_project_settings(project_id)
+            settings["workflow"] = validated_workflow(workflow, settings["workflows"])
+            return self._save_settings(project_id, settings)
+
+    @staticmethod
+    def _effective_workflow(settings):
+        """The selected workflow, or Classic if it was a custom one that no longer exists."""
+        selected = settings.get("workflow", DEFAULT_WORKFLOW)
+        known = settings.get("workflows", {})
+        return selected if selected in known or selected in BUILTIN_FLOWS else DEFAULT_WORKFLOW
+
+    def apply_new_project_workflow(self, project_id):
+        """Start a freshly added project on the Standard workflow (separate SD and RD steps)
+        unless it already chose one, so re-adding a project never resets a choice."""
+        with self.lock(project_id):
+            row = self.store.one(
+                "SELECT content FROM project_settings WHERE project_id=?", (project_id,)
+            )
+            if row and "workflow" in json.loads(row["content"]):
+                return None
+            settings = self.get_project_settings(project_id)
+            settings["workflow"] = NEW_PROJECT_WORKFLOW
+            return self._save_settings(project_id, settings)
+
+    def configure_workflow_selection(self, project_id, selection):
+        """Who picks a new task's workflow: "fixed" (the selected one), "pm" (ChatGPT chooses
+        per task from the list, the selected one by default) or "auto" (ccc-mcp picks from
+        the task's text)."""
+        with self.lock(project_id):
+            settings = self.get_project_settings(project_id)
+            settings["workflow_selection"] = validated_selection(selection)
+            return self._save_settings(project_id, settings)
+
+    def save_workflow(self, project_id, steps, name=None, workflow_id=None):
+        """Create a workflow of your own, or change one. A new one is named "工作流 2",
+        "工作流 3", ... unless a name is given; built-in workflows cannot be changed (save a
+        copy instead)."""
+        validated = validated_steps(steps)
+        with self.lock(project_id):
+            settings = self.get_project_settings(project_id)
+            custom = dict(settings["workflows"])
+            if workflow_id is None:
+                if len(custom) >= MAX_CUSTOM_WORKFLOWS:
+                    raise BridgeError(f"A project can have at most {MAX_CUSTOM_WORKFLOWS} workflows")
+                workflow_id = next_custom_id(custom)
+                label = (
+                    validated_workflow_name(name)
+                    if name is not None
+                    else next_custom_name(custom, settings["language"])
+                )
+            elif workflow_id in BUILTIN_FLOWS:
+                raise BridgeError("Built-in workflows cannot be changed; save a copy instead")
+            elif workflow_id not in custom:
+                raise BridgeError("Unknown workflow")
+            else:
+                label = validated_workflow_name(name) if name is not None else custom[workflow_id]["name"]
+            custom[workflow_id] = {"name": label, "steps": validated}
+            settings["workflows"] = validated_custom_workflows(custom)
+            self._save_settings(project_id, settings)
+            return {"id": workflow_id, **settings["workflows"][workflow_id]}
+
+    def delete_workflow(self, project_id, workflow_id):
+        """Remove one of your own workflows. Tasks already running it keep it; if it was the
+        selected one, new tasks go back to Classic."""
+        with self.lock(project_id):
+            settings = self.get_project_settings(project_id)
+            if workflow_id in BUILTIN_FLOWS:
+                raise BridgeError("Built-in workflows cannot be deleted")
+            if workflow_id not in settings["workflows"]:
+                raise BridgeError("Unknown workflow")
+            settings["workflows"] = {
+                key: value for key, value in settings["workflows"].items() if key != workflow_id
+            }
+            if settings["workflow"] == workflow_id:
+                settings["workflow"] = DEFAULT_WORKFLOW
+            self._save_settings(project_id, settings)
+            return {"deleted": workflow_id, "workflow": settings["workflow"]}
+
+    def configure_review_gate(
+        self, project_id, ar_strictness=None, max_rounds=None, escalation=None
+    ):
+        """How hard the review gates push back: AR's strictness, how many times a gate may
+        send work back before the PM decides, and who that PM decision belongs to. Omitted
+        values keep what is already configured."""
+        with self.lock(project_id):
+            settings = self.get_project_settings(project_id)
+            current = settings["review_gate"]
+            settings["review_gate"] = validated_review_gate(
+                {
+                    "ar_strictness": current["ar_strictness"] if ar_strictness is None else ar_strictness,
+                    "max_rounds": current["max_rounds"] if max_rounds is None else max_rounds,
+                    "escalation": current["escalation"] if escalation is None else escalation,
+                }
+            )
+            return self._save_settings(project_id, settings)
+
+    def configure_role_avatar(self, project_id, role, avatar):
+        """Pick the pixel character a role (or PM) wears in the chat room; blank resets it."""
+        if role not in NAMEABLE_ROLES:
+            raise BridgeError("Unsupported role")
+        with self.lock(project_id):
+            settings = self.get_project_settings(project_id)
+            chosen = {**settings["role_avatars"], role: avatar}
+            settings["role_avatars"] = validated_role_avatars(chosen)
             return self._save_settings(project_id, settings)
 
     def configure_profile(self, project_id, profile):
@@ -520,6 +683,12 @@ class ConfigurationHub:
                 "context_token_budget": settings["context_token_budget"],
                 "meeting_mode": settings["meeting_mode"],
                 "evaluation_engine": settings["evaluation_engine"],
+                "role_names": settings["role_names"],
+                "role_avatars": settings["role_avatars"],
+                "workflow": settings["workflow"],
+                "workflows": settings["workflows"],
+                "workflow_selection": settings["workflow_selection"],
+                "review_gate": settings["review_gate"],
             },
             "read_only_status": {
                 "project_access": settings["project_access"],
@@ -561,7 +730,7 @@ class ConfigurationHub:
         settings = self.get_project_settings(project_id)
         language = settings["language"]
         provider = settings["roles"][role]["provider"]
-        readonly = role in {"SA", "REVIEW"}
+        readonly = role in READ_ONLY_ROLES
 
         def ui(zh, en):
             return en if cli_language() == "en" else zh
