@@ -12,12 +12,16 @@ def _workflow(name):
     return yaml.load((WORKFLOWS / name).read_text(), Loader=yaml.BaseLoader)
 
 
-def test_push_and_pull_request_cannot_publish():
+def test_all_workflows_are_manual_or_reusable_only():
     ci = _workflow("ci.yaml")
     checks = _workflow("checks.yaml")
     release = _workflow("release.yaml")
 
-    assert set(ci["on"]) == {"push", "pull_request"}
+    for path in WORKFLOWS.iterdir():
+        if path.suffix in {".yaml", ".yml"}:
+            assert set(_workflow(path.name)["on"]) <= {"workflow_dispatch", "workflow_call"}
+
+    assert set(ci["on"]) == {"workflow_dispatch"}
     assert ci["permissions"] == {"contents": "read"}
     assert ci["jobs"] == {"checks": {"uses": "./.github/workflows/checks.yaml"}}
 

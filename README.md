@@ -6,7 +6,7 @@
 
 **Let ChatGPT Chat write, test, and review code on your own computer.**
 
-[![CI](https://img.shields.io/github/actions/workflow/status/bruce601080102/ccc-mcp/ci.yaml?branch=main&style=flat-square&logo=githubactions&logoColor=white&label=CI)](https://github.com/bruce601080102/ccc-mcp/actions/workflows/ci.yaml)
+[![Manual CI](https://img.shields.io/github/actions/workflow/status/bruce601080102/ccc-mcp/ci.yaml?branch=main&style=flat-square&logo=githubactions&logoColor=white&label=Manual%20CI)](https://github.com/bruce601080102/ccc-mcp/actions/workflows/ci.yaml)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![Platforms](https://img.shields.io/badge/Platforms-macOS%20%7C%20Linux%20%7C%20Windows-555555?style=flat-square)](docs/en/1-install-and-sign-in.md)
 [![MCP](https://img.shields.io/badge/Protocol-MCP-6E56CF?style=flat-square)](https://modelcontextprotocol.io/)
@@ -192,4 +192,4 @@ The repository requires Python 3.11 or newer. Real-agent tests are opt-in becaus
 
 ## Releasing
 
-You choose both the release version and when to publish. Pushes and pull requests run a short **CI** check: lint and focused tests on Linux and Windows. They do not build release artifacts, change the version, or publish. When ready, start **Release** manually from `main` and enter the version in the GitHub form (for example `0.3.0`, without `v`). Release runs the complete Python and platform test matrix, builds and installs the wheel, verifies the wheel and sdist, and tags the matching versioned source commit before publishing to GitHub Releases and PyPI. It does not update `main`'s version file.
+You choose when to run checks and when to publish. Nothing runs automatically after a push or pull request. Start **CI** manually for a short lint and focused test run on Linux and Windows; it does not build release artifacts, change the version, or publish. When ready, start **Release** manually from `main` and enter the version in the GitHub form (for example `0.3.0`, without `v`). Release runs the complete Python and platform test matrix, builds and installs the wheel, verifies the wheel and sdist, and tags the matching versioned source commit before publishing to GitHub Releases and PyPI. It does not update `main`'s version file.

@@ -6,7 +6,7 @@
 
 **讓 ChatGPT Chat 在你的電腦上寫程式、跑測試、完成審查。**
 
-[![CI](https://img.shields.io/github/actions/workflow/status/bruce601080102/ccc-mcp/ci.yaml?branch=main&style=flat-square&logo=githubactions&logoColor=white&label=CI)](https://github.com/bruce601080102/ccc-mcp/actions/workflows/ci.yaml)
+[![手動 CI](https://img.shields.io/github/actions/workflow/status/bruce601080102/ccc-mcp/ci.yaml?branch=main&style=flat-square&logo=githubactions&logoColor=white&label=Manual%20CI)](https://github.com/bruce601080102/ccc-mcp/actions/workflows/ci.yaml)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![Platforms](https://img.shields.io/badge/Platforms-macOS%20%7C%20Linux%20%7C%20Windows-555555?style=flat-square)](docs/ch/1-install-and-sign-in.md)
 [![MCP](https://img.shields.io/badge/Protocol-MCP-6E56CF?style=flat-square)](https://modelcontextprotocol.io/)
@@ -193,4 +193,4 @@ python3.11 -m pytest -q
 
 ## 發版
 
-發版時間和版本號都由你決定。推送和 Pull Request 只跑較快的 **CI**：lint 與 Linux、Windows 的重點測試；不會建置發版套件、修改版本或發布。準備發版時，從 `main` 手動執行 **Release**，在 GitHub 表單輸入版號（例如 `0.3.0`，不用加 `v`）。Release 才會跑完整的 Python 與跨平台測試矩陣、建置及安裝 wheel、核對 wheel 與 sdist，為一致的原始碼建立 tag，再發布到 GitHub Releases 與 PyPI；不會改動 `main` 的版本檔。
+檢查時間、發版時間和版本號都由你決定。推送或建立 Pull Request 後不會自動執行任何流程。需要檢查時，手動執行 **CI**，它只跑 lint 與 Linux、Windows 的重點測試，不會建置發版套件、修改版本或發布。準備發版時，從 `main` 手動執行 **Release**，在 GitHub 表單輸入版號（例如 `0.3.0`，不用加 `v`）。Release 才會跑完整的 Python 與跨平台測試矩陣、建置及安裝 wheel、核對 wheel 與 sdist，為一致的原始碼建立 tag，再發布到 GitHub Releases 與 PyPI；不會改動 `main` 的版本檔。
