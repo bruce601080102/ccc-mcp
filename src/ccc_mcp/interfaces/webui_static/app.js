@@ -1108,7 +1108,7 @@
   // A hexagon radar. `ghost` is a second, dashed outline (the whole team while only part of it
   // has finished); `labels` adds the ability names and scores around it.
   function radarSvg(values, { size = 120, labels = false, ghost = null } = {}) {
-    const pad = labels === true ? 58 : labels === "short" ? 18 : 6;
+    const pad = labels === true ? 58 : labels === "short" ? (UI.getLocale() === "zh-TW" ? 20 : 28) : 6;
     const centre = size / 2, radius = size / 2 - pad;
     const point = (index, level) => {
       const angle = (-90 + index * 60) * Math.PI / 180;
@@ -1120,9 +1120,10 @@
     const rings = (labels === true ? [1, 2, 3, 4, 5] : [2.5, 5]).map((level) => `<polygon class="radar-ring${level === STAT_MAX ? " outer" : ""}" points="${ring(level)}"/>`).join("");
     const spokes = STAT_ORDER.map((_, index) => { const [x, y] = point(index, STAT_MAX); return `<line class="radar-spoke" x1="${centre}" y1="${centre}" x2="${x.toFixed(1)}" y2="${y.toFixed(1)}"/>`; }).join("");
     const shortNames = labels === "short" ? STAT_ORDER.map((axis, index) => {
-      const [x, y] = point(index, STAT_MAX * (1 + 10 / radius));
+      const [x, y] = point(index, STAT_MAX * (1 + 8 / radius));
       const name = UI.translate(STAT_NAMES[axis]);
-      return `<text class="radar-label short" x="${x.toFixed(1)}" y="${(y + 3.5).toFixed(1)}" text-anchor="middle">${esc(UI.getLocale() === "zh-TW" ? name.slice(0, 1) : name.slice(0, 3))}</text>`;
+      const anchor = Math.abs(x - centre) < 4 ? "middle" : x > centre ? "start" : "end";
+      return `<text class="radar-label short" x="${x.toFixed(1)}" y="${(y + (index === 0 ? -1 : index === 3 ? 9 : 4)).toFixed(1)}" text-anchor="${anchor}">${esc(UI.getLocale() === "zh-TW" ? name.slice(0, 1) : name.slice(0, 3))}</text>`;
     }).join("") : "";
     const names = labels === true ? STAT_ORDER.map((axis, index) => {
       const [x, y] = point(index, STAT_MAX + 1.5);
@@ -1699,7 +1700,7 @@
     }
     if (type === "agent_failed" && !summary) summary = "This execution ended without a verified result.";
     const details = event.detail || event.evidence_refs?.length || event.context_version ? `<button class="chat-detail-trigger" type="button" data-chat-detail="${esc(event.event_id)}">${esc(UI.translate("View technical details"))} <span aria-hidden="true">↗</span></button>` : "";
-    const date = event.timestamp ? new Date(event.timestamp).toLocaleString() : "";
+    const date = event.timestamp ? new Date(event.timestamp).toLocaleString(UI.getLocale()) : "";
     if (type === "host_test_completed") {
       const state = !event.detail?.executed_by_host || event.detail.no_tests_collected ? "pending" : event.detail.passed ? "pass" : "fail";
       const icons = { pass: "M20 6 9 17l-5-5", fail: "M18 6 6 18M6 6l12 12", pending: "M5 12h14" };
@@ -2125,7 +2126,7 @@
     const roleHead = (role, help, pill) => `<div class="role-config-head">
           <span class="role-avatar chat-avatar av-${roleAvatarTone(role)}" aria-hidden="true">${roleAvatarIcon(role)}</span>
           <div class="role-config-title"><strong data-no-i18n>${esc(ROLE_FRIENDLY[role] ? UI.translate(ROLE_FRIENDLY[role]) : ROLE_ABBREVIATIONS[role] || role)}${ROLE_FRIENDLY[role] ? ` <span class="role-abbr">${esc(ROLE_ABBREVIATIONS[role] || role)}</span>` : ""}</strong><small>${esc(UI.translate(help))}</small>${roleStatsMap[role] ? `<small class="strength-line">${strengthLine(roleStatsMap[role], { strong: 4, weak: 0 })}</small>` : ""}</div>
-          ${roleStatsMap[role] ? `<span class="role-radar" title="${esc(statSummary(roleStatsMap[role]))}">${radarSvg(roleStatsMap[role], { size: 96, labels: "short" })}</span>` : ""}
+          ${roleStatsMap[role] ? `<span class="role-radar" title="${esc(statSummary(roleStatsMap[role]))}">${radarSvg(roleStatsMap[role], { size: 124, labels: "short" })}</span>` : ""}
           ${pill}
         </div>`;
     const pmRow = `<div class="role-config-row" data-role="PM" data-name-only>
@@ -2409,7 +2410,7 @@
           ${flow.summary ? `<span class="profile-option-desc">${esc(UI.translate(flow.summary))}</span>` : ""}
           ${flow.stats ? `<span class="strength-line">${strengthLine(flow.stats.team, { strong: 5, weak: 2 })}</span>` : ""}
           <span class="flow-steps" aria-label="${esc(UI.translate("Steps"))}">${stepChips(flow)}</span>
-          ${flow.stats ? `<span class="flow-radar" title="${esc(statSummary(flow.stats.team))}">${radarSvg(flow.stats.team, { size: 112, labels: "short" })}<span class="flow-power">${esc(UI.translate("Team power"))} <strong class="num">${flow.stats.power}</strong></span></span>` : ""}
+          ${flow.stats ? `<span class="flow-radar" title="${esc(statSummary(flow.stats.team))}">${radarSvg(flow.stats.team, { size: 144, labels: "short" })}<span class="flow-power">${esc(UI.translate("Team power"))} <strong class="num">${flow.stats.power}</strong></span></span>` : ""}
           <span class="profile-option-check" aria-hidden="true">${pageIcon("check")}</span>
         </button>
         <div class="workflow-item-actions">

@@ -4,7 +4,9 @@
 
 # ccc-mcp
 
-**讓 ChatGPT Chat 在你的電腦上寫程式、跑測試、完成審查。**
+**一支在你電腦上工作、並且讓你看見過程的 AI 角色團隊。**
+
+讓 ChatGPT Chat 以聊天室的方式，帶著一群專家寫程式、跑測試、完成審查，也能規劃旅行、寫企劃、查證事實。
 
 [![手動 CI](https://img.shields.io/github/actions/workflow/status/bruce601080102/ccc-mcp/ci.yaml?branch=main&style=flat-square&logo=githubactions&logoColor=white&label=Manual%20CI)](https://github.com/bruce601080102/ccc-mcp/actions/workflows/ci.yaml)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/downloads/)
@@ -19,6 +21,46 @@
 ccc-mcp 透過 MCP，把 ChatGPT Chat 接上你電腦上的開發環境，讓它能在**已授權的本機專案**工作。核心想法是：**不要只聽 AI 說程式沒問題，而是留下本機證據。**測試由主機執行、不由 Agent 自己回報；每一次 diff、測試結果與審查都會保存並可接續，這些是單純的聊天視窗做不到的事。額外好處是：它直接用你現有的 ChatGPT 方案運作，不必另外申請按 token 計費的模型 API。**主要用法是 ChatGPT-only**；Codex 與 Claude Code 是選用的協作工具。
 
 > [English README](README.md) · [繁體中文文件](docs/ch/1-install-and-sign-in.md)
+
+## 亮點功能
+
+<p align="center">
+  <img src="docs/assets/screenshots/console-chat-zh.png" alt="任務像聊天室：每個 AI 角色有自己的像素頭像，用自己的口吻回報" width="860">
+</p>
+
+### 要證據，不聽自我回報
+測試由主機執行，不由 Agent 自己說。每一次 diff、測試結果與審查都存在專案旁邊，可以檢視、暫停，或在另一個對話接續。Agent 說「測試通過」不算數。
+
+### 一間 AI 專家的聊天室
+工作就是一場對話。**19 個角色**（分析、設計、開發、程式碼審查、資安審查、研究員、撰稿人、事實查核員…）各有**像素頭像和可以自己取的名字**，任務傳到誰就由誰用自己的口吻回報。隨時可以暫停、停止或留下修正意見，不必再猜現在輪到誰、上一個做了什麼。
+
+### 自己組合的工作流，會把關也會退回
+<p align="center">
+  <img src="docs/assets/screenshots/console-workflows-zh.png" alt="內建工作流的步驟順序與合併後的能力圖" width="860">
+</p>
+
+**7 套內建工作流**（經典、標準、完整，加上四套日常團隊），也能自己組合並儲存。每個任務用哪一套，可以交給 ChatGPT、ccc-mcp 或你決定。**審查關卡**發現問題會退回產出那一步：對抗式審查有「一般／嚴格／極限」三種強度，每個阻擋性的說法都必須附證據，退回次數有上限（1–5）。用完次數就交給你決定，不會讓 Agent 無限循環。
+
+### 不只寫程式
+四套現成的**日常團隊**，用同一套機制處理旅行規劃、商業企劃、文章或重大決定：*個人助理 → 研究員 → 分析師 → 規劃師 → 事實查核員*…。它們跑在 ChatGPT 上，所以能上網查資料。**規格寫手**則把討論結論整理成 AI 看得懂、能照著實作的規格書。
+
+### 遊戲風格的能力圖
+<p align="center">
+  <img src="docs/assets/screenshots/console-team-zh.png" alt="完成任務後的隊伍能力圖、戰力與六項能力說明" width="860">
+</p>
+
+每個角色在六項能力上各有 0 到 5 分：**研究、分析、規劃、創作、查核、風險**。每套工作流會顯示合併後的**隊伍能力圖與戰力**，並指出隊上沒人擅長的項目；任務執行時，能力圖還會**隨著步驟完成逐漸長大**。挑隊伍時看它擅長什麼，不用憑感覺。
+
+### 不必乾等的交接
+ChatGPT 擔任日常團隊的某一步時，交出報告後下一步立刻開始，角色之間不再多一輪「PM 整理」。任務一樣可以接續，全程用你現有的 ChatGPT 方案。
+
+### 屬於你的本機控制台
+<p align="center">
+  <img src="docs/assets/screenshots/console-projects-zh.png" alt="有自訂專案圖示的專案列表" width="860">
+</p>
+
+`ccc-mcp ui` 把專案（可**自訂圖示**：像素角色、表情符號或文字，再選顏色）、群組、設定、Context、Skills 與 MCP 工具集中在一處。有淺色與深色主題、繁體中文與英文，手機寬度也能用。
+
 
 ## 觀看 Demo
 
@@ -72,7 +114,9 @@ UI 只在本機 `127.0.0.1` 提供服務，按 Ctrl+C 停止。[查看控制台�
 | --- | --- |
 | **證據，不是口頭回報** | 由主機安裝宣告的相依套件並自行執行 pytest；Agent 說「測試通過」不算數。每一輪都保存主機回傳的結果、可取得的 exit code、diff、報告與審查證據。 |
 | **ChatGPT Chat 寫本機程式** | 在對話中讓 ChatGPT 讀取、修改已授權專案，接著執行測試；`chatgpt-only` 不需要安裝 Codex 或 Claude Code。 |
-| **可接續的工作流** | 以 `SA → SD/RD → REVIEW` 處理任務，保存版本化共用 Context 與執行紀錄；在另一個聊天室從專案內的 `.ccc-mcp` 資料接續。 |
+| **可接續的工作流** | 預設以 `SA → SD → RD → CR` 處理任務（也可選經典、完整、日常團隊或自己組合的工作流），保存版本化共用 Context 與執行紀錄；在另一個聊天室從專案內的 `.ccc-mcp` 資料接續。 |
+| **有身分的角色** | 19 個角色，各有像素頭像和可自取的名字，以聊天室呈現。審查者會退回問題，退回次數有上限，發現必須附證據。 |
+| **能力圖** | 每個角色有六軸能力圖，每套工作流有合併後的能力圖與戰力，執行前就能看出一支隊伍擅長什麼。 |
 | **任務對話與控制** | 以有證據的對話閱讀每個任務；在本機介面暫停、繼續、停止或留下修正意見，並透過保存的交接資訊告知 ChatGPT 與下一個 Agent。 |
 | **可追溯的執行評估** | 選用評估引擎會將主機測試、diff 與靜態檢查整理成逐次評估報告；品質分數同時顯示證據覆蓋率，缺資料不會假裝成滿分。可在任務頁評估、檢查來源並保留重新評估版本。 |
 | **Skills，包含 MCP 型 Skill** | 安裝可重複使用的 `SKILL.md` 工作指引，支援多層目錄的補充檔案；在 UI 選擇全域 Skills，提供所有專案及角色使用。Skill 可引導 Agent 呼叫已另外安裝的 MCP 工具。 |
@@ -106,7 +150,7 @@ UI 只在本機 `127.0.0.1` 提供服務，按 Ctrl+C 停止。[查看控制台�
 
 ## 以 ChatGPT 為主，其他 Agent 選用
 
-選擇 `chatgpt-only` profile 後，由 ChatGPT 擔任專案管理者，並完成 `SA → SD/RD → REVIEW`。每次交接都保存紀錄，方便在新聊天室讀取既有狀態繼續工作。
+選擇 `chatgpt-only` profile 後，由 ChatGPT 擔任專案管理者，並完成所選工作流的每個角色。每次交接都保存紀錄，方便在新聊天室讀取既有狀態繼續工作。
 
 ```text
 ChatGPT Chat → 本機專案 → 測試、diff、審查
@@ -130,7 +174,7 @@ ccc-mcp ui
 | --- | --- |
 | **工作戰情中心** | 查看任務趨勢、卡點、各專案工作量與 Agent 評估紀錄。可按 5 分鐘至 1 個月篩選此工作空間的 CLI Token 用量；Codex 方案視窗顯示剩餘百分比與重置時間。可在 UI 啟用 Claude 額度同步並按「立即檢查」：ccc-mcp 會在背景短暫開啟 Claude Code（一則極小的 Haiku 訊息、不需要開終端機），顯示官方 5 小時與 7 天剩餘百分比。開啟頁面時每 5 分鐘檢查本機資料。帳戶歷史 Token 總量另列，無法歸因到個別 Chat、Codex 執行或 ccc-mcp 專案。 |
 | **所有專案** | 建立專案、加入既有資料夾、整理群組、匯入單一專案備份，並管理寫入授權。專案總覽可匯出設定與工作紀錄。 |
-| **設定** | 調整 profile、provider／角色、報告語言、測試命令與 Meeting Mode。 |
+| **設定** | 調整 profile、provider／角色（含頭像、名字與能力圖）、工作流與審查關卡、報告語言、測試命令與 Meeting Mode。 |
 | **任務／脈絡** | 查看階段、等待原因、執行紀錄、usage／CLI 呼叫證據、原始結果與共用 Context。 |
 | **連線** | 使用 OpenAI Platform Tunnel 的 ID 與 runtime API key 連到 ChatGPT，查看連線狀態與 log。 |
 | **全域 Skills** | 勾選要安裝給所有專案及角色的本機 Claude Code／Codex Skills，並查看或移除已安裝項目。 |

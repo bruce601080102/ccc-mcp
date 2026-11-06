@@ -4,7 +4,9 @@
 
 # ccc-mcp
 
-**Let ChatGPT Chat write, test, and review code on your own computer.**
+**A team of AI roles that works on your computer, and shows its work.**
+
+Let ChatGPT Chat write, test, and review code (or plan a trip, draft a proposal, check the facts) as a chat room of specialists.
 
 [![Manual CI](https://img.shields.io/github/actions/workflow/status/bruce601080102/ccc-mcp/ci.yaml?branch=main&style=flat-square&logo=githubactions&logoColor=white&label=Manual%20CI)](https://github.com/bruce601080102/ccc-mcp/actions/workflows/ci.yaml)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/downloads/)
@@ -19,6 +21,46 @@
 ccc-mcp connects ChatGPT Chat to a local coding workspace through MCP, so it can work on an **authorized repository**. Its core idea: **don't take an AI's word that the code works — keep local evidence.** Tests are run by the host, not reported by the agent; every diff, test result and review is saved and resumable, which a chat window can't do on its own. As a bonus, it runs on your existing ChatGPT plan, with no separately metered model API to set up. **ChatGPT-only is the primary workflow.** Codex and Claude Code are optional providers for teams that want to split roles across tools.
 
 > [繁體中文 README](README_ZH.md) · [English documentation](docs/en/1-install-and-sign-in.md)
+
+## Highlights
+
+<p align="center">
+  <img src="docs/assets/screenshots/console-chat.png" alt="A task shown as a chat room: each AI role has a pixel avatar and reports in its own voice" width="860">
+</p>
+
+### Evidence, not self-reports
+The host runs the tests, not the agent. Every diff, test result and review is saved next to the project, so a task can be inspected, paused or resumed from another chat. An agent saying “tests pass” never counts.
+
+### A chat room of AI specialists
+Work is a conversation. **19 roles** (analyst, designer, developer, code reviewer, security reviewer, researcher, writer, fact checker and more) each have a **pixel avatar and a name you choose**, and report in their own voice as the task moves from one to the next. Pause, stop, or leave a correction at any point. No more guessing who is working now or what the last one did.
+
+### Workflows you compose, with gates that push back
+<p align="center">
+  <img src="docs/assets/screenshots/console-workflows.png" alt="Built-in workflows with their step order and combined ability chart" width="860">
+</p>
+
+**7 built-in workflows** (Classic, Standard, Full, and four everyday teams) plus any you build and save yourself. ChatGPT, ccc-mcp, or you can choose the workflow per task. **Review gates** send work back to the step that made it: the adversarial reviewer has *Normal / Strict / Extreme* strictness, every blocking claim must cite evidence, and the number of rounds is capped (1–5). When a gate runs out of rounds, you decide instead of the agents looping forever.
+
+### Not only for code
+Four ready-made **everyday teams** put the same machinery to work on a trip plan, a business proposal, an article or a big decision: *assistant → researcher → analyst → planner → fact checker*, and so on. They run on ChatGPT, so they can browse. A **specification writer** turns a discussion into a spec an AI can implement from.
+
+### Game-style ability charts
+<p align="center">
+  <img src="docs/assets/screenshots/console-team.png" alt="A finished task's team ability chart, team power and the six abilities explained" width="860">
+</p>
+
+Every role scores 0–5 on six abilities: **research, reasoning, planning, creation, verification, risk sense**. Each workflow shows the combined **team chart and team power**, names the abilities nobody on the team is good at, and the chart **grows step by step** while a task runs. Pick a team by what it is good at, not by guessing.
+
+### Handovers without the wait
+When ChatGPT plays an everyday-team step, the next step starts as soon as it hands in its report: no extra “PM round” between roles. Tasks stay resumable, and everything runs on your existing ChatGPT plan.
+
+### A local control center that feels yours
+<p align="center">
+  <img src="docs/assets/screenshots/console-projects.png" alt="The project list with custom project icons" width="860">
+</p>
+
+`ccc-mcp ui` gives you projects (with **custom icons**: a pixel character, an emoji or a letter, in your color), groups, settings, Context, Skills and MCP tools in one place. Light and dark themes, English and Traditional Chinese, and a layout that works on a phone.
+
 
 ## Watch the demo
 
@@ -72,7 +114,9 @@ The UI runs on local `127.0.0.1` and stops with Ctrl+C. [See every console page]
 | --- | --- |
 | **Evidence, not self-reports** | The host installs declared dependencies and runs pytest itself; an agent saying “tests pass” never counts. Host-observed results, exit codes when available, diffs, reports and review evidence are kept for every round. |
 | **ChatGPT Chat as the coding agent** | ChatGPT can read and edit an authorized local project, then continue the work in the same conversation. No Codex or Claude Code installation is required for `chatgpt-only`. |
-| **A recoverable workflow** | Run `SA → SD/RD → REVIEW` with versioned shared Context and saved execution records. Resume a task in another chat from the project’s `.ccc-mcp` data. |
+| **A recoverable workflow** | Run the default `SA → SD → RD → CR` workflow (or Classic, Full, an everyday team, or your own) with versioned shared Context and saved execution records. Resume a task in another chat from the project’s `.ccc-mcp` data. |
+| **Roles with identities** | 19 roles, each with a pixel avatar and a name you choose, shown as a chat room. Reviewers send work back, with capped rounds and evidence-backed findings. |
+| **Ability charts** | A six-axis chart for every role and a combined chart and team power for every workflow, so you can see what a team is good at before you run it. |
 | **Task conversation and controls** | Read each task as an evidence-backed conversation. Pause, resume, stop, or leave a correction from the local UI; saved handoffs keep ChatGPT and the next agent informed. |
 | **Traceable execution evaluation** | The optional evaluation engine turns host tests, diffs, and lint findings into versioned reports. Quality scores are paired with evidence coverage; missing signals are never silently treated as perfect. Evaluate and inspect results from the task page. |
 | **Skills, including MCP-oriented Skills** | Install reusable `SKILL.md` guidance, including nested supporting files. Choose global Skills in the UI so every project and role can use them. A Skill can guide an agent to use an MCP tool after that server is installed. |
@@ -106,7 +150,7 @@ Using **ChatGPT-only**, ccc-mcp resolved three selected [SWE-bench Verified](htt
 
 ## ChatGPT first; other agents are optional
 
-With the `chatgpt-only` profile selected, ChatGPT handles the project manager and `SA → SD/RD → REVIEW` roles. The workflow records each handoff so the next chat can pick up the saved state.
+With the `chatgpt-only` profile selected, ChatGPT handles the project manager and every role of the selected workflow. The workflow records each handoff so the next chat can pick up the saved state.
 
 ```text
 ChatGPT Chat → local project → tests, diff, review
@@ -130,7 +174,7 @@ The console's main pages:
 | --- | --- |
 | **Command center** | Track task activity, blockers, project load, and agent evaluation history. Filter this workspace's CLI token records from five minutes to one month; see Codex plan-window remaining percentages and reset times. Enable Claude quota sync in the UI and click Check now: ccc-mcp briefly opens Claude Code in the background (one tiny Haiku message, no terminal needed) and shows its official five-hour and seven-day remaining percentages. The page checks local data every five minutes while open. Account-wide lifetime tokens are separate and cannot be attributed to a Chat, Codex run, or ccc-mcp project. |
 | **All projects** | Create projects, add existing folders, organize groups, import a single-project backup, and manage write access. Export settings and work history from a project's overview. |
-| **Settings** | Set the profile, providers and roles, report language, test command, and Meeting Mode. |
+| **Settings** | Set the profile, providers and roles (with avatars, names and ability charts), workflows and review gates, report language, test command, and Meeting Mode. |
 | **Tasks / Context** | Inspect stages, waiting reasons, execution history, usage and CLI invocation evidence, raw results, and shared context. |
 | **Connect** | Connect ChatGPT with an OpenAI Platform Tunnel ID and runtime API key; inspect status and logs. |
 | **Global Skills** | Select local Claude Code or Codex Skills to install for every project and role; inspect or remove installed Skills. |
