@@ -66,11 +66,7 @@ When ChatGPT plays an everyday-team step, the next step starts as soon as it han
 
 **1080p · 60 fps · with audio · 63 seconds.**
 
-<p align="center">
-  <video src="https://github.com/bruce601080102/ccc-mcp/raw/main/docs/assets/demo.mp4" poster="https://github.com/bruce601080102/ccc-mcp/raw/main/docs/assets/screenshots/console-chat.png" controls muted playsinline width="860"></video>
-</p>
-
-If the player does not load, [open the video file](docs/assets/demo.mp4).
+https://github.com/user-attachments/assets/eb7512b3-7f67-4a2e-aa7a-9e4b06a9a7d2
 
 The [original recording is on Google Drive](https://drive.google.com/drive/folders/15vn8wYrZ55JL5Aetb1IR6YGm7fK1i81m). The separate [SWE-bench evidence](#proof-three-selected-swe-bench-verified-cases) records the official harness results.
 

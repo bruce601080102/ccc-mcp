@@ -66,11 +66,7 @@ ChatGPT 擔任日常團隊的某一步時，交出報告後下一步立刻開始
 
 **1080p 高清 · 每秒 60 格 · 有聲音 · 63 秒。**
 
-<p align="center">
-  <video src="https://github.com/bruce601080102/ccc-mcp/raw/main/docs/assets/demo.mp4" poster="https://github.com/bruce601080102/ccc-mcp/raw/main/docs/assets/screenshots/console-chat-zh.png" controls muted playsinline width="860"></video>
-</p>
-
-若播放器沒有載入，請[直接開啟影片檔](docs/assets/demo.mp4)。
+https://github.com/user-attachments/assets/eb7512b3-7f67-4a2e-aa7a-9e4b06a9a7d2
 
 [Google Drive 也保留原始錄影](https://drive.google.com/drive/folders/15vn8wYrZ55JL5Aetb1IR6YGm7fK1i81m)；[SWE-bench 證據](#實際成果三題選定的-swe-bench-verified-案例)則另外記錄官方 harness 的結果。
 
