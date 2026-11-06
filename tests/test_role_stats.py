@@ -1,5 +1,3 @@
-import pytest
-
 from ccc_mcp.core.roles import AGENT_ROLES, ROLE_STATS, STAT_AXES, STAT_MAX, role_stats, team_stats
 
 

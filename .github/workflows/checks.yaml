@@ -42,6 +42,7 @@ jobs:
 
   quick-test:
     name: quick test (${{ matrix.os }})
+    needs: lint
     if: inputs.full_checks == false
     runs-on: ${{ matrix.os }}
     strategy:
@@ -76,6 +77,7 @@ jobs:
 
   test:
     name: test (${{ matrix.os }}, py${{ matrix.python-version }})
+    needs: lint
     if: inputs.full_checks
     runs-on: ${{ matrix.os }}
     strategy:
@@ -121,6 +123,7 @@ jobs:
 
   build:
     name: build sdist + wheel
+    needs: lint
     if: inputs.full_checks
     runs-on: ubuntu-latest
     outputs:

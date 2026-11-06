@@ -30,6 +30,8 @@ def test_all_workflows_are_manual_or_reusable_only():
     assert checks["on"]["workflow_call"]["inputs"]["release_version"]["default"] == ""
     assert checks["permissions"] == {"contents": "read"}
     assert set(checks["jobs"]) == {"lint", "quick-test", "test", "build", "smoke-install"}
+    for name in ("quick-test", "test", "build"):
+        assert checks["jobs"][name]["needs"] == "lint"
     assert checks["jobs"]["quick-test"]["if"] == "inputs.full_checks == false"
     for name in ("test", "build", "smoke-install"):
         assert checks["jobs"][name]["if"] == "inputs.full_checks"

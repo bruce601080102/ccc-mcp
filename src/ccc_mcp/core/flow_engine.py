@@ -12,7 +12,6 @@ import uuid
 
 from ..adapters.storage import now
 from ..infra.errors import BridgeError
-from .roles import ROLE_STATS, STAT_AXES, role_stats, team_stats
 from .flows import (
     BUILDER_ROLES,
     BUILTIN_FLOWS,
@@ -25,6 +24,7 @@ from .flows import (
     judge_gate,
     step_instruction,
 )
+from .roles import ROLE_STATS, STAT_AXES, role_stats, team_stats
 
 _DECISIONS = {"proceed", "retry", "stop"}
 
