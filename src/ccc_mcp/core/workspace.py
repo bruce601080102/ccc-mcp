@@ -337,11 +337,26 @@ class WorkspaceHub:
             )
         if row["role"] in {"SA", "REVIEW"}:
             self.maybe_auto_evaluate(execution_id)
-        return {
+        result = {
             "execution_id": execution_id,
+            "task_id": row["task_id"],
             "status": "RECORDED",
+            "auto_advanced": False,
             "next_action": "PM collects context updates and refines ContextPatch before the next handoff",
         }
+        # The report is already durable, so a hand-over problem must not undo it: a failed
+        # dispatch stays recorded and wait_for_task asks for resume_pending_dispatch.
+        try:
+            advance = self.auto_advance_low_risk(execution_id)
+        except Exception as exc:
+            advance = {"advanced": False, "reason": f"{type(exc).__name__}: {exc}"}
+        if advance.get("advanced"):
+            result["auto_advanced"] = True
+            result["next_action"] = (
+                "The workflow handed over to the next step automatically; call wait_for_task "
+                "and follow its action_required. Do not call advance_project for this report."
+            )
+        return result
 
     def submit_clarification(self, project_id, execution_id, report):
         """The interactive ChatGPT counterpart of a native CLI's Meeting Mode report:

@@ -10,6 +10,8 @@ ccc-mcp connect tunnel_...
 ccc-mcp project create <id> [--path <path>] [--profile chatgpt-only|best-model] [--write]
 ccc-mcp project add <path> --id <id> [--write]
 ccc-mcp project authorize <id>   # deprecated; prefer --write above
+ccc-mcp project export <id> --out project-backup.json
+ccc-mcp project import project-backup.json --path /existing/repository
 ccc-mcp ui [--port <n>] [--no-browser]
 ccc-mcp --project <id> task --oneline
 ccc-mcp --project <id> task TASK-0001 --oneline
@@ -25,6 +27,8 @@ ccc-mcp --project <id> clear history
 ```
 
 `project add`/`project create` both take `--write`, which grants continuous write authorization in the same step as registration — one interactive confirmation instead of a separate `project authorize` call afterward. It is the same underlying grant either way (same event, same audit row); `--write` is purely a combined entry point. `project authorize` keeps working standalone and prints a one-line deprecation hint to stderr (never mixed into the JSON on stdout) pointing at `--write`. An existing read-only project is never silently upgraded — `--write` only applies at the moment of `add`/`create`; authorizing it later is always its own explicit `project authorize` call (or the web console's "Enable write").
+
+`project export` saves one project's settings, Context versions, tasks, conversation, execution reports, review and test evidence as JSON. It requires no running agent or pending dispatch. `project import` restores those records into an existing, unregistered source folder; it refuses an existing registration or `.ccc-mcp` folder. The web console offers **Export backup** on the project overview and **Import backup** on All projects. Source code, Git history, managed worktrees, global Skills, Tunnel credentials and executable MCP server registrations are excluded. Imported write authorization is always reset to read-only and unfinished tasks start paused. The backup can contain requirements, reports and code excerpts; handle it as project data.
 
 `ccc-mcp ui` starts a local web console in the same process (binds `127.0.0.1` only, no separate frontend to build or run). See the [README](../../README.md#web-console) to start it and [7-reliability-and-security.md](7-reliability-and-security.md#web-console) for how it replaces the terminal's TTY confirmation for `authorize`/`delete`/`clear-history`.
 

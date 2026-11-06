@@ -13,6 +13,9 @@ from ..infra.errors import BridgeError
 GENERAL_PRODUCERS = ("PA", "RS", "AN", "PL", "CS", "WR", "ED")
 GENERAL_GATES = ("VC", "RV")
 GENERAL_ROLES = (*GENERAL_PRODUCERS, *GENERAL_GATES)
+# When ChatGPT plays one of these roles, its saved report is enough to hand over to the next
+# step: the PM round that would only restate the summary is skipped.
+INTERACTIVE_AUTO_ADVANCE_ROLES = frozenset(GENERAL_ROLES)
 ENGINEERING_ROLES = ("SA", "SD", "RD", "SD/RD", "REVIEW", "SR", "AR", "SEC", "QA", "SW")
 AGENT_ROLES = (*ENGINEERING_ROLES, *GENERAL_ROLES)
 # PM is the interactive ChatGPT conversation that drives the workflow; it has an identity
@@ -79,6 +82,65 @@ ROLE_CATALOG = {
     "VC": ("VC", "Fact Checker", "Checks claims, sources and figures against evidence"),
     "RV": ("RV", "Reviewer", "Checks the result and points out problems and gaps"),
 }
+
+# Every role has a score from 0 to 5 on six abilities, drawn as a radar chart in the console.
+# The abilities are the same for software and everyday work so any mix of roles can be compared.
+STAT_AXES = ("research", "analysis", "planning", "creation", "verification", "risk")
+STAT_MAX = 5
+ROLE_STATS = {
+    #        research analysis planning creation verification risk
+    "SA": (3, 5, 3, 1, 2, 2),
+    "SD": (2, 3, 5, 2, 1, 2),
+    "RD": (1, 2, 2, 5, 3, 1),
+    "SD/RD": (1, 3, 4, 4, 3, 1),
+    "REVIEW": (1, 3, 1, 0, 5, 4),
+    "SR": (1, 4, 2, 0, 4, 3),
+    "AR": (2, 4, 1, 0, 4, 5),
+    "SEC": (2, 3, 1, 0, 3, 5),
+    "QA": (1, 2, 1, 0, 5, 3),
+    "SW": (2, 4, 3, 5, 2, 1),
+    "PA": (2, 2, 4, 2, 1, 1),
+    "RS": (5, 3, 1, 1, 3, 0),
+    "AN": (2, 5, 3, 1, 3, 2),
+    "PL": (1, 3, 5, 3, 1, 2),
+    "CS": (3, 4, 4, 1, 2, 4),
+    "WR": (2, 2, 2, 5, 1, 0),
+    "ED": (0, 2, 2, 4, 3, 1),
+    "VC": (4, 3, 0, 0, 5, 3),
+    "RV": (1, 4, 1, 0, 5, 4),
+}
+# A member who scores at least this on an ability backs up the team's best on that ability.
+STAT_STRONG = 3
+STAT_BACKUP_BONUS = 0.5
+STAT_GAP = 1
+
+
+def role_stats(role):
+    """{ability: 0-5} for one role; an unknown role has none."""
+    values = ROLE_STATS.get(role)
+    return dict(zip(STAT_AXES, values)) if values else None
+
+
+def team_stats(roles):
+    """The combined ability chart of a workflow's roles (each role counts once, however many
+    steps it has). The strongest member sets an ability; every other member who is strong at
+    it adds STAT_BACKUP_BONUS, up to STAT_MAX. `gaps` are abilities nobody is good at."""
+    distinct = [role for role in dict.fromkeys(roles) if role in ROLE_STATS]
+    team = {}
+    for index, axis in enumerate(STAT_AXES):
+        scores = sorted((ROLE_STATS[role][index] for role in distinct), reverse=True)
+        best = scores[0] if scores else 0
+        backups = sum(1 for score in scores[1:] if score >= STAT_STRONG)
+        team[axis] = min(STAT_MAX, round(best + STAT_BACKUP_BONUS * backups, 1))
+    return {
+        "axes": list(STAT_AXES),
+        "max": STAT_MAX,
+        "team": team,
+        "power": round(sum(team.values()), 1),
+        "gaps": [axis for axis in STAT_AXES if team[axis] <= STAT_GAP],
+        "roles": {role: role_stats(role) for role in distinct},
+    }
+
 
 ROLE_NAME_MAX = 24
 

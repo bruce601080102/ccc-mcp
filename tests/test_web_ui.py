@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 from starlette.testclient import TestClient
 
+from ccc_mcp import __version__
 from ccc_mcp.infra.codex_account import _rate_metrics, _usage_metrics, read_account_usage
 from ccc_mcp.infra.errors import BridgeError
 from ccc_mcp.interfaces.web import create_app
@@ -33,6 +34,12 @@ def mkrepo(tmp_path, name):
     repo.mkdir()
     (repo / "README.md").write_text("x", encoding="utf-8")
     return repo
+
+
+def test_session_reports_running_package_version(client):
+    response = client.get("/api/session")
+    assert response.status_code == 200
+    assert response.json()["version"] == __version__
 
 
 def test_task_status_remains_available_while_project_is_locked(tmp_path, client):
@@ -1180,3 +1187,39 @@ def test_custom_workflows_can_be_managed_from_the_console(tmp_path, client):
     )
     assert client.post("/api/projects/mine/workflows/flow-2/delete", json={}).json()["deleted"] == "flow-2"
     assert client.post("/api/projects/mine/workflows/full/delete", json={}).status_code == 400
+
+
+def test_a_project_can_wear_a_pixel_character_or_text_in_a_color(tmp_path, client):
+    repo = mkrepo(tmp_path, "alpha")
+    assert client.post("/api/projects/add", json={"path": str(repo), "id": "alpha"}).status_code == 200
+    assert client.get("/api/project-groups").json()["icons"] == {}
+
+    robot = client.post(
+        "/api/project-groups",
+        json={"action": "icon", "project_id": "alpha", "avatar": "robot", "tone": "violet"},
+    )
+    assert robot.json()["icons"] == {"alpha": {"avatar": "robot", "tone": "violet"}}
+    text = client.post(
+        "/api/project-groups", json={"action": "icon", "project_id": "alpha", "text": "🚀"}
+    )
+    assert text.json()["icons"] == {"alpha": {"text": "🚀"}}
+    assert client.get("/api/project-groups").json()["icons"] == {"alpha": {"text": "🚀"}}
+
+    cleared = client.post("/api/project-groups", json={"action": "icon", "project_id": "alpha"})
+    assert cleared.json()["icons"] == {}
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"project_id": "missing", "text": "A"},
+        {"project_id": "alpha", "avatar": "not-a-character"},
+        {"project_id": "alpha", "text": "far too long"},
+        {"project_id": "alpha", "text": "a\nb"},
+        {"project_id": "alpha", "text": "A", "tone": "chartreuse"},
+    ],
+)
+def test_project_icons_reject_bad_input(tmp_path, client, body):
+    repo = mkrepo(tmp_path, "alpha")
+    client.post("/api/projects/add", json={"path": str(repo), "id": "alpha"})
+    assert client.post("/api/project-groups", json={"action": "icon", **body}).status_code == 400

@@ -481,6 +481,41 @@ def project_list(ctx: typer.Context):
 
 
 @project_app.command(
+    "export",
+    help=t(
+        "匯出單一專案的設定、Context、任務與執行紀錄；不包含原始碼，也不移轉寫入授權。",
+        "Export one project's settings, Context, tasks and execution history; excludes source code and does not transfer write authorization.",
+    ),
+)
+def project_export(ctx: typer.Context, id: str, out: Annotated[Path, typer.Option("--out")]):
+    target = out.expanduser().absolute()
+    if target.exists():
+        raise BridgeError("Export file already exists; choose a new path")
+    bundle = bridge(ctx).export_project_bundle(id)
+    atomic_write(target, bundle + "\n")
+    output({"project_id": id, "path": str(target), "bytes": target.stat().st_size})
+
+
+@project_app.command(
+    "import",
+    help=t(
+        "從專案備份匯入設定與紀錄到尚未註冊的資料夾；匯入後維持唯讀。",
+        "Import settings and history into an unregistered folder; the imported project starts read-only.",
+    ),
+)
+def project_import(
+    ctx: typer.Context,
+    bundle: Annotated[Path, typer.Argument()],
+    path: Annotated[Path, typer.Option("--path")],
+):
+    from ..core.project_bundle import MAX_BYTES
+
+    if not bundle.is_file() or bundle.stat().st_size > MAX_BYTES:
+        raise BridgeError("Project bundle must be a file under 100 MB")
+    output(bridge(ctx).import_project_bundle(bundle.read_bytes(), path))
+
+
+@project_app.command(
     "authorize",
     help=t(
         "[已棄用，仍可用] 持續授權指定專案；後端自動承接 Agent 工作串與計畫。"

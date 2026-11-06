@@ -177,7 +177,9 @@ ccc-mcp --project my-project config meeting-mode on --min-rounds 1 --max-rounds 
 
 用 `config workflow life` 選一個，或用 `config workflow-selection auto` 讓系統依需求挑（旅遊、預算、企劃、文章、「該不該…」等字眼；只要提到程式就維持軟體工作流）。自訂工作流可以混用任何角色，第一步可以是任一個產出角色，所以 `PA → WR → ED` 也是合法的「寫信」流程。日常任務的文件會顯示在任務頁的「成果」頁籤（最新的在上面），並隱藏只有改程式才有意義的 diff 與測試卡片。
 
-**Provider。** 日常角色預設用 ChatGPT，而不是 Codex 或 Claude Code：這裡的 CLI Agent 只能讀專案資料夾，研究員或事實查核員跑在上面查不到任何東西。用 ChatGPT 時，每一步由 ChatGPT 對話本身完成（它能上網），PM 在每一步之後推進流程。若某個角色的工作不需要外部資訊（例如根據研究員筆記工作的 WR、ED），仍可在設定 → 角色把它改成 Codex 或 Claude Code。
+**Provider。** 日常角色預設用 ChatGPT，而不是 Codex 或 Claude Code：這裡的 CLI Agent 只能讀專案資料夾，研究員或事實查核員跑在上面查不到任何東西。用 ChatGPT 時，每一步由 ChatGPT 對話本身完成（它能上網）；ChatGPT 用 `submit_agent_report` 交出報告後，系統會自動寫入 Context 並派出下一步（回應的 `auto_advanced` 為 `true`），不必再呼叫 `advance_project`，所以步驟之間不會多出一輪 PM 整理。若任務被暫停、專案沒有寫入授權，或這一步是軟體流程的角色，仍然停下來等 PM。若某個角色的工作不需要外部資訊（例如根據研究員筆記工作的 WR、ED），仍可在設定 → 角色把它改成 Codex 或 Claude Code。
+
+**能力圖。** 每個角色在六項能力上各有 0 到 5 分：研究、分析、規劃、創作、查核、風險。設定頁會顯示每個角色的能力圖；每張工作流卡片顯示整支隊伍合併後的能力圖與戰力（六項分數加總，滿分 30）；工作流編輯器會隨著你調整步驟即時重畫。隊伍在某項能力的分數＝最強成員的分數，其他每位在這項有 3 分以上的成員再加 0.5（最高 5 分）；同一個角色出現多次只算一次。全隊在某項都只有 1 分以下，就會列為「沒人擅長」的弱項。任務的「成果」頁籤上，能力圖會隨著步驟完成逐漸長大，虛線是整支隊伍的完整輪廓。分數定義在 `core/roles.py` 的 `ROLE_STATS`，並以 `stats` 欄位隨工作流目錄（`list_workflows`）回傳。
 
 ### 規格寫手（SW）
 

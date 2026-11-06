@@ -18,6 +18,15 @@ ccc-mcp project add 路徑 --id 專案ID --write
 ccc-mcp project authorize 專案ID
 ```
 
+要把單一專案的設定與工作紀錄搬到另一個 ccc-mcp 工作空間，可在專案沒有執行中 Agent／待派工交接時匯出，再匯入一個**已存在但尚未註冊**的原始碼資料夾：
+
+```text
+ccc-mcp project export 專案ID --out 專案備份.json
+ccc-mcp project import 專案備份.json --path /新電腦/專案資料夾
+```
+
+Web 控制台也可在專案總覽按「匯出備份」，再到「所有專案」按「匯入備份」。備份包含這個專案的角色／工作流等設定、Context 版本、任務對話、執行報告、審查與測試紀錄；不含 Git 儲存庫、原始碼、受管理 worktree、全域 Skills、Tunnel 憑證或已安裝 MCP 伺服器。匯入不覆蓋既有註冊或 `.ccc-mcp`，新裝置上的寫入授權一律重設為唯讀，未完成任務會先暫停。備份可能含需求、報告、存取稽核與程式片段，請當成專案資料保管。
+
 授權後固定走 Agent／Context 證據鏈，不需選模式。ChatGPT 對一般修改需求呼叫 `start_project_request`，後端會派出設定的 SA；上一個任務未結束時沿用它，已完成、取消或駁回時建立下一個 TASK 編號；PM 以 `advance_project` 提交有來源的 ContextPatch 後，系統自動派出 SD/RD、REVIEW 並完成本輪。實作 Agent 在原專案寫檔；MCP 不提供直接寫檔捷徑。
 
 設定格式（`ROLE`、`PROVIDER` 是要替換的欄位）：

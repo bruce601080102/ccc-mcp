@@ -134,7 +134,9 @@ def create_server(
         "asking the user to check later. For PM_REFINEMENT or PM_DECISION, inspect the completed report, "
         "produce the provenance-backed ContextPatch/plan, call advance_project, and wait again. For "
         "CHATGPT_HANDOFF_PENDING, perform that role and submit_agent_report in this conversation, then "
-        "continue. Stop only at COMPLETED, a genuine failure/blocker, or a clarification/approval that "
+        "continue; when submit_agent_report returns auto_advanced=true (everyday-team steps) the next "
+        "step is already dispatched, so follow its workflow/action_required and do not call advance_project. "
+        "Stop only at COMPLETED, a genuine failure/blocker, or a clarification/approval that "
         "requires information or authority from the user. Status-only user requests are the exception: "
         "report the requested snapshot without advancing it. "
         "LOCAL MCP TOOLS: when list_installed_mcp_tools shows servers, you may use them through "
@@ -567,12 +569,22 @@ def create_server(
 
         @server.tool(annotations=mutation)
         async def submit_agent_report(
-            project_id: str, execution_id: str, report: AgentReport
+            project_id: str, execution_id: str, report: AgentReport, wait_seconds: int = 50
         ) -> dict[str, Any]:
-            """Finish an active ChatGPT role; save raw report, context suggestions and host-observed file evidence."""
-            return await call(
+            """Finish an active ChatGPT role; save raw report, context suggestions and host-observed file evidence.
+            For an everyday-team workflow step the backend then hands over to the next step by
+            itself (auto_advanced=true): do NOT call advance_project, follow the returned
+            workflow/action_required instead and keep working in this same turn."""
+            result = await call(
                 bridge.submit_agent_report, project_id, execution_id, report.model_dump()
             )
+            if result.get("auto_advanced"):
+                result["workflow"] = await call(
+                    bridge.wait_for_task, project_id, result["task_id"], wait_seconds
+                )
+                result["meeting_mode_notice"] = result["workflow"]["meeting_mode_notice"]
+                result["action_required"] = result["workflow"]["action_required"]
+            return result
 
         @server.tool(annotations=mutation)
         async def call_installed_mcp_tool(

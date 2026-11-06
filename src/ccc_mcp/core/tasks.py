@@ -29,9 +29,11 @@ from .models import (
 from .roles import (
     AGENT_ROLES,
     DOCUMENT_FILES,
+    INTERACTIVE_AUTO_ADVANCE_ROLES,
     READ_ONLY_ROLES,
     REPORT_FILES,
     RUNNING_STATE,
+    team_stats,
     writes_files,
 )
 
@@ -1197,11 +1199,18 @@ class TaskHub:
             self._require_task_runnable(row["project_id"], row["task_id"])
         except PermissionDenied as exc:
             return {"advanced": False, "reason": str(exc)}
-        if row["adapter"] != "real" and not allow_fake:
+        in_flow = bool(self._task_flow(row["project_id"], row["task_id"]))
+        # ChatGPT playing an everyday-team step hands over on its saved report as well:
+        # those steps have no host evidence to check, so a PM round would only restate it.
+        interactive_step = (
+            row["adapter"] == "interactive"
+            and in_flow
+            and row["role"] in INTERACTIVE_AUTO_ADVANCE_ROLES
+        )
+        if row["adapter"] != "real" and not allow_fake and not interactive_step:
             return {"advanced": False, "reason": "Only real Agent executions auto-advance"}
         # A step-workflow gate may legitimately say "revise": the engine decides what
         # happens next, so that outcome is not a reason to stop for the PM.
-        in_flow = bool(self._task_flow(row["project_id"], row["task_id"]))
         engine_gate = in_flow and row["role"] in GATE_ROLES
         if row["role"] not in {"SD", "RD", "SD/RD", "REVIEW"} and not (in_flow and row["role"] != "SA"):
             return {"advanced": False, "reason": "SA and non-delivery roles require PM review"}
@@ -1256,7 +1265,7 @@ class TaskHub:
         result = self.advance_project(
             row["project_id"],
             patch,
-            adapter=row["adapter"],
+            adapter="real" if interactive_step else row["adapter"],
             fake_scenario=options.get("fake_script") or options.get("scenario", "success"),
             automatic=True,
         )
@@ -2084,6 +2093,11 @@ class TaskHub:
                     "reason": flow_info.get("reason") if flow_info else None,
                     "steps": [step["role"] for step in flow_info["steps"]] if flow_info else None,
                     "pending_decision": flow_decision,
+                    "stats": team_stats(
+                        [step["role"] for step in flow_info["steps"]]
+                        if flow_info
+                        else ["SA", "SD/RD", "REVIEW"]
+                    ),
                     # Index of the step the latest execution belongs to, and whether it finished.
                     "current_step": step_row["step"] if step_row else None,
                     "current_step_done": bool(step_row and step_row["status"] == "SUCCEEDED"),

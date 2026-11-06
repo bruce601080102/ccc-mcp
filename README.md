@@ -129,7 +129,7 @@ The console's main pages:
 | Page | What you can do |
 | --- | --- |
 | **Command center** | Track task activity, blockers, project load, and agent evaluation history. Filter this workspace's CLI token records from five minutes to one month; see Codex plan-window remaining percentages and reset times. Enable Claude quota sync in the UI and click Check now: ccc-mcp briefly opens Claude Code in the background (one tiny Haiku message, no terminal needed) and shows its official five-hour and seven-day remaining percentages. The page checks local data every five minutes while open. Account-wide lifetime tokens are separate and cannot be attributed to a Chat, Codex run, or ccc-mcp project. |
-| **All projects** | Create projects, add existing folders, organize groups, and manage write access. |
+| **All projects** | Create projects, add existing folders, organize groups, import a single-project backup, and manage write access. Export settings and work history from a project's overview. |
 | **Settings** | Set the profile, providers and roles, report language, test command, and Meeting Mode. |
 | **Tasks / Context** | Inspect stages, waiting reasons, execution history, usage and CLI invocation evidence, raw results, and shared context. |
 | **Connect** | Connect ChatGPT with an OpenAI Platform Tunnel ID and runtime API key; inspect status and logs. |

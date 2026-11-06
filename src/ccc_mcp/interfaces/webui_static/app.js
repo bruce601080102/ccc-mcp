@@ -1,6 +1,7 @@
 (() => {
   "use strict";
   const UI = window.cccI18n;
+  let appVersion = "";
 
   let TOKEN = "";
   function captureTokenFromHash() {
@@ -43,6 +44,44 @@
     return String(value)
       .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;");
+  }
+
+  // Timestamps read as "5 minutes ago" with the exact local time on hover, instead of raw ISO text.
+  function whenHtml(iso) {
+    if (!iso) return "";
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) return esc(iso);
+    const locale = UI.getLocale();
+    const seconds = Math.round((date.getTime() - Date.now()) / 1000);
+    const abs = Math.abs(seconds);
+    const rtf = new Intl.RelativeTimeFormat(locale, { numeric: "auto" });
+    let text;
+    if (abs < 60) text = rtf.format(0, "second");
+    else if (abs < 3600) text = rtf.format(Math.round(seconds / 60), "minute");
+    else if (abs < 86400) text = rtf.format(Math.round(seconds / 3600), "hour");
+    else if (abs < 7 * 86400) text = rtf.format(Math.round(seconds / 86400), "day");
+    else text = date.toLocaleDateString(locale, { year: "numeric", month: "short", day: "numeric" });
+    return `<time datetime="${esc(iso)}" title="${esc(date.toLocaleString(locale))}" data-no-i18n>${esc(text)}</time>`;
+  }
+
+  // A project's icon in lists: a pixel character or a short text/emoji in a color, else its first letter.
+  const ICON_TONES = ["green", "blue", "violet", "rose", "orange", "amber", "teal", "slate"];
+  function projectIconHtml(id, icon, size = "small") {
+    const tone = icon && icon.tone ? ` tone-${icon.tone}` : "";
+    if (icon && icon.avatar) return `<span class="project-avatar project-sprite ${size}${tone}" aria-hidden="true">${spriteFor(icon.avatar)}</span>`;
+    const text = icon && icon.text ? icon.text : id.slice(0, 1).toUpperCase();
+    return `<span class="project-avatar ${size}${tone}${icon && icon.text ? " is-text" : ""}" aria-hidden="true" data-no-i18n>${esc(text)}</span>`;
+  }
+
+  // A page-shaped placeholder: the layout does not jump when real content arrives.
+  const loadingView = () => `<div class="loading-skeleton" role="status" aria-live="polite"><span class="sr-only">${esc(UI.translate("Loading…"))}</span><div class="sk sk-title"></div><div class="sk sk-line"></div><div class="sk sk-card"></div><div class="sk sk-card short"></div></div>`;
+
+  function taskStateTone(state) {
+    if (["FAILED", "BLOCKED", "REJECTED"].includes(state)) return "negative";
+    if (state === "COMPLETED") return "positive";
+    if (state === "CANCELLED") return "neutral";
+    if (String(state).startsWith("AWAITING")) return "warning";
+    return "accent";
   }
 
   let toastTimer = null;
@@ -281,8 +320,9 @@
     ` : "";
     const dotClass = "dot" + (lastConnectStatus && lastConnectStatus.state === "connected" ? " on" : lastConnectStatus && lastConnectStatus.state === "error" ? " err" : "");
     root.innerHTML = `
-      <div class="sidebar">
-        <div class="brand"><span class="mark">C</span><span>ccc-mcp<small>CONTROL CENTER</small></span></div>
+      <button type="button" class="skip-link" id="skip-link">Skip to content</button>
+      <nav class="sidebar" aria-label="Main">
+        <div class="brand"><span class="mark">C</span><span>ccc-mcp<small>CONTROL CENTER <span id="app-version" data-no-i18n>${appVersion ? `· v${esc(appVersion)}` : ""}</span></small></span></div>
         <a class="nav-item ${currentRoute.view === "projects" ? "active" : ""}" href="#/">${ICON.projects}All projects</a>
         <a class="nav-item ${currentRoute.view === "dashboard" ? "active" : ""}" href="#/dashboard">${ICON.dashboard}Command center</a>
         <a class="nav-item ${currentRoute.view === "global-skills" ? "active" : ""}" href="#/global-skills">${ICON.skills}Global Skills</a>
@@ -294,9 +334,13 @@
         <button type="button" id="theme-toggle" class="nav-item" aria-pressed="${currentTheme() === "dark"}" aria-label="Toggle dark mode">${currentTheme() === "dark" ? ICON.moon : ICON.sun}<span>Dark mode</span><span class="dot${currentTheme() === "dark" ? " on" : ""}"></span></button>
         <div class="sidebar-locale"><span>Interface language</span><select id="ui-locale" aria-label="Interface language"><option value="zh-TW">繁體中文</option><option value="en">English</option></select></div>
         <div class="sidebar-foot">LOCAL CONSOLE <span class="status-dot on"></span></div>
-      </div>
-      <div class="frame"><div class="sheet" id="sheet"><div class="content${narrow ? " narrow" : ""}${opts && opts.contentClass ? " " + opts.contentClass : ""}">${contentHtml}</div></div></div>
+      </nav>
+      <div class="frame"><main class="sheet" id="sheet" tabindex="-1"><div class="content${narrow ? " narrow" : ""}${opts && opts.contentClass ? " " + opts.contentClass : ""}">${contentHtml}</div></main></div>
     `;
+    document.getElementById("skip-link").addEventListener("click", () => document.getElementById("sheet").focus());
+    // On a phone the sidebar is a horizontal strip; keep the current page visible in it.
+    const activeNav = root.querySelector(".sidebar .nav-item.active");
+    if (activeNav && activeNav.scrollIntoView) activeNav.scrollIntoView({ block: "nearest", inline: "center" });
     const localeSelect = document.getElementById("ui-locale");
     localeSelect.value = UI.getLocale();
     localeSelect.addEventListener("change", () => {
@@ -600,7 +644,7 @@
 
   async function renderWorkspace(isDashboard) {
     const gen = renderGen;
-    layout(`<div class="empty">${esc(UI.translate("Loading projects…"))}</div>`);
+    layout(loadingView());
     let projects = [], organization = { groups: [], assignments: {} }, snapshot = { tasks: [], open_count: 0 };
     try {
       if (isDashboard) [projects, snapshot] = await Promise.all([api("/projects"), api(`/dashboard?usage_window=${dashboardUsageWindow}`)]);
@@ -621,6 +665,7 @@
     const startedWeek = activity.slice(-7).reduce((total, day) => total + day.created, 0);
     const groups = organization.groups || [];
     const assignments = organization.assignments || {};
+    const icons = organization.icons || {};
     const groupName = (group) => group[UI.getLocale() === "zh-TW" ? "name_zh" : "name_en"] || group.name;
     const groupFields = (group) => {
       const legacyName = group && group.name_zh === undefined && group.name_en === undefined ? group.name : "";
@@ -636,8 +681,8 @@
     const groupOptions = (selected) => `<option value="" ${!selected ? "selected" : ""}>${esc(UI.translate("Ungrouped"))}</option>` + groups.map((g) => `<option data-no-i18n value="${esc(g.id)}" ${selected === g.id ? "selected" : ""}>${esc(groupName(g))}</option>`).join("");
     const row = (p) => `
       <div class="project-row" draggable="true" data-drag-project="${esc(p.id)}">
+        <button type="button" class="project-icon-button" data-project-icon="${esc(p.id)}" aria-label="${esc(UI.translate("Change project icon"))}: ${esc(p.id)}" title="${esc(UI.translate("Change project icon"))}">${projectIconHtml(p.id, icons[p.id])}</button>
         <a class="project-row-link" href="#/p/${encodeURIComponent(p.id)}/overview">
-          <span class="project-avatar small">${esc(p.id.slice(0, 1).toUpperCase())}</span>
           <span class="project-row-text">
             <span class="project-row-name" data-no-i18n>${esc(p.id)}</span>
             <span class="project-row-path mono">${esc(p.root)}</span>
@@ -673,13 +718,23 @@
         <div class="dashboard-metric"><span>${esc(UI.translate("Completed in 7 days"))}</span><strong class="num">${completedWeek}</strong><small>${startedWeek} ${esc(UI.translate("started in the same period"))}</small></div>
         <div class="dashboard-metric"><span>${esc(UI.translate("Open tasks"))}</span><strong class="num">${snapshot.open_count}</strong><small>${projects.length} ${esc(UI.translate("Projects"))} · ${writable} ${esc(UI.translate("read-write"))}</small></div>
       </div>
+      <div class="dashboard-grid dashboard-operations">
+        <section class="dashboard-panel dashboard-panel-wide">
+          <div class="dashboard-panel-head"><div><span class="dashboard-panel-kicker">01 / ${esc(UI.translate("OPERATIONS"))}</span><h2>${esc(UI.translate("Action queue"))}</h2><p>${esc(UI.translate("Blocked work first, then decisions and active agents."))}</p></div><strong class="dashboard-panel-count num">${queue.length}</strong></div>
+          ${queue.length ? `<div class="dashboard-task-list dashboard-queue">${queue.map(dashboardTaskRow).join("")}</div>` : `<div class="dashboard-empty">${esc(UI.translate("Nothing needs attention right now."))}</div>`}
+        </section>
+        <section class="dashboard-panel">
+          <div class="dashboard-panel-head"><div><span class="dashboard-panel-kicker">02 / ${esc(UI.translate("PROJECT LOAD"))}</span><h2>${esc(UI.translate("Work by project"))}</h2><p>${esc(UI.translate("Open tasks in the six busiest projects."))}</p></div></div>
+          ${dashboardProjectLoad(projects, openTasks)}
+        </section>
+      </div>
       <div class="dashboard-grid">
         <section class="dashboard-panel dashboard-panel-wide">
-          <div class="dashboard-panel-head"><div><span class="dashboard-panel-kicker">01 / ${esc(UI.translate("THROUGHPUT"))}</span><h2>${esc(UI.translate("14-day activity"))}</h2><p>${esc(UI.translate("Tasks started and completed each day (UTC)."))}</p></div><div class="dashboard-chart-key"><span><i class="created"></i>${esc(UI.translate("Started"))}</span><span><i class="completed"></i>${esc(UI.translate("Completed"))}</span></div></div>
+          <div class="dashboard-panel-head"><div><span class="dashboard-panel-kicker">03 / ${esc(UI.translate("THROUGHPUT"))}</span><h2>${esc(UI.translate("14-day activity"))}</h2><p>${esc(UI.translate("Tasks started and completed each day (UTC)."))}</p></div><div class="dashboard-chart-key"><span><i class="created"></i>${esc(UI.translate("Started"))}</span><span><i class="completed"></i>${esc(UI.translate("Completed"))}</span></div></div>
           ${dashboardActivityChart(activity)}
         </section>
         <section class="dashboard-panel">
-          <div class="dashboard-panel-head"><div><span class="dashboard-panel-kicker">02 / ${esc(UI.translate("CURRENT STATE"))}</span><h2>${esc(UI.translate("Open task mix"))}</h2><p>${esc(UI.translate("Where active work is waiting now."))}</p></div></div>
+          <div class="dashboard-panel-head"><div><span class="dashboard-panel-kicker">04 / ${esc(UI.translate("CURRENT STATE"))}</span><h2>${esc(UI.translate("Open task mix"))}</h2><p>${esc(UI.translate("Where active work is waiting now."))}</p></div></div>
           ${dashboardStatusChart(attention, running)}
         </section>
       </div>
@@ -694,25 +749,15 @@
         <div class="dashboard-panel-head"><div><h2>${esc(UI.translate("Evidence and agent reliability"))}</h2><p>${esc(UI.translate("Verified task outcomes grouped by agent and role. Open a task to inspect the evidence behind a score."))}</p></div></div>
         <div id="dashboard-reliability">${esc(UI.translate("Loading…"))}</div>
       </section>
-      <div class="dashboard-grid dashboard-operations">
-        <section class="dashboard-panel dashboard-panel-wide">
-          <div class="dashboard-panel-head"><div><span class="dashboard-panel-kicker">04 / ${esc(UI.translate("OPERATIONS"))}</span><h2>${esc(UI.translate("Action queue"))}</h2><p>${esc(UI.translate("Blocked work first, then decisions and active agents."))}</p></div><strong class="dashboard-panel-count num">${queue.length}</strong></div>
-          ${queue.length ? `<div class="dashboard-task-list dashboard-queue">${queue.map(dashboardTaskRow).join("")}</div>` : `<div class="dashboard-empty">${esc(UI.translate("Nothing needs attention right now."))}</div>`}
-        </section>
-        <section class="dashboard-panel">
-          <div class="dashboard-panel-head"><div><span class="dashboard-panel-kicker">05 / ${esc(UI.translate("PROJECT LOAD"))}</span><h2>${esc(UI.translate("Work by project"))}</h2><p>${esc(UI.translate("Open tasks in the six busiest projects."))}</p></div></div>
-          ${dashboardProjectLoad(projects, openTasks)}
-        </section>
-      </div>
       <section class="dashboard-panel dashboard-outcomes">
-        <div class="dashboard-panel-head"><div><span class="dashboard-panel-kicker">06 / ${esc(UI.translate("VERIFICATION"))}</span><h2>${esc(UI.translate("Recent outcomes"))}</h2><p>${esc(UI.translate("Finished work and host test evidence, shown separately."))}</p></div></div>
+        <div class="dashboard-panel-head"><div><span class="dashboard-panel-kicker">05 / ${esc(UI.translate("VERIFICATION"))}</span><h2>${esc(UI.translate("Recent outcomes"))}</h2><p>${esc(UI.translate("Finished work and host test evidence, shown separately."))}</p></div></div>
         ${recent.length ? `<div class="dashboard-task-list">${recent.map(dashboardTaskRow).join("")}</div>` : `<div class="dashboard-empty">${esc(UI.translate("No finished tasks yet."))}</div>`}
       </section>
     ` : "";
     const projectsHtml = isDashboard ? "" : `
       <div class="title-row">
         <div><h1>${esc(UI.translate("Projects"))}</h1><div class="sub">${esc(UI.translate("Every project registered with this ccc-mcp home."))}</div></div>
-        <div class="title-actions"><button class="btn" id="btn-group">${esc(UI.translate("New group"))}</button><button class="btn" id="btn-add">${ICON.projects}${esc(UI.translate("Add existing folder"))}</button><button class="btn primary" id="btn-create">${esc(UI.translate("Create new project"))}</button></div>
+        <div class="title-actions"><button class="btn" id="btn-group">${esc(UI.translate("New group"))}</button><button class="btn" id="btn-import">${esc(UI.translate("Import backup…"))}</button><button class="btn" id="btn-add">${ICON.projects}${esc(UI.translate("Add existing folder"))}</button><button class="btn primary" id="btn-create">${esc(UI.translate("Create new project"))}</button></div>
       </div>
       ${projects.length ? `<div class="kpi-strip">
         <div class="kpi"><div class="v num">${projects.length}</div><div class="l">${esc(UI.translate("Projects"))}</div></div>
@@ -754,6 +799,7 @@
     }
     document.getElementById("btn-add").addEventListener("click", openAddProjectModal);
     document.getElementById("btn-create").addEventListener("click", openCreateProjectModal);
+    document.getElementById("btn-import").addEventListener("click", openImportProjectModal);
     document.getElementById("btn-group").addEventListener("click", () => showModal({
       title: "New group", body: "Group projects on this device without changing their folders or settings.",
       fields: groupFields(null), confirmLabel: "Create", onSubmit: async (values) => {
@@ -765,6 +811,37 @@
       try { await api("/project-groups", { method: "POST", body }); renderProjects(); }
       catch (err) { toast(err.message, true); }
     };
+    document.querySelectorAll("[data-project-icon]").forEach((button) => button.addEventListener("click", () => {
+      const projectId = button.dataset.projectIcon;
+      const chosen = { ...(icons[projectId] || {}) };
+      const overlay = showModal({ title: "Project icon", body: "Pick a pixel character or type a short text or emoji, then a color.", fields: [], confirmLabel: "Save", onSubmit: async () => {
+        await api("/project-groups", { method: "POST", body: { action: "icon", project_id: projectId, avatar: chosen.avatar || undefined, text: chosen.avatar ? undefined : chosen.text || undefined, tone: chosen.tone || undefined } });
+        renderProjects();
+      } });
+      const area = overlay.querySelector(".fields");
+      area.innerHTML = `<div class="icon-picker">
+        <div class="icon-preview" id="icon-preview"></div>
+        <div class="field"><label>${esc(UI.translate("Pixel character"))}</label><div class="avatar-picker" id="icon-avatars" role="radiogroup" aria-label="${esc(UI.translate("Pixel character"))}">${AVATAR_ORDER.map((avatar) => `<button type="button" class="avatar-option" role="radio" data-avatar="${avatar}" title="${esc(UI.translate(avatar))}"><span class="chat-avatar av-pm" aria-hidden="true">${spriteFor(avatar)}</span></button>`).join("")}</div></div>
+        <div class="field"><label for="icon-text">${esc(UI.translate("Text or emoji"))}</label><input type="text" id="icon-text" maxlength="4" autocomplete="off" value="${esc(chosen.text || "")}" placeholder="${esc(projectId.slice(0, 1).toUpperCase())}" data-no-i18n /><div class="hint">${esc(UI.translate("Up to 4 characters. Leave empty to use the first letter."))}</div></div>
+        <div class="field"><label>${esc(UI.translate("Color"))}</label><div class="tone-picker" id="icon-tones" role="radiogroup" aria-label="${esc(UI.translate("Color"))}">${ICON_TONES.map((tone) => `<button type="button" class="tone-swatch tone-${tone}" role="radio" data-tone="${tone}" aria-label="${esc(tone)}"></button>`).join("")}</div></div>
+        <button type="button" class="btn small ghost" id="icon-reset">${esc(UI.translate("Use the first letter"))}</button>
+      </div>`;
+      UI.localize(area);
+      const paint = () => {
+        document.getElementById("icon-preview").innerHTML = projectIconHtml(projectId, chosen, "big");
+        area.querySelectorAll("[data-avatar]").forEach((el) => { const on = el.dataset.avatar === chosen.avatar; el.classList.toggle("selected", on); el.setAttribute("aria-checked", String(on)); });
+        area.querySelectorAll("[data-tone]").forEach((el) => { const on = el.dataset.tone === chosen.tone; el.classList.toggle("selected", on); el.setAttribute("aria-checked", String(on)); });
+      };
+      area.querySelectorAll("[data-avatar]").forEach((el) => el.addEventListener("click", () => { chosen.avatar = el.dataset.avatar; delete chosen.text; document.getElementById("icon-text").value = ""; paint(); }));
+      area.querySelectorAll("[data-tone]").forEach((el) => el.addEventListener("click", () => { chosen.tone = el.dataset.tone; paint(); }));
+      document.getElementById("icon-text").addEventListener("input", (event) => {
+        const value = event.target.value.trim();
+        if (value) { chosen.text = value; delete chosen.avatar; } else delete chosen.text;
+        paint();
+      });
+      document.getElementById("icon-reset").addEventListener("click", () => { for (const key of Object.keys(chosen)) delete chosen[key]; document.getElementById("icon-text").value = ""; paint(); });
+      paint();
+    }));
     document.querySelectorAll(".project-move").forEach((select) => select.addEventListener("change", () => update({ action: "move", project_id: select.dataset.projectId, group_id: select.value })));
     document.querySelectorAll("[data-group-rename]").forEach((btn) => btn.addEventListener("click", () => {
       const group = groups.find((g) => g.id === btn.dataset.groupRename);
@@ -913,6 +990,62 @@
     });
   }
 
+  function openImportProjectModal() {
+    closeModal();
+    const overlay = document.createElement("div");
+    overlay.id = "modal-overlay";
+    overlay.className = "modal-overlay";
+    overlay.innerHTML = `
+      <div class="modal" role="dialog" aria-modal="true">
+        <h2>Import project backup</h2>
+        <div class="body">Restore settings and saved task records into an existing, unregistered project folder. Source files are not included. The imported project starts read-only.</div>
+        <div class="field"><label for="import-file">Backup file</label><input id="import-file" type="file" accept=".json,application/json" /></div>
+        <div class="field"><label for="import-path">Project folder on this computer</label><input id="import-path" type="text" placeholder="/path/to/existing/project" autocomplete="off" /></div>
+        <div class="actions"><button class="btn" id="modal-cancel" type="button">Cancel</button><button class="btn primary" id="modal-confirm" type="button">Import project</button></div>
+      </div>`;
+    mountModal(overlay);
+    UI.localize(overlay);
+    overlay.addEventListener("click", (event) => { if (event.target === overlay) closeModal(); });
+    document.getElementById("modal-cancel").addEventListener("click", closeModal);
+    document.getElementById("modal-confirm").addEventListener("click", async () => {
+      const button = document.getElementById("modal-confirm");
+      const file = document.getElementById("import-file").files[0];
+      const path = document.getElementById("import-path").value.trim();
+      if (!file || !path) { toast("Choose a backup file and project folder.", true); return; }
+      button.disabled = true;
+      try {
+        const response = await fetch(`/api/projects/import?path=${encodeURIComponent(path)}`, {
+          method: "POST", headers: { "X-CCC-UI-Token": TOKEN, "Content-Type": "application/json" },
+          body: file,
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || "Import failed");
+        closeModal();
+        toast("Project backup imported. Write access is off.");
+        navTo(`/p/${encodeURIComponent(result.project_id)}/overview`);
+      } catch (error) { toast(error.message, true); }
+      finally { button.disabled = false; }
+    });
+  }
+
+  async function downloadProjectBackup(id) {
+    const response = await fetch(`/api/projects/${encodeURIComponent(id)}/export`, {
+      headers: { "X-CCC-UI-Token": TOKEN },
+    });
+    if (!response.ok) {
+      const result = await response.json();
+      throw new Error(result.error || "Export failed");
+    }
+    const url = URL.createObjectURL(await response.blob());
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `ccc-mcp-${id}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
   function promptAuthorize(projectId, onDone) {
     api(`/projects/${encodeURIComponent(projectId)}/authorize-preview`).then((preview) => {
       confirmTextModal({
@@ -953,6 +1086,74 @@
   let activeRoleNames = {};
   const roleName = (role) => activeRoleNames[role] || (ROLE_FRIENDLY[role] ? UI.translate(ROLE_FRIENDLY[role]) : ROLE_ABBREVIATIONS[role] || role);
   const roleAvatarTone = (role) => (ROLE_AVATARS[role] || ROLE_AVATARS.SA)[0];
+  // Ability charts. Every role scores 0-5 on six abilities (the backend owns the numbers, see
+  // core/roles.py); a workflow's chart combines its roles the same way team_stats() does there:
+  // the strongest member sets an ability and each other strong member adds a little.
+  const STAT_ORDER = ["research", "analysis", "planning", "creation", "verification", "risk"];
+  const STAT_NAMES = { research: "Research", analysis: "Reasoning", planning: "Planning", creation: "Creation", verification: "Verification", risk: "Risk sense" };
+  const STAT_MAX = 5, STAT_STRONG = 3, STAT_BACKUP = 0.5, STAT_GAP = 1;
+  let roleStatsMap = {};
+  const round1 = (value) => Math.round(value * 10) / 10;
+  function teamStats(roles, map = roleStatsMap) {
+    const distinct = [...new Set(roles)].filter((role) => map[role]);
+    const team = {};
+    for (const axis of STAT_ORDER) {
+      const scores = distinct.map((role) => map[role][axis]).sort((a, b) => b - a);
+      const backups = scores.slice(1).filter((score) => score >= STAT_STRONG).length;
+      team[axis] = Math.min(STAT_MAX, round1((scores[0] || 0) + STAT_BACKUP * backups));
+    }
+    return { team, power: round1(STAT_ORDER.reduce((sum, axis) => sum + team[axis], 0)), gaps: STAT_ORDER.filter((axis) => team[axis] <= STAT_GAP) };
+  }
+  const statSummary = (values) => STAT_ORDER.map((axis) => `${UI.translate(STAT_NAMES[axis])} ${values[axis]}`).join(", ");
+  // A hexagon radar. `ghost` is a second, dashed outline (the whole team while only part of it
+  // has finished); `labels` adds the ability names and scores around it.
+  function radarSvg(values, { size = 120, labels = false, ghost = null } = {}) {
+    const pad = labels === true ? 58 : labels === "short" ? 18 : 6;
+    const centre = size / 2, radius = size / 2 - pad;
+    const point = (index, level) => {
+      const angle = (-90 + index * 60) * Math.PI / 180;
+      const length = radius * Math.max(0, Math.min(level, STAT_MAX)) / STAT_MAX;
+      return [centre + length * Math.cos(angle), centre + length * Math.sin(angle)];
+    };
+    const ring = (level) => STAT_ORDER.map((_, index) => point(index, level).map((n) => n.toFixed(1)).join(",")).join(" ");
+    const shape = (data) => STAT_ORDER.map((axis, index) => point(index, data[axis]).map((n) => n.toFixed(1)).join(",")).join(" ");
+    const rings = (labels === true ? [1, 2, 3, 4, 5] : [2.5, 5]).map((level) => `<polygon class="radar-ring${level === STAT_MAX ? " outer" : ""}" points="${ring(level)}"/>`).join("");
+    const spokes = STAT_ORDER.map((_, index) => { const [x, y] = point(index, STAT_MAX); return `<line class="radar-spoke" x1="${centre}" y1="${centre}" x2="${x.toFixed(1)}" y2="${y.toFixed(1)}"/>`; }).join("");
+    const shortNames = labels === "short" ? STAT_ORDER.map((axis, index) => {
+      const [x, y] = point(index, STAT_MAX * (1 + 10 / radius));
+      const name = UI.translate(STAT_NAMES[axis]);
+      return `<text class="radar-label short" x="${x.toFixed(1)}" y="${(y + 3.5).toFixed(1)}" text-anchor="middle">${esc(UI.getLocale() === "zh-TW" ? name.slice(0, 1) : name.slice(0, 3))}</text>`;
+    }).join("") : "";
+    const names = labels === true ? STAT_ORDER.map((axis, index) => {
+      const [x, y] = point(index, STAT_MAX + 1.5);
+      const anchor = Math.abs(x - centre) < 4 ? "middle" : x > centre ? "start" : "end";
+      return `<text class="radar-label" x="${x.toFixed(1)}" y="${(y + (index === 0 ? 0 : index === 3 ? 10 : 4)).toFixed(1)}" text-anchor="${anchor}">${esc(UI.translate(STAT_NAMES[axis]))} <tspan class="radar-score">${values[axis]}</tspan></text>`;
+    }).join("") : "";
+    const dots = labels === true ? STAT_ORDER.map((axis, index) => { const [x, y] = point(index, values[axis]); return `<circle class="radar-dot" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="3"/>`; }).join("") : "";
+    return `<svg class="radar" viewBox="0 0 ${size} ${size}" width="${size}" height="${size}" role="img" aria-label="${esc(statSummary(values))}" data-no-i18n>${rings}${spokes}${ghost ? `<polygon class="radar-ghost" points="${shape(ghost)}"/>` : ""}<polygon class="radar-fill" points="${shape(values)}"/>${dots}${names}${shortNames}</svg>`;
+  }
+  const STAT_HELP = {
+    research: "Looks things up and collects information",
+    analysis: "Breaks down needs, compares options and reasons it through",
+    planning: "Sets steps, order and structure",
+    creation: "Writes the code, text or document",
+    verification: "Checks facts, runs tests and confirms results",
+    risk: "Spots flaws, security holes and blind spots",
+  };
+  const statLegend = (values) => `<dl class="stat-legend">${STAT_ORDER.map((axis) => `<div><dt>${esc(UI.translate(STAT_NAMES[axis]))}${values ? ` <span class="num">${values[axis]}</span>` : ""}</dt><dd>${esc(UI.translate(STAT_HELP[axis]))}</dd></div>`).join("")}</dl>`;
+  const statExplainer = () => `<details class="stat-explainer"><summary>${esc(UI.translate("What do the six abilities mean?"))}</summary>${statLegend()}</details>`;
+  // "Strong at" / "Weaker at" in words, so nobody has to read the chart to know what a role or team is for.
+  const strengthLine = (values, { strong = 4, weak = 1 } = {}) => {
+    const named = (test) => STAT_ORDER.filter((axis) => test(values[axis])).sort((a, b) => values[b] - values[a]).map((axis) => UI.translate(STAT_NAMES[axis]));
+    const good = named((v) => v >= strong), poor = named((v) => v <= weak);
+    return `${good.length ? `<span class="strength-good">${esc(UI.translate("Strong at"))}: ${esc(good.join(" · "))}</span>` : ""}${poor.length ? `<span class="strength-weak">${esc(UI.translate("Weaker at"))}: ${esc(poor.join(" · "))}</span>` : ""}`;
+  };
+  const gapChips = (gaps) => gaps.length
+    ? `<div class="team-gaps"><span>${esc(UI.translate("Nobody here is good at"))}</span>${gaps.map((axis) => `<span class="pill warning">${esc(UI.translate(STAT_NAMES[axis]))}</span>`).join("")}</div>`
+    : `<div class="team-gaps ok">${esc(UI.translate("No weak spots: every ability has someone strong."))}</div>`;
+  const teamPanel = (stats, ghost) => `<div class="team-panel"><div class="team-chart">${radarSvg(stats.team, { size: 290, labels: true, ghost })}</div>
+      <div class="team-info"><div class="team-power"><span>${esc(UI.translate("Team power"))}</span><strong class="num">${stats.power}</strong><small>/ ${STAT_MAX * STAT_ORDER.length}</small></div>${gapChips(stats.gaps)}${statLegend(stats.team)}
+      <p class="muted team-rule">${esc(UI.translate("Each role scores 0 to 5 on six abilities. The strongest member sets the team's score, and every other strong member (3 or more) adds 0.5, up to 5."))}</p></div></div>`;
   // Every role is a small pixel character: a chubby chibi base with its own hair, outfit and
   // accessory (PM crown, SA detective hat, SD beret, RD headphones, CR angel, SR monk,
   // AR devil, SEC knight, QA tester). "." keeps the base pixel, anything else replaces it.
@@ -1069,7 +1270,7 @@
     const gen = renderGen;
     const route = parseRoute();
     const id = route.project;
-    layout(`<div class="empty">Loading…</div>`);
+    layout(loadingView());
     let project;
     try {
       const projects = await api("/projects");
@@ -1090,10 +1291,11 @@
     const dangerRow = (title, description, actions, hint) => `<div class="danger-row"><div><strong>${title}</strong><p>${description}</p>${hint || ""}</div><div class="danger-row-actions">${actions}</div></div>`;
     layout(`
       <div class="title-row">
-        <div><h1>${esc(id)}</h1><div class="sub mono">${esc(project.root)}</div></div>
+        <div><h1>${esc(id)}</h1><div class="sub path-line"><span class="mono" data-no-i18n>${esc(project.root)}</span><button type="button" class="btn small ghost" id="btn-copy-path">Copy path</button></div></div>
         <div class="title-actions">
           <a class="btn" href="#/p/${encodeURIComponent(id)}/tasks">View tasks</a>
           <a class="btn" href="#/p/${encodeURIComponent(id)}/settings">Settings</a>
+          <button class="btn" id="btn-export-project">Export backup</button>
         </div>
       </div>
       <div class="kpi-strip">
@@ -1112,7 +1314,7 @@
         ${pageCard("shield", "Access", "Whether ccc-mcp can write files in this project and run its test command.",
           `<div class="kv-row"><span class="k">Mode</span><span class="v">${accessPill(access)}</span></div>
           ${access.mode === "read-write" ? `
-            <div class="kv-row"><span class="k">Authorized at</span><span class="v">${esc(access.authorized_at || "")}</span></div>
+            <div class="kv-row"><span class="k">Authorized at</span><span class="v">${whenHtml(access.authorized_at)}</span></div>
             <div class="kv-row"><span class="k">Identity</span><span class="v mono">${esc(access.identity || "")}</span></div>
           ` : ""}`,
           access.mode === "read-write"
@@ -1130,6 +1332,14 @@
           </div>`, "", { tone: "danger" })}
       </div>
     `, { narrow: true, contentClass: "settings-wide" });
+    document.getElementById("btn-copy-path").addEventListener("click", async () => {
+      try { await navigator.clipboard.writeText(project.root); toast("Path copied."); }
+      catch (_) { toast("Could not copy. Select the path and copy it manually.", true); }
+    });
+    document.getElementById("btn-export-project").addEventListener("click", async () => {
+      try { await downloadProjectBackup(id); }
+      catch (error) { toast(error.message, true); }
+    });
     const enableBtn = document.getElementById("btn-enable-write");
     if (enableBtn) enableBtn.addEventListener("click", () => promptAuthorize(id, renderProjectOverview));
     const revokeBtn = document.getElementById("btn-revoke");
@@ -1237,10 +1447,10 @@
   const taskRowHtml = (t) => `
       <tr class="clickable" data-task="${esc(t.id)}" tabindex="0" role="link" aria-label="${esc(t.id)}">
         <td class="mono">${esc(t.id)}</td>
-        <td>${esc(UI.translate(t.state))}</td>
-        <td>${esc((t.requirement || "").slice(0, 80))}</td>
-        <td>${esc(t.created || "")}</td>
-        <td class="table-actions">${REMOVABLE_STATES.has(t.state) ? `<button class="btn small danger" data-delete-task="${esc(t.id)}">${esc(UI.translate("Delete"))}</button>` : ""}</td>
+        <td><span class="pill ${taskStateTone(t.state)}">${esc(UI.translate(t.state))}</span></td>
+        <td class="task-req" title="${esc(t.requirement || "")}">${esc((t.requirement || "").slice(0, 80))}</td>
+        <td class="task-when">${whenHtml(t.created)}</td>
+        <td class="table-actions">${REMOVABLE_STATES.has(t.state) ? `<button class="btn small danger quiet" data-delete-task="${esc(t.id)}">${esc(UI.translate("Delete"))}</button>` : ""}</td>
       </tr>
     `;
 
@@ -1266,7 +1476,7 @@
     const gen = renderGen;
     const id = parseRoute().project;
     const tasksPath = `/projects/${encodeURIComponent(id)}/tasks`;
-    layout(`<div class="empty">Loading…</div>`);
+    layout(loadingView());
     let tasks;
     try { tasks = await api(tasksPath); }
     catch (err) { if (!stale(gen)) errorView(err); return; }
@@ -1274,7 +1484,7 @@
     layout(`
       <div class="title-row"><div><h1>Tasks</h1><div class="sub">${esc(id)}</div></div></div>
       ${tasks.length ? `
-        <table>
+        <table class="task-table">
           <thead><tr><th>Task</th><th>State</th><th>Requirement</th><th>Created</th><th></th></tr></thead>
           <tbody>${tasks.map(taskRowHtml).join("")}</tbody>
         </table>
@@ -1614,6 +1824,15 @@
     const touchesCode = !flowSteps || flowSteps.some((role) => role === "RD" || role === "SD/RD");
     activeTouchesCode = touchesCode;
     const deliverableCard = deliverables.length ? `<section class="task-result-card spec-card"><h2>${esc(UI.translate(touchesCode ? "Documents from each step" : "Results"))}</h2><p class="muted">${esc(UI.translate("Newest first. Each step hands its document to the next."))}</p>${deliverables.map((a, index) => `<details ${index === 0 ? "open" : ""}><summary><strong data-no-i18n>${esc(roleName(docRole(a.path)))}</strong> · ${esc(UI.translate(TASK_ROLE_LABELS[docRole(a.path)] || "Result"))}</summary><pre class="mono task-spec">${esc(a.content || "")}</pre></details>`).join("")}</section>` : "";
+    const teamCard = (() => {
+      if (!workflow.stats) return "";
+      const map = workflow.stats.roles || {};
+      const full = teamStats(flowSteps || ["SA", "SD/RD", "REVIEW"], map);
+      const finished = flowSteps ? flowSteps.filter((_, index) => flowDone(index)) : ["SA", "SD/RD", "REVIEW"].filter((role) => (role === "SD/RD" ? ["SD", "RD", "SD/RD"].some((r) => doneRoles.has(r)) : doneRoles.has(role)));
+      const now = teamStats(finished, map);
+      const complete = finished.length >= (flowSteps ? flowSteps.length : 3);
+      return `<section class="task-result-card team-card"><h2>${esc(UI.translate("Team abilities"))}</h2><p class="muted">${esc(UI.translate(complete ? "Every step is done: this is what the whole team brought." : "Grows as each step finishes. The dashed outline is the whole team."))}</p>${teamPanel(complete ? full : now, complete ? null : full.team)}</section>`;
+    })();
     const latestDiff = diffRows.at(-1);
     const latestTest = testRows.at(-1);
     return {
@@ -1629,7 +1848,7 @@
       progress: steps.map(([name, done]) => `<span class="conversation-step ${done ? "done" : ""}"><i aria-hidden="true"></i>${esc(UI.translate(name))}</span>`).join(""),
       feed: taskConversation(events, typingIds),
       next: gateCard || (handoff.next_action && !terminal ? `<div class="task-next"><strong>${esc(UI.translate("Next step"))}</strong><p>${esc(handoff.next_action)}</p></div>` : ""),
-      results: `${deliverableCard}${touchesCode ? `<section class="task-result-grid">
+      results: `${teamCard}${deliverableCard}${touchesCode ? `<section class="task-result-grid">
       <div class="task-result-card"><h2>${esc(UI.translate("Changed files and diff"))}</h2>${latestDiff ? `<pre class="mono task-diff">${esc(latestDiff.content || "")}</pre>` : `<p class="muted">${esc(UI.translate("No saved diff yet."))}</p>`}</div>
       <div class="task-result-card"><h2>${esc(UI.translate("Host test evidence"))}</h2>${verificationLine(brief.tests)}${latestTest ? `<details><summary>${esc(UI.translate("View saved test result"))}</summary><pre class="mono">${esc(latestTest.content)}</pre></details>` : `<p class="muted">${esc(UI.translate("No host test evidence yet."))}</p>`}</div>
     </section><section class="task-result-card evaluation-section"><div class="evaluation-section-head"><div><h2>${esc(UI.translate("Evaluation and evidence"))}</h2><p>${esc(UI.translate("Scores are separate from task completion."))}</p></div>${settings.editable?.evaluation_engine?.enabled ? `<button class="btn small" id="task-evaluate">${esc(UI.translate("Evaluate latest executions"))}</button>` : `<button class="btn small" id="task-enable-evaluation">${esc(UI.translate("Enable evaluation"))}</button>`}</div>${evaluations.length ? `<div class="evaluation-list">${evaluations.slice().reverse().map(evaluationReport).join("")}</div>` : `<p class="muted">${esc(UI.translate("No evaluations for this task yet."))}</p>`}</section>` : ""}`,
@@ -1710,7 +1929,7 @@
     const wasAtBottom = !oldFeed || oldFeed.scrollHeight - oldFeed.scrollTop - oldFeed.clientHeight < 120;
     if (oldInput) taskDetailDraft = oldInput.value;
     const taskBase = `/projects/${encodeURIComponent(id)}/tasks/${encodeURIComponent(taskId)}`;
-    layout(`<div class="empty">Loading…</div>`);
+    layout(loadingView());
     const loaded = await fetchTaskView(id, taskId, taskBase);
     if (stale(gen)) return;
     if (loaded.error) { errorView(loaded.error); return; }
@@ -1878,7 +2097,7 @@
   async function renderSettings() {
     const gen = renderGen;
     const id = parseRoute().project;
-    layout(`<div class="empty">Loading…</div>`);
+    layout(loadingView());
     let overview, catalog;
     try {
       [overview, catalog] = await Promise.all([
@@ -1897,14 +2116,16 @@
     const ROLE_HELP = { SA: "Analysis", SD: "Design", RD: "Implementation", "SD/RD": "Design and implementation in one step (Classic workflow only)", REVIEW: "Code review (CR)", SR: "Specification review", AR: "Adversarial review", SEC: "Security review", QA: "Quality assurance", SW: "Specification writing", PA: "Understands the request and hands over the result", RS: "Looks things up and collects information", AN: "Compares options and weighs pros and cons", PL: "Turns findings into a plan with steps and costs", CS: "Gives expert advice and judges what is workable", WR: "Writes the article, proposal or report", ED: "Polishes wording and structure", VC: "Checks claims, sources and figures", RV: "Checks the result for problems and gaps" };
     activeRoleNames = overview.editable.role_names || {};
     activeRoleAvatars = overview.editable.role_avatars || {};
-    const nameField = (role) => `<div class="field role-name-field"><label for="role-name-${esc(role.replace("/", "-"))}">${esc(UI.translate("Chat name"))}</label><input type="text" id="role-name-${esc(role.replace("/", "-"))}" class="role-name-input" maxlength="24" value="${esc(activeRoleNames[role] || "")}" placeholder="${esc(ROLE_ABBREVIATIONS[role] || role)}" data-no-i18n /></div>`;
-    const avatarPicker = (role) => `<div class="field avatar-field"><label>${esc(UI.translate("Avatar"))}</label><div class="avatar-picker" role="radiogroup" aria-label="${esc(UI.translate("Avatar"))}" data-avatar-role="${esc(role)}">${AVATAR_ORDER.map((avatar) => {
+    const nameField = (role) => `<div class="field role-name-field"><label for="role-name-${esc(role.replace("/", "-"))}">${esc(UI.translate("Chat name"))}</label><input type="text" id="role-name-${esc(role.replace("/", "-"))}" class="role-name-input" maxlength="24" value="${esc(activeRoleNames[role] || "")}" placeholder="${esc(ROLE_FRIENDLY[role] ? UI.translate(ROLE_FRIENDLY[role]) : ROLE_ABBREVIATIONS[role] || role)}" data-no-i18n /></div>`;
+    const avatarPicker = (role) => `<details class="field avatar-field avatar-details"><summary><span class="avatar-summary-label">${esc(UI.translate("Avatar"))}</span><span class="role-avatar chat-avatar av-${roleAvatarTone(role)}" aria-hidden="true">${roleAvatarIcon(role)}</span><span class="avatar-summary-action">${esc(UI.translate("Change avatar"))}</span></summary><div class="avatar-picker" role="radiogroup" aria-label="${esc(UI.translate("Avatar"))}" data-avatar-role="${esc(role)}">${AVATAR_ORDER.map((avatar) => {
       const current = activeRoleAvatars[role] || DEFAULT_AVATAR[role] || "person";
       return `<button type="button" class="avatar-option ${current === avatar ? "selected" : ""}" role="radio" aria-checked="${current === avatar}" data-avatar="${avatar}" title="${esc(UI.translate(avatar))}"><span class="chat-avatar av-${roleAvatarTone(role)}" aria-hidden="true">${spriteFor(avatar)}</span></button>`;
-    }).join("")}</div></div>`;
+    }).join("")}</div></details>`;
+    roleStatsMap = catalog.role_stats || {};
     const roleHead = (role, help, pill) => `<div class="role-config-head">
           <span class="role-avatar chat-avatar av-${roleAvatarTone(role)}" aria-hidden="true">${roleAvatarIcon(role)}</span>
-          <div class="role-config-title"><strong data-no-i18n>${esc(ROLE_ABBREVIATIONS[role] || role)}</strong><small>${esc(UI.translate(help))}</small></div>
+          <div class="role-config-title"><strong data-no-i18n>${esc(ROLE_FRIENDLY[role] ? UI.translate(ROLE_FRIENDLY[role]) : ROLE_ABBREVIATIONS[role] || role)}${ROLE_FRIENDLY[role] ? ` <span class="role-abbr">${esc(ROLE_ABBREVIATIONS[role] || role)}</span>` : ""}</strong><small>${esc(UI.translate(help))}</small>${roleStatsMap[role] ? `<small class="strength-line">${strengthLine(roleStatsMap[role], { strong: 4, weak: 0 })}</small>` : ""}</div>
+          ${roleStatsMap[role] ? `<span class="role-radar" title="${esc(statSummary(roleStatsMap[role]))}">${radarSvg(roleStatsMap[role], { size: 96, labels: "short" })}</span>` : ""}
           ${pill}
         </div>`;
     const pmRow = `<div class="role-config-row" data-role="PM" data-name-only>
@@ -1989,9 +2210,9 @@
             ${profileOption("chatgpt-only", "Every role runs on ChatGPT through the connector.")}
             ${profileOption("best-model", "Codex for SA and REVIEW, Claude for implementation, when both are installed.")}
           </div>`)}
-        ${pageCard("roles", "Roles", "Provider, model, effort and quota fallback for each workflow role.", `<div class="role-config-list">${roleRows}</div>`)}
+        ${pageCard("roles", "Roles", "Provider, model, effort and quota fallback for each workflow role.", `${statExplainer()}<div class="role-config-list">${roleRows}</div>`)}
         ${pageCard("workflow", "Workflow", "The steps a new task goes through. A task keeps the workflow it started with.",
-          `<div id="workflow-panel"></div>`)}
+          `${statExplainer()}<div id="workflow-panel"></div>`)}
         ${pageCard("gate", "Review gates", "How hard reviewers push back, and how many times work may be sent back before you decide.",
           `<div class="settings-grid">
             <div class="field"><label for="gate-ar">${esc(UI.translate("Adversarial review strictness"))}</label>${gateSelect("gate-ar", reviewGate.ar_strictness, [["normal", "Normal: only clear faults"], ["strict", "Strict: minor problems too"], ["extreme", "Extreme: challenge every assumption"]])}</div>
@@ -2056,6 +2277,8 @@
           row.querySelectorAll(".avatar-option").forEach((other) => { const on = other === button; other.classList.toggle("selected", on); other.setAttribute("aria-checked", String(on)); });
           const head = row.querySelector(".role-config-head .chat-avatar");
           if (head) head.innerHTML = roleAvatarIcon(role);
+          const chosen = row.querySelector(".avatar-details > summary .chat-avatar");
+          if (chosen) chosen.innerHTML = roleAvatarIcon(role);
           toast("Avatar saved.");
         } catch (err) { toast(err.message, true); }
       }));
@@ -2184,7 +2407,9 @@
         <button class="profile-option workflow-option ${catalog.selected === flow.id ? "selected" : ""}" type="button" data-workflow="${esc(flow.id)}" aria-pressed="${catalog.selected === flow.id}">
           <span class="profile-option-name" data-no-i18n>${esc(flow.builtin ? UI.translate(flow.name) : flow.name)}</span>
           ${flow.summary ? `<span class="profile-option-desc">${esc(UI.translate(flow.summary))}</span>` : ""}
+          ${flow.stats ? `<span class="strength-line">${strengthLine(flow.stats.team, { strong: 5, weak: 2 })}</span>` : ""}
           <span class="flow-steps" aria-label="${esc(UI.translate("Steps"))}">${stepChips(flow)}</span>
+          ${flow.stats ? `<span class="flow-radar" title="${esc(statSummary(flow.stats.team))}">${radarSvg(flow.stats.team, { size: 112, labels: "short" })}<span class="flow-power">${esc(UI.translate("Team power"))} <strong class="num">${flow.stats.power}</strong></span></span>` : ""}
           <span class="profile-option-check" aria-hidden="true">${pageIcon("check")}</span>
         </button>
         <div class="workflow-item-actions">
@@ -2204,6 +2429,7 @@
         };
         panel.innerHTML = `<div class="wf-editor">
           <div class="field narrow-field"><label for="wf-name">${esc(UI.translate("Workflow name"))}</label><input type="text" id="wf-name" maxlength="40" value="${esc(editing.name)}" placeholder="${esc(UI.translate("Named automatically if left empty"))}" /></div>
+          <div class="wf-team"><h3 class="workflow-group-title">${esc(UI.translate("Team abilities"))}</h3>${teamPanel(teamStats(editing.steps))}</div>
           <ol class="wf-steps">${editing.steps.map((role, index) => `<li class="wf-step">
             <span class="wf-index" aria-hidden="true">${index + 1}</span>
             <span class="chat-avatar av-${roleAvatarTone(role)}" aria-hidden="true">${roleAvatarIcon(role)}</span>
@@ -2372,7 +2598,7 @@
   async function renderContext() {
     const gen = renderGen;
     const id = parseRoute().project;
-    layout(`<div class="empty">Loading…</div>`);
+    layout(loadingView());
     let ctx;
     try { ctx = await api(`/projects/${encodeURIComponent(id)}/context`); }
     catch (err) { if (!stale(gen)) errorView(err); return; }
@@ -2404,9 +2630,9 @@
         ${pageCard("doc", "Project summary", "What the PM currently knows about this project.",
           summaryFields ? `<dl class="ctx-fields">${summaryFields}</dl>` : `<div class="empty">${esc(UI.translate("Nothing recorded yet."))}</div>`)}
         ${pageCard("decision", "Decisions", "Choices the PM has recorded for future rounds.",
-          decisions.length ? `<ul class="ctx-list">${decisions.map((d) => `<li><div class="ctx-list-main"><strong>${esc(d.content || "")}</strong>${d.reason ? `<p>${esc(d.reason)}</p>` : ""}</div><div class="ctx-list-side">${d.status ? `<span class="pill neutral">${esc(d.status)}</span>` : ""}${d.created ? `<time>${esc(String(d.created).slice(0, 10))}</time>` : ""}</div></li>`).join("")}</ul>` : `<div class="empty">${esc(UI.translate("No decisions recorded."))}</div>`)}
+          decisions.length ? `<ul class="ctx-list">${decisions.map((d) => `<li><div class="ctx-list-main"><strong>${esc(d.content || "")}</strong>${d.reason ? `<p>${esc(d.reason)}</p>` : ""}</div><div class="ctx-list-side">${d.status ? `<span class="pill neutral">${esc(UI.translate(d.status))}</span>` : ""}${d.created ? `<time>${esc(String(d.created).slice(0, 10))}</time>` : ""}</div></li>`).join("")}</ul>` : `<div class="empty">${esc(UI.translate("No decisions recorded."))}</div>`)}
         ${pageCard("lock", "Invariants", "Rules every agent must follow in this project.",
-          invariants.length ? `<ul class="ctx-list">${invariants.map((rule) => `<li><div class="ctx-list-main"><strong>${esc(rule.text || "")}</strong></div><div class="ctx-list-side"><span class="pill accent">${esc(rule.kind || "rule")}</span></div></li>`).join("")}</ul>` : `<div class="empty">${esc(UI.translate("No invariants recorded."))}</div>`)}
+          invariants.length ? `<ul class="ctx-list">${invariants.map((rule) => `<li><div class="ctx-list-main"><strong>${esc(rule.text || "")}</strong></div><div class="ctx-list-side"><span class="pill accent">${esc(UI.translate(rule.kind || "rule"))}</span></div></li>`).join("")}</ul>` : `<div class="empty">${esc(UI.translate("No invariants recorded."))}</div>`)}
         ${pageCard("question", "Open questions", "Things the PM still needs answered.",
           questions.length ? `<ul class="ctx-list">${questions.map((q) => `<li><div class="ctx-list-main"><strong>${esc(typeof q === "string" ? q : JSON.stringify(q))}</strong></div></li>`).join("")}</ul>` : `<div class="empty">${esc(UI.translate("Nothing is waiting on an answer."))}</div>`)}
         ${progress.length ? pageCard("list", "Progress", "Work requests tracked in this context.",
@@ -2424,7 +2650,7 @@
     const docRoute = parseRoute();
     const slug = docRoute.sub || "README";
     const language = UI.getLocale() === "zh-TW" ? "ch" : "en";
-    layout(`<div class="empty">${esc(UI.translate("Loading documentation…"))}</div>`);
+    layout(loadingView());
     let page;
     try { page = await api(`/docs/${language}/${encodeURIComponent(slug)}`); }
     catch (err) { if (!stale(gen)) errorView(err); return; }
@@ -2454,6 +2680,7 @@
       title.className = "docs-toc-title";
       title.textContent = UI.translate("On this page");
       toc.appendChild(title);
+      const tocButtons = new Map();
       sections.forEach((heading) => {
         const button = document.createElement("button");
         button.type = "button";
@@ -2461,9 +2688,27 @@
         button.textContent = heading.textContent;
         button.addEventListener("click", () => heading.scrollIntoView({ block: "start" }));
         toc.appendChild(button);
+        tocButtons.set(heading, button);
       });
       document.getElementById("docs-layout").classList.remove("no-toc");
       document.getElementById("docs-layout").appendChild(toc);
+      // Highlight the section being read, so the outline doubles as a "you are here" marker.
+      if ("IntersectionObserver" in window) {
+        const visible = new Set();
+        const mark = () => {
+          const current = sections.find((heading) => visible.has(heading)) || [...sections].reverse().find((heading) => heading.getBoundingClientRect().top < 0);
+          tocButtons.forEach((button, heading) => {
+            const on = heading === current;
+            button.classList.toggle("current", on);
+            if (on) button.setAttribute("aria-current", "true"); else button.removeAttribute("aria-current");
+          });
+        };
+        const spy = new IntersectionObserver((entries) => {
+          entries.forEach((entry) => { if (entry.isIntersecting) visible.add(entry.target); else visible.delete(entry.target); });
+          mark();
+        }, { rootMargin: "0px 0px -65% 0px" });
+        sections.forEach((heading) => spy.observe(heading));
+      }
     }
     if (docRoute.anchor) content.querySelector(`#${CSS.escape(docRoute.anchor)}`)?.scrollIntoView();
     content.querySelectorAll("a[href]").forEach((link) => {
@@ -2499,7 +2744,7 @@
 
   async function renderGlobalSkills() {
     const gen = renderGen;
-    layout(`<div class="empty">Loading…</div>`);
+    layout(loadingView());
     let installed, discovered;
     try {
       [installed, discovered] = await Promise.all([api("/skills"), api("/skills/discover")]);
@@ -2609,7 +2854,7 @@
   async function renderSkills() {
     const gen = renderGen;
     const id = parseRoute().project;
-    layout(`<div class="empty">Loading…</div>`);
+    layout(loadingView());
     let skills = [], mcp = { discovered: [], installed: {} }, calls = [];
     try {
       [skills, mcp, calls] = await Promise.all([
@@ -3149,4 +3394,9 @@
 
   window.addEventListener("hashchange", route);
   route();
+  api("/session").then((session) => {
+    appVersion = String(session.version || "");
+    const label = document.getElementById("app-version");
+    if (label && appVersion) label.textContent = `· v${appVersion}`;
+  }).catch(() => {});
 })();

@@ -25,10 +25,11 @@ from markdown_it import MarkdownIt
 from starlette.applications import Starlette
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, Response
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
+from .. import __version__
 from ..adapters import mcp_servers as mcp_registry
 from ..adapters.tunnel_client import (
     connection_profiles,
@@ -327,6 +328,34 @@ async def create_project(request: Request):
             "access": await run(bridge.authorize_project_web, created["id"], confirm),
         }
     return JSONResponse(created)
+
+
+@endpoint
+async def export_project(request: Request):
+    project_id = request.path_params["project_id"]
+    bundle = await run(bridge_of(request).export_project_bundle, project_id)
+    return Response(
+        bundle,
+        media_type="application/json",
+        headers={
+            "Content-Disposition": f'attachment; filename="ccc-mcp-{project_id}.json"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@endpoint
+async def import_project(request: Request):
+    from ..core.project_bundle import MAX_BYTES
+
+    path = request.query_params.get("path")
+    if not path:
+        raise BridgeError("Choose an existing project folder")
+    if int(request.headers.get("content-length", "0")) > MAX_BYTES:
+        raise BridgeError("Project bundle exceeds 100 MB")
+    data = await request.body()
+    result = await run(bridge_of(request).import_project_bundle, data, path)
+    return JSONResponse(result)
 
 
 @endpoint
@@ -1017,7 +1046,7 @@ async def mcp_calls(request: Request):
 @endpoint
 async def session_info(request: Request):
     bridge = bridge_of(request)
-    return JSONResponse({"home": str(bridge.home)})
+    return JSONResponse({"home": str(bridge.home), "version": __version__})
 
 
 # --- Connect (ChatGPT Tunnel) ----------------------------------------------------
@@ -1164,6 +1193,8 @@ ROUTES = [
     Route("/api/project-groups", update_project_groups, methods=["POST"]),
     Route("/api/projects/add", add_project, methods=["POST"]),
     Route("/api/projects/create", create_project, methods=["POST"]),
+    Route("/api/projects/import", import_project, methods=["POST"]),
+    Route("/api/projects/{project_id}/export", export_project, methods=["GET"]),
     Route("/api/projects/{project_id}/authorize", authorize_project, methods=["POST"]),
     Route("/api/projects/{project_id}/authorize-preview", authorize_preview, methods=["GET"]),
     Route("/api/projects/{project_id}/revoke", revoke_project, methods=["POST"]),

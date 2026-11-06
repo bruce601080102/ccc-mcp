@@ -12,6 +12,7 @@ import uuid
 
 from ..adapters.storage import now
 from ..infra.errors import BridgeError
+from .roles import ROLE_STATS, STAT_AXES, role_stats, team_stats
 from .flows import (
     BUILDER_ROLES,
     BUILTIN_FLOWS,
@@ -58,8 +59,13 @@ class FlowHub:
             "selected": settings["workflow"],
             "selection": settings["workflow_selection"],
             "workflows": [
-                flow_definition(flow_id, custom) for flow_id in [*BUILTIN_FLOWS, *custom]
+                {**flow, "stats": team_stats([step["role"] for step in flow["steps"]])}
+                for flow in (
+                    flow_definition(flow_id, custom) for flow_id in [*BUILTIN_FLOWS, *custom]
+                )
             ],
+            "role_stats": {role: role_stats(role) for role in ROLE_STATS},
+            "stat_axes": list(STAT_AXES),
         }
 
     def _resolve_task_workflow(self, project_id, requirement, requested=None):

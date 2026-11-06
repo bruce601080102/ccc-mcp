@@ -8,6 +8,7 @@ from .core.context import ContextHub
 from .core.directedit import DirectEditHub
 from .core.evaluation import EvaluationHub
 from .core.flow_engine import FlowHub
+from .core.project_bundle import ProjectBundleHub
 from .core.tasks import TaskHub
 from .core.workspace import WorkspaceHub
 from .infra.config import bridge_home
@@ -15,7 +16,7 @@ from .infra.config import bridge_home
 
 class CCCMCP(
     ConfigurationHub, WorkspaceHub, DirectEditHub, ProjectAccessHub, ContextHub, TaskHub,
-    FlowHub, EvaluationHub,
+    FlowHub, EvaluationHub, ProjectBundleHub,
 ):
     """The same application service is used by CLI, MCP and independent workers."""
 
