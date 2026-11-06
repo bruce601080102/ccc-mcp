@@ -64,25 +64,13 @@ When ChatGPT plays an everyday-team step, the next step starts as soon as it han
 
 ## Watch the demo
 
-**1080p · 60 fps · with audio.** The inline demo is split into three HD chapters to fit GitHub's video attachment limit. The uninterrupted [56-second HD video is also available to watch or download](docs/assets/demo.mp4).
+**1080p · 60 fps · with audio · 63 seconds.**
 
-**ChatGPT works on Astropy and shows the test result (0:40–0:56)**
+<p align="center">
+  <video src="https://github.com/bruce601080102/ccc-mcp/raw/main/docs/assets/demo.mp4" poster="https://github.com/bruce601080102/ccc-mcp/raw/main/docs/assets/screenshots/console-chat.png" controls muted playsinline width="860"></video>
+</p>
 
-https://github.com/user-attachments/assets/cf288955-585b-43bb-9a0b-275194ac13c4
-
-<details>
-<summary>Start from the beginning: UI and projects (0:00–0:20)</summary>
-
-https://github.com/user-attachments/assets/86165f18-3e9c-4ed0-8010-766f263f933b
-
-</details>
-
-<details>
-<summary>Tasks, settings, and Skills & MCP (0:20–0:40)</summary>
-
-https://github.com/user-attachments/assets/36ea8738-c4c9-4562-b2f2-38b18838e6d7
-
-</details>
+If the player does not load, [open the video file](docs/assets/demo.mp4).
 
 The [original recording is on Google Drive](https://drive.google.com/drive/folders/15vn8wYrZ55JL5Aetb1IR6YGm7fK1i81m). The separate [SWE-bench evidence](#proof-three-selected-swe-bench-verified-cases) records the official harness results.
 
