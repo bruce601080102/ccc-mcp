@@ -816,6 +816,16 @@ async def task_message(request: Request):
     ))
 
 
+@endpoint
+async def task_restart(request: Request):
+    bridge = bridge_of(request)
+    body = await _body(request)
+    return JSONResponse(await run(
+        bridge.restart_from_step, request.path_params["project_id"], request.path_params["task_id"],
+        body.get("step"), body.get("content", ""),
+    ))
+
+
 # --- Context / Skills / MCP ------------------------------------------------------
 
 
@@ -1263,6 +1273,7 @@ ROUTES = [
     Route("/api/projects/{project_id}/tasks/{task_id}/resume", task_resume, methods=["POST"]),
     Route("/api/projects/{project_id}/tasks/{task_id}/stop", task_stop, methods=["POST"]),
     Route("/api/projects/{project_id}/tasks/{task_id}/messages", task_message, methods=["POST"]),
+    Route("/api/projects/{project_id}/tasks/{task_id}/restart", task_restart, methods=["POST"]),
     Route("/api/projects/{project_id}/tasks/{task_id}/delete", task_delete, methods=["POST"]),
     Route(
         "/api/projects/{project_id}/tasks/{task_id}/gate-decision", task_gate_decision,

@@ -3170,6 +3170,15 @@ class TaskHub:
             (project_id, task_id),
         )
         for row in interventions:
+            if row["action"] == "role_returned":
+                spoken = json.loads(row["content"])
+                events.append({"event_id": f"intervention-{row['seq']}",
+                               "event_type": "role_returned", "actor": "agent",
+                               "role": spoken["role"], "execution_id": row["execution_id"],
+                               "timestamp": row["created"], "status": "RECORDED",
+                               "summary": spoken["text"], "detail": None,
+                               "evidence_refs": [], "context_version": row["context_version"]})
+                continue
             events.append({"event_id": f"intervention-{row['seq']}",
                            "event_type": row["action"],
                            "actor": "user" if row["action"] in {

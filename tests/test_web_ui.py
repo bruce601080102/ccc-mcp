@@ -42,6 +42,26 @@ def test_session_reports_running_package_version(client):
     assert response.json()["version"] == __version__
 
 
+def test_restart_endpoint_sends_a_step_workflow_back_and_is_token_gated(tmp_path, client, human):
+    repo = mkrepo(tmp_path, "redo")
+    assert client.post("/api/projects/add", json={"path": str(repo), "id": "redo"}).status_code == 200
+    bridge = client.app.state.bridge
+    bridge.authorize_project_local("redo")
+    bridge.configure_workflow("redo", "life")
+    task_id = bridge.start_project_request("redo", "Plan a trip")["workstream"]["id"]
+    base = f"/api/projects/redo/tasks/{task_id}"
+
+    sent = client.post(f"{base}/restart", json={"step": 0, "content": "Start again, shorter"})
+    assert sent.status_code == 200
+    assert sent.json()["role"] == "PA" and sent.json()["greeting"]
+    events = client.get(f"{base}/timeline").json()["events"]
+    assert next(e for e in events if e["event_type"] == "role_returned")["role"] == "PA"
+
+    assert client.post(f"{base}/restart", json={"step": 99, "content": "x"}).status_code == 400
+    assert client.post(f"{base}/restart", json={"step": 0, "content": " "}).status_code == 400
+    assert TestClient(client.app).post(f"{base}/restart", json={"step": 0, "content": "x"}).status_code == 401
+
+
 def test_task_status_remains_available_while_project_is_locked(tmp_path, client):
     repo = mkrepo(tmp_path, "busy")
     added = client.post("/api/projects/add", json={"path": str(repo), "id": "busy"})

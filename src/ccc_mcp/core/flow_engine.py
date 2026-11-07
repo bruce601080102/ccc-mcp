@@ -10,8 +10,9 @@ snapshot), so a crash or a retried resume reaches the same decision.
 import json
 import uuid
 
-from ..adapters.storage import now
-from ..infra.errors import BridgeError
+from ..adapters.storage import event, now
+from ..infra.errors import BridgeError, PermissionDenied
+from ..infra.security import reject_secrets
 from .flows import (
     BUILDER_ROLES,
     BUILTIN_FLOWS,
@@ -24,7 +25,7 @@ from .flows import (
     judge_gate,
     step_instruction,
 )
-from .roles import ROLE_STATS, STAT_AXES, role_stats, team_stats
+from .roles import ROLE_STATS, STAT_AXES, return_greeting, role_stats, team_stats
 
 _DECISIONS = {"proceed", "retry", "stop"}
 
@@ -450,6 +451,132 @@ class FlowHub:
                 ),
             }
         return {"decision": decision, "task_id": task_id, **result}
+
+    # -- redoing work from a chosen step ---------------------------------------------------
+
+    def restart_from_step(self, project_id, task_id, step_index, message):
+        """The boss's correction plus where to start over: the task goes back to step
+        ``step_index``, that role redoes its work with the message, and the workflow carries on
+        from there. Whatever is running (a ChatGPT step waiting for its turn) is replaced; a CLI
+        agent that is still working has to finish first, because its process cannot be handed
+        over. A finished task is reopened."""
+        if not isinstance(message, str) or not message.strip() or len(message) > 8000:
+            raise BridgeError("Message must contain 1–8000 characters")
+        message = message.strip()
+        reject_secrets(message)
+        flow = self._task_flow(project_id, task_id)
+        if flow is None:
+            raise BridgeError("Only a task that runs a step workflow can be restarted from a step")
+        steps = flow["steps"]
+        if not isinstance(step_index, int) or isinstance(step_index, bool) or not (
+            0 <= step_index < len(steps)
+        ):
+            raise BridgeError(f"step must be a number from 0 to {len(steps) - 1}")
+        role = steps[step_index]["role"]
+        with self.lock(project_id):
+            task = self.task(project_id, task_id)
+            control = self.task_control(project_id, task_id)
+            if task["state"] in {"CANCELLED", "REJECTED"} or control["stop_requested"]:
+                raise PermissionDenied("A stopped task cannot be restarted")
+            active = self.store.all(
+                "SELECT id,role,adapter FROM agent_executions WHERE project_id=? AND task_id=? "
+                "AND status IN ('QUEUED','RUNNING')",
+                (project_id, task_id),
+            )
+            busy = next((row for row in active if row["adapter"] != "interactive"), None)
+            if busy:
+                raise BridgeError(
+                    f"{busy['role']} is still working. Wait for it to finish, then choose the "
+                    "step to redo."
+                )
+            latest = self.store.one(
+                "SELECT adapter,options FROM agent_executions WHERE project_id=? AND task_id=? "
+                "ORDER BY created DESC LIMIT 1",
+                (project_id, task_id),
+            )
+            options = json.loads(latest["options"]) if latest else {}
+            adapter = "fake" if latest and latest["adapter"] == "fake" else "real"
+            fake_scenario = options.get("fake_script") or options.get("scenario", "success")
+            reason = f"The user restarted the task from step {step_index + 1} ({role})"
+            with self.store.transaction() as conn:
+                for row in active:
+                    conn.execute(
+                        "UPDATE agent_executions SET status='CANCELLED',cancel_requested=1,"
+                        "error=?,finished=? WHERE id=? AND status IN ('QUEUED','RUNNING')",
+                        ("Replaced when the user restarted the work from an earlier step",
+                         now(), row["id"]),
+                    )
+                conn.execute(
+                    "DELETE FROM pending_dispatch WHERE project_id=? AND task_id=?",
+                    (project_id, task_id),
+                )
+                conn.execute(
+                    "UPDATE flow_escalations SET status='RESOLVED',decision='retry',"
+                    "decision_note=?,decided=? WHERE project_id=? AND task_id=? AND status='OPEN'",
+                    (reason, now(), project_id, task_id),
+                )
+                conn.execute(
+                    "INSERT INTO task_controls(project_id,task_id,paused) VALUES(?,?,0) "
+                    "ON CONFLICT(project_id,task_id) DO UPDATE SET paused=0",
+                    (project_id, task_id),
+                )
+                # AWAITING_PM_REVIEW is the settled state every role can be dispatched from.
+                if task["state"] != "AWAITING_PM_REVIEW":
+                    conn.execute(
+                        "UPDATE tasks SET state='AWAITING_PM_REVIEW' WHERE project_id=? AND id=?",
+                        (project_id, task_id),
+                    )
+                    event(conn, project_id, task_id, task["state"], "AWAITING_PM_REVIEW", reason)
+        self._set_aside_pending_results(project_id, task_id, role)
+        asked = now()
+        with self.store.transaction() as conn:
+            self._record_intervention(conn, project_id, task_id, "user_message", message)
+        greeted = now()
+        feedback = f"The boss asked you to redo your work from this step. Their words:\n{message}"
+        started = self._flow_dispatch(
+            project_id, task_id, flow, step_index, adapter, fake_scenario, feedback=feedback
+        )
+        language = self.get_project_settings(project_id)["language"]
+        greeting = return_greeting(language)
+        version = self.latest(project_id)["version"]
+        with self.store.transaction() as conn:
+            conn.execute(
+                "INSERT INTO task_interventions(project_id,task_id,action,content,context_version,"
+                "execution_id,created) VALUES(?,?,?,?,?,?,?)",
+                (project_id, task_id, "role_returned",
+                 json.dumps({"role": role, "step": step_index, "text": greeting},
+                            ensure_ascii=False),
+                 version, started.get("execution_id"), greeted),
+            )
+        self.sync_documents(project_id)
+        return {
+            "task_id": task_id, "step": step_index, "role": role, "greeting": greeting,
+            "restarted_at": asked, "next_execution": started,
+        }
+
+    def _set_aside_pending_results(self, project_id, task_id, role):
+        """Results this task's earlier steps left in the shared Context would block the next
+        dispatch (and repeat stale work to the role redoing its step), so a SYSTEM patch consumes
+        them. Their raw reports stay untouched as the audit trail."""
+        latest = self.latest(project_id)
+        pending = [
+            item for item in latest["snapshot"]["agent_results"] if item["task_id"] == task_id
+        ]
+        if not pending:
+            return
+        patch = {
+            "base_context_version": latest["version"],
+            "changes": {"next_action": f"Redo the work from {role} with the user's feedback."},
+            "source_execution_ids": [item["execution_id"] for item in pending],
+            "source_task_ids": [task_id],
+            "source_document_refs": [item["source_document_ref"] for item in pending],
+            "update_reason": "The user restarted the task from an earlier step; the results "
+            "after it are set aside.",
+            "author_role": "SYSTEM",
+            "semantic_review_ack": False,
+        }
+        proposed = self.propose_context_patch(project_id, patch, automatic=True)
+        self.commit_context_patch(project_id, proposed["patch_id"], automatic=True)
 
     def flow_gate_history(self, project_id, task_id):
         """Every gate verdict of a task, oldest first (read-only)."""

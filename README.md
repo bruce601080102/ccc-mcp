@@ -144,6 +144,14 @@ ChatGPT Chat → local project → tests, diff, review
 
 If you want a multi-agent workflow, assign supported roles to Codex or Claude Code through their native CLIs. Configure providers, effort, quota fallback, test command, and report language in **Settings**. See the [workflow guide](docs/en/4-workflow.md).
 
+## Roadmap
+
+> These are goals, not features you can use today. There is no release date.
+
+**Bots that run a workflow on their own.** Today a ChatGPT conversation plays the project manager and drives the workflow. Codex and Claude Code can take individual roles, but a ChatGPT chat still starts and steers the task.
+
+The next goal is a bot-style entry that needs no ChatGPT conversation: connect Codex, Claude, or another model directly, and chain them into a workflow the same way you compose one today. The pieces you already have should carry over unchanged: the role flow and its gates, the chat room that shows who said what, the ability charts, and evidence from the host's own test runs instead of self-reports.
+
 ## Web console
 
 ```bash

@@ -144,6 +144,14 @@ ChatGPT Chat → 本機專案 → 測試、diff、審查
 
 想用多 Agent 時，才透過原生 CLI 把支援的角色分配給 Codex 或 Claude Code。你可以在**設定**調整 provider、effort、額度 fallback、測試指令與報告語言；詳見[協作工作流程](docs/ch/4-workflow.md)。
 
+## 未來規劃
+
+> 以下是目標，不是現在能用的功能，也沒有預定的發布日期。
+
+**能自己跑完工作流的 Bot。** 現在由一個 ChatGPT 對話擔任專案經理並推動工作流；Codex 和 Claude Code 可以接手個別角色，但任務仍要由 ChatGPT 對話發起並帶領。
+
+下一個目標是做出類似 Bot 的入口，不再需要開 ChatGPT 對話：直接串接 Codex、Claude 或其他模型，並像現在組合工作流一樣把它們串成一條流程。你已經在用的部分預計原樣沿用：角色流程與關卡、顯示誰說了什麼的聊天室、能力圖，以及以主機實際跑出的測試結果當證據，而不是聽 Agent 自己回報。
+
 ## Web 控制台
 
 ```bash

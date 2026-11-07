@@ -1669,7 +1669,7 @@
   function taskChatItem(event, latestCreate, typingIds) {
     const type = event.event_type;
     const isUser = type === "task_created" || type === "user_message";
-    const isAgent = ["agent_started", "agent_completed", "agent_failed"].includes(type);
+    const isAgent = ["agent_started", "agent_completed", "agent_failed", "role_returned"].includes(type);
     const isPm = type === "task_completed";
     const role = isUser ? "You" : isPm ? "PM" : event.role || "ccc-mcp";
     const label = isUser ? (type === "task_created" ? "Your request" : "Your correction") :
@@ -1699,7 +1699,7 @@
         `${UI.translate("Host verification is not complete:")} ${event.detail?.reason || UI.translate("no test was run")}`;
     }
     if (type === "agent_failed" && !summary) summary = "This execution ended without a verified result.";
-    const details = event.detail || event.evidence_refs?.length || event.context_version ? `<button class="chat-detail-trigger" type="button" data-chat-detail="${esc(event.event_id)}">${esc(UI.translate("View technical details"))} <span aria-hidden="true">↗</span></button>` : "";
+    const details = type !== "role_returned" && (event.detail || event.evidence_refs?.length || event.context_version) ? `<button class="chat-detail-trigger" type="button" data-chat-detail="${esc(event.event_id)}">${esc(UI.translate("View technical details"))} <span aria-hidden="true">↗</span></button>` : "";
     const date = event.timestamp ? new Date(event.timestamp).toLocaleString(UI.getLocale()) : "";
     if (type === "host_test_completed") {
       const state = !event.detail?.executed_by_host || event.detail.no_tests_collected ? "pending" : event.detail.passed ? "pass" : "fail";
@@ -1813,6 +1813,8 @@
     const canMessage = !terminal && !control.stop_requested;
     const pauseButton = canMessage ?
       `<button class="btn small" id="task-pause-resume">${esc(UI.translate(control.paused ? "Continue work" : "Pause work"))}</button>` : "";
+    const canCompose = flowSteps ? !["CANCELLED", "REJECTED"].includes(status.state) && !control.stop_requested : canMessage;
+    const restartDefault = workflow.current_step != null ? workflow.current_step : (flowSteps ? flowSteps.length - 1 : 0);
     const stopButton = canMessage ? `<button class="btn small danger" id="task-stop">${esc(UI.translate("Stop task"))}</button>` : "";
     const deleteButton = REMOVABLE_STATES.has(status.state) ? `<button class="btn small danger" id="task-delete">${esc(UI.translate("Delete task"))}</button>` : "";
     const diffRows = artifacts.filter((a) => a.path.endsWith("/CHANGES.diff"));
@@ -1837,7 +1839,7 @@
     const latestDiff = diffRows.at(-1);
     const latestTest = testRows.at(-1);
     return {
-      events, control, canMessage, terminal, typing: typingIds.size > 0,
+      events, control, canMessage: canCompose, restartable: Boolean(flowSteps), terminal, typing: typingIds.size > 0,
       signature: taskSignature(status, timeline),
       pill: { text: UI.translate(displayState), tone: stateTone },
       actions: `${pauseButton}${stopButton}${deleteButton}`,
@@ -1848,7 +1850,9 @@
       head: `<div><a class="task-back" href="#/p/${encodeURIComponent(id)}/tasks">← ${esc(UI.translate("Back to tasks"))}</a><h1>${esc(UI.translate("Task discussion"))}</h1><div class="task-identifiers"><span>${esc(id)}</span><span class="mono">${esc(taskId)}</span><span class="pill ${stateTone}">${esc(UI.translate(displayState))}</span></div></div><div class="task-head-actions">${pauseButton}${stopButton}${deleteButton}</div>`,
       progress: steps.map(([name, done]) => `<span class="conversation-step ${done ? "done" : ""}"><i aria-hidden="true"></i>${esc(UI.translate(name))}</span>`).join(""),
       feed: taskConversation(events, typingIds),
-      next: gateCard || (handoff.next_action && !terminal ? `<div class="task-next"><strong>${esc(UI.translate("Next step"))}</strong><p>${esc(handoff.next_action)}</p></div>` : ""),
+      paused: Boolean(control.paused && canMessage),
+      restartPicker: flowSteps ? `<fieldset class="restart-picker" ${canCompose ? "" : "disabled"}><legend>${esc(UI.translate("Who should redo it?"))}</legend><div class="restart-chips">${flowSteps.map((role, index) => `<label class="restart-chip"><input type="radio" name="restart-step" value="${index}" data-role="${esc(role)}" ${index === restartDefault ? "checked" : ""}><span class="restart-chip-body"><span class="chat-avatar av-${roleAvatarTone(role)}" aria-hidden="true">${roleAvatarIcon(role).replace('width="18" height="18"', 'width="16" height="16"')}</span><span class="restart-chip-name"><i>${index + 1}</i><span data-no-i18n>${esc(roleName(role))}</span></span></span></label>`).join("")}</div></fieldset>` : "",
+      next: gateCard || (handoff.next_action && !terminal ? `<div class="task-next ${control.paused ? "paused" : ""}"><strong>${esc(UI.translate(control.paused ? "Paused: waiting for you" : "Next step"))}</strong><p>${esc(handoff.next_action)}</p>${control.paused && canMessage ? `<button class="btn small primary" type="button" id="task-resume-inline">${esc(UI.translate("Continue work"))}</button>` : ""}</div>` : ""),
       results: `${teamCard}${deliverableCard}${touchesCode ? `<section class="task-result-grid">
       <div class="task-result-card"><h2>${esc(UI.translate("Changed files and diff"))}</h2>${latestDiff ? `<pre class="mono task-diff">${esc(latestDiff.content || "")}</pre>` : `<p class="muted">${esc(UI.translate("No saved diff yet."))}</p>`}</div>
       <div class="task-result-card"><h2>${esc(UI.translate("Host test evidence"))}</h2>${verificationLine(brief.tests)}${latestTest ? `<details><summary>${esc(UI.translate("View saved test result"))}</summary><pre class="mono">${esc(latestTest.content)}</pre></details>` : `<p class="muted">${esc(UI.translate("No host test evidence yet."))}</p>`}</div>
@@ -1953,7 +1957,7 @@
         <div class="chat-room-bar"><div class="chat-room-title"><span class="chat-room-mark" aria-hidden="true">#</span><div><strong>${esc(UI.translate("Task meeting room"))}</strong><small>${esc(taskId)} · ${esc(UI.translate("Saved work conversation"))}</small></div></div><div class="chat-participants" aria-label="${esc(UI.translate("Meeting participants"))}">${chatParticipants(parts.workflowRoles)}</div></div>
         <div class="conversation-feed" role="log" aria-live="polite" aria-label="${esc(UI.translate("Work conversation"))}">${parts.feed}</div>
         <div class="task-next-slot">${parts.next}</div>
-        <form class="task-composer" id="task-message-form"><label for="task-message">${esc(UI.translate("Correction or instruction"))}</label><textarea id="task-message" rows="2" maxlength="8000" placeholder="${esc(UI.translate("Tell the PM what should change…"))}" ${parts.canMessage ? "" : "disabled"}></textarea><div class="task-composer-foot"><label class="task-check"><input type="checkbox" id="task-message-pause" checked ${parts.canMessage ? "" : "disabled"}> ${esc(UI.translate("Pause before the next agent"))}</label><button class="btn primary" type="submit" ${parts.canMessage ? "" : "disabled"}>${esc(UI.translate("Send correction"))}</button></div><p class="muted">${esc(UI.translate("This records guidance for the workflow. It does not start a separate AI chat."))}</p></form>
+        <form class="task-composer" id="task-message-form"><label for="task-message">${esc(UI.translate("Correction or instruction"))}</label><textarea id="task-message" rows="2" maxlength="8000" placeholder="${esc(UI.translate(parts.restartable ? "Tell that role what should change…" : "Tell the PM what should change…"))}" ${parts.canMessage ? "" : "disabled"}></textarea>${parts.restartable ? parts.restartPicker : ""}<div class="task-composer-foot">${parts.restartable ? "" : `<label class="task-check"><input type="checkbox" id="task-message-pause" checked ${parts.canMessage ? "" : "disabled"}> ${esc(UI.translate("Pause before the next agent"))}</label>`}<button class="btn primary" type="submit" id="task-message-send" ${parts.canMessage ? "" : "disabled"}>${parts.restartable ? "" : esc(UI.translate("Send correction"))}</button></div><p class="muted">${esc(UI.translate(parts.restartable ? "That role redoes its work with your note, and every step after it runs again." : "This records guidance for the workflow. It does not start a separate AI chat."))}</p></form>
       </div>
       </div>
       <div class="task-pane" data-pane="results" ${taskDetailPane !== "results" ? "hidden" : ""}>${parts.results}</div>
@@ -1969,8 +1973,7 @@
     const bindDynamic = () => {
       const { control } = parts;
       bindChatDetailButtons(parts.events);
-      const pauseResume = document.getElementById("task-pause-resume");
-      if (pauseResume) pauseResume.onclick = async (event) => {
+      const pauseResumeClick = async (event) => {
         event.currentTarget.disabled = true;
         try { const result = await api(`${taskBase}/${control.paused ? "resume" : "pause"}`, { method: "POST" });
           if (control.paused && result.next_action) toast("Work can continue from the saved handoff.");
@@ -1978,6 +1981,10 @@
           refresh();
         } catch (err) { toast(err.message, true); event.currentTarget.disabled = false; }
       };
+      ["task-pause-resume", "task-resume-inline"].forEach((buttonId) => {
+        const button = document.getElementById(buttonId);
+        if (button) button.onclick = pauseResumeClick;
+      });
       const stopTask = document.getElementById("task-stop");
       if (stopTask) stopTask.onclick = () => showModal({
         title: "Stop this task?", body: "Stopping prevents further agent work. Changes already made to files will not be rolled back.",
@@ -2044,8 +2051,8 @@
       root.querySelectorAll(".conversation-step").forEach((el, index) => el.classList.toggle("done", Boolean(next.steps[index])));
       const slot = root.querySelector(".task-next-slot");
       const nextBody = slot?.querySelector(".task-next p");
-      if (slot && parts.nextText !== next.nextText) {
-        if (nextBody && next.nextText && !next.hasGateDecision && !parts.hasGateDecision) nextBody.textContent = next.nextText;
+      if (slot && (parts.nextText !== next.nextText || parts.paused !== next.paused)) {
+        if (nextBody && next.nextText && !next.hasGateDecision && !parts.hasGateDecision && parts.paused === next.paused) nextBody.textContent = next.nextText;
         else { slot.innerHTML = next.next; UI.localize(slot); }
       }
       [['[data-pane="results"]', "results"], ['[data-pane="technical"]', "technical"]].forEach(([selector, key]) => {
@@ -2072,13 +2079,31 @@
       document.querySelectorAll("[data-task-pane]").forEach((tab) => { tab.classList.toggle("active", tab === button); tab.setAttribute("aria-selected", String(tab === button)); });
       document.querySelectorAll("[data-pane]").forEach((pane) => { pane.hidden = pane.dataset.pane !== taskDetailPane; });
     }));
+    const sendLabel = () => {
+      const button = document.getElementById("task-message-send");
+      const picked = document.querySelector('input[name="restart-step"]:checked');
+      if (!button || !picked) return;
+      button.innerHTML = `<span>${esc(UI.translate("Ask"))}</span><strong data-no-i18n>${esc(roleName(picked.dataset.role))}</strong><span>${esc(UI.translate("to redo it"))}</span>`;
+    };
+    sendLabel();
+    document.querySelectorAll('input[name="restart-step"]').forEach((radio) => radio.addEventListener("change", sendLabel));
     document.getElementById("task-message-form")?.addEventListener("submit", async (event) => {
       event.preventDefault();
       const content = messageInput.value.trim();
       if (!content) { messageInput.focus(); return; }
       const button = event.currentTarget.querySelector('button[type="submit"]'); button.disabled = true;
-      try { await api(`${taskBase}/messages`, { method: "POST", body: { content, pause: document.getElementById("task-message-pause").checked } });
-        taskDetailDraft = ""; messageInput.value = ""; toast("Correction saved for the workflow."); button.disabled = false; refresh();
+      try {
+        if (parts.restartable) {
+          const step = Number(document.querySelector('input[name="restart-step"]:checked').value);
+          const result = await api(`${taskBase}/restart`, { method: "POST", body: { step, content } });
+          taskDetailDraft = ""; messageInput.value = "";
+          toast(`${roleName(result.role)}: ${result.greeting}`);
+        } else {
+          await api(`${taskBase}/messages`, { method: "POST", body: { content, pause: document.getElementById("task-message-pause").checked } });
+          taskDetailDraft = ""; messageInput.value = "";
+          toast(document.getElementById("task-message-pause").checked ? "Correction saved. The task is paused: press Continue work to send it to the next agent." : "Correction saved for the workflow.");
+        }
+        button.disabled = false; refresh();
       } catch (err) { toast(err.message, true); button.disabled = false; }
     });
     let baseline = parts.signature;

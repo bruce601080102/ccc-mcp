@@ -1,6 +1,8 @@
 """The role catalog: which workflow roles exist, what each one is for, and how a role is
 shown to people (its abbreviation by default, or a name the operator gave it)."""
 
+import random
+
 from ..infra.errors import BridgeError
 
 # Roles that dispatch an Agent. "SD/RD" is the combined role today's automatic workflow
@@ -13,10 +15,13 @@ from ..infra.errors import BridgeError
 GENERAL_PRODUCERS = ("PA", "RS", "AN", "PL", "CS", "WR", "ED")
 GENERAL_GATES = ("VC", "RV")
 GENERAL_ROLES = (*GENERAL_PRODUCERS, *GENERAL_GATES)
-# When ChatGPT plays one of these roles, its saved report is enough to hand over to the next
-# step: the PM round that would only restate the summary is skipped.
-INTERACTIVE_AUTO_ADVANCE_ROLES = frozenset(GENERAL_ROLES)
 ENGINEERING_ROLES = ("SA", "SD", "RD", "SD/RD", "REVIEW", "SR", "AR", "SEC", "QA", "SW")
+# When ChatGPT plays one of these roles inside a workflow, its saved report is enough to hand
+# over to the next step: the PM round that would only restate the summary is skipped. Besides
+# the everyday roles that is every read-only specialist (SR, AR, SEC, QA, SW), so a workflow
+# that mixes in an adversarial reviewer does not stop at it. SA (it needs a plan to approve),
+# SD/RD (they change files) and REVIEW (it follows host tests) keep their PM round.
+INTERACTIVE_AUTO_ADVANCE_ROLES = frozenset({*GENERAL_ROLES, "SR", "AR", "SEC", "QA", "SW"})
 AGENT_ROLES = (*ENGINEERING_ROLES, *GENERAL_ROLES)
 # PM is the interactive ChatGPT conversation that drives the workflow; it has an identity
 # in the chat room (name, avatar) but no provider to configure.
@@ -216,3 +221,37 @@ def validated_role_name(name):
     if any(not char.isprintable() for char in cleaned):
         raise BridgeError("Role name contains unsupported characters")
     return cleaned or None
+
+
+# What a role says when the boss sends it back to redo its work. It is shown in the chat as that
+# role's own message, so the text never names the role.
+RETURN_GREETINGS = {
+    "zh-TW": (
+        "我來了我來了，老大！馬上照你的意見重做～",
+        "報告老大，我出場啦！這就重來一遍，等我一下下～",
+        "收到收到！老大一聲令下，我立刻回來改！",
+        "來啦來啦～老大別急，這次我會做得更好！",
+        "老大，我回來啦！剛剛的意見我記在小本本上了，開工！",
+    ),
+    "ch": (
+        "我来了我来了，老大！马上按你的意见重做～",
+        "报告老大，我出场啦！这就重来一遍，等我一下下～",
+        "收到收到！老大一声令下，我立刻回来改！",
+        "来啦来啦～老大别急，这次我会做得更好！",
+        "老大，我回来啦！刚才的意见我记在小本本上了，开工！",
+    ),
+    "en": (
+        "I'm here, I'm here, boss! Redoing it with your notes right now.",
+        "Reporting for duty, boss! Give me a moment and I'll take another swing.",
+        "Got it, got it! Back on it with your feedback in hand.",
+        "Coming, coming~ no worries boss, this round will be better!",
+        "I'm back, boss! Your note is in my little notebook. Let's go!",
+    ),
+}
+
+
+def return_greeting(language, pick=None):
+    """A playful line for a role coming back to redo its work; `pick` makes it deterministic."""
+    lines = RETURN_GREETINGS.get(language) or RETURN_GREETINGS["en"]
+    index = (pick if pick is not None else random.randrange(len(lines))) % len(lines)
+    return lines[index]

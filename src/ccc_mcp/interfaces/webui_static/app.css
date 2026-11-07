@@ -406,6 +406,10 @@ button.nav-item { width: 100%; border: none; background: none; font: inherit; te
 .task-next { flex: none; margin: 0; padding: 10px 22px; background: var(--accent-bg); border-top: 1px solid var(--border); color: var(--text); }
 .task-next strong { font-size: 12px; }
 .task-next p { margin: 5px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; }
+.task-next.paused { display: grid; grid-template-columns: 1fr auto; column-gap: 16px; align-items: center; border-top-color: var(--warning, var(--border)); }
+.task-next.paused strong, .task-next.paused p { grid-column: 1; }
+.task-next.paused .btn { grid-column: 2; grid-row: 1 / span 2; }
+@media (max-width: 640px) { .task-next.paused { grid-template-columns: 1fr; row-gap: 8px; } .task-next.paused .btn { grid-column: 1; grid-row: auto; justify-self: start; } }
 .gate-decision { max-height: 42vh; overflow: auto; }
 .gate-findings { margin: 8px 0 0; padding: 0; list-style: none; display: grid; gap: 6px; font-size: 12.5px; }
 .gate-findings li { overflow-wrap: anywhere; }
@@ -1381,3 +1385,20 @@ tr.clickable:hover .btn.quiet, tr.clickable:focus-within .btn.quiet, .btn.danger
 .tone-swatch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .role-radar { margin-top: -16px; margin-bottom: -22px; }
 .workflow-option { padding-right: 214px; }
+
+/* Choosing which role redoes its work when the boss sends a correction. */
+.restart-picker { margin: 0; padding: 0; border: 0; min-width: 0; }
+.restart-picker legend { padding: 0; margin: 0 0 6px; font-size: 12px; font-weight: 600; color: var(--muted); }
+.restart-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.restart-chip { position: relative; cursor: pointer; }
+.restart-chip input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.restart-chip-body { display: inline-flex; align-items: center; gap: 7px; min-height: 36px; padding: 3px 12px 3px 4px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); transition: border-color .15s, background .15s, transform .15s; }
+.restart-chip-body .chat-avatar { flex: none; }
+.restart-chip-name { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
+.restart-chip-name i { font-style: normal; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.restart-chip:hover .restart-chip-body { border-color: var(--accent); }
+.restart-chip input:checked + .restart-chip-body { border-color: var(--accent); background: var(--accent-bg); font-weight: 600; }
+.restart-chip input:focus-visible + .restart-chip-body { outline: 2px solid var(--accent); outline-offset: 2px; }
+.restart-picker:disabled .restart-chip { cursor: not-allowed; opacity: .5; }
+#task-message-send { display: inline-flex; align-items: center; gap: .3em; }
+@media (prefers-reduced-motion: reduce) { .restart-chip-body { transition: none; } }
