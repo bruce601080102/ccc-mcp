@@ -175,17 +175,13 @@ def test_a_killed_server_is_restarted_transparently(bridge, installed):
 
 
 def test_close_all_stops_the_server_processes(bridge, installed):
-    pid = int(server_pid(bridge))
+    process = psutil.Process(int(server_pid(bridge)))
     mcp_servers.POOL.close_all()
-    import time
-
-    for _ in range(60):
-        try:
-            os.kill(pid, 0)
-        except OSError:
-            return
-        time.sleep(0.1)
-    pytest.fail("the pooled server process was not stopped")
+    # psutil, not os.kill(pid, 0): on Windows signal 0 is CTRL_C_EVENT, which never raises.
+    try:
+        process.wait(timeout=6)
+    except psutil.TimeoutExpired:
+        pytest.fail("the pooled server process was not stopped")
 
 
 def test_every_bridge_call_leaves_evidence_without_the_result(bridge, installed):
