@@ -25,18 +25,21 @@
   "additionalProperties": false,
   "properties": {
     "base_context_version": {
+      "description": "Context version this patch was written against, from get_context or collect_context_updates. A different current version is rejected as a Version Conflict.",
       "minimum": 1,
       "title": "Base Context Version",
       "type": "integer"
     },
     "changes": {
       "additionalProperties": false,
+      "description": "Context sections to replace, keyed by section name: status, next_action, summary, unresolved_questions, invariants, architecture, source_document_refs, agent_results, workspace_changes. project_name and purpose are immutable.",
       "minProperties": 1,
       "title": "Changes",
       "type": "object",
       "required": []
     },
     "source_task_ids": {
+      "description": "Task ids whose reports justify this change (provenance).",
       "items": {
         "type": "string"
       },
@@ -44,6 +47,7 @@
       "type": "array"
     },
     "source_execution_ids": {
+      "description": "Execution ids whose reports justify this change. Their agent results are removed from the working Context on commit; the raw reports stay in the audit trail.",
       "items": {
         "type": "string"
       },
@@ -51,6 +55,7 @@
       "type": "array"
     },
     "source_document_refs": {
+      "description": "Evidence files as {path, sha256}; get the hash from get_source_reference.",
       "items": {
         "$ref": "#/$defs/SourceRef"
       },
@@ -58,12 +63,14 @@
       "type": "array"
     },
     "update_reason": {
+      "description": "Why the context changes, recorded in the version history.",
       "minLength": 1,
       "title": "Update Reason",
       "type": "string"
     },
     "author_role": {
       "default": "PM",
+      "description": "Always PM for callers; SYSTEM is reserved for ccc-mcp automation and is rejected.",
       "enum": [
         "PM",
         "SYSTEM"
@@ -73,6 +80,7 @@
     },
     "semantic_review_ack": {
       "default": false,
+      "description": "Must be true for a PM patch: confirms the PM read the diff, because semantic equivalence cannot be proven. A patch without it is rejected.",
       "title": "Semantic Review Ack",
       "type": "boolean"
     }

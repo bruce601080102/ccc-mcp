@@ -86,17 +86,45 @@ class ContextSnapshot(StrictModel):
 
 
 class ContextPatch(StrictModel):
-    base_context_version: int = Field(ge=1)
-    changes: dict = Field(min_length=1)
-    source_task_ids: list[str] = Field(default_factory=list)
-    source_execution_ids: list[str] = Field(default_factory=list)
-    source_document_refs: list[SourceRef] = Field(default_factory=list)
-    update_reason: str = Field(min_length=1)
+    base_context_version: int = Field(
+        ge=1,
+        description="Context version this patch was written against, from get_context or "
+        "collect_context_updates. A different current version is rejected as a Version Conflict.",
+    )
+    changes: dict = Field(
+        min_length=1,
+        description="Context sections to replace, keyed by section name: status, next_action, "
+        "summary, unresolved_questions, invariants, architecture, source_document_refs, "
+        "agent_results, workspace_changes. project_name and purpose are immutable.",
+    )
+    source_task_ids: list[str] = Field(
+        default_factory=list,
+        description="Task ids whose reports justify this change (provenance).",
+    )
+    source_execution_ids: list[str] = Field(
+        default_factory=list,
+        description="Execution ids whose reports justify this change. Their agent results are "
+        "removed from the working Context on commit; the raw reports stay in the audit trail.",
+    )
+    source_document_refs: list[SourceRef] = Field(
+        default_factory=list,
+        description="Evidence files as {path, sha256}; get the hash from get_source_reference.",
+    )
+    update_reason: str = Field(
+        min_length=1, description="Why the context changes, recorded in the version history."
+    )
     # SYSTEM is reserved for ccc-mcp's internal, guarded auto-advance path.  Public
     # callers cannot use it to bypass PM review (ContextHub rejects it unless its
     # private automatic flag is supplied by the worker).
-    author_role: Literal["PM", "SYSTEM"] = "PM"
-    semantic_review_ack: bool = False
+    author_role: Literal["PM", "SYSTEM"] = Field(
+        default="PM",
+        description="Always PM for callers; SYSTEM is reserved for ccc-mcp automation and is rejected.",
+    )
+    semantic_review_ack: bool = Field(
+        default=False,
+        description="Must be true for a PM patch: confirms the PM read the diff, because semantic "
+        "equivalence cannot be proven. A patch without it is rejected.",
+    )
 
 
 class TestClaim(StrictModel):
