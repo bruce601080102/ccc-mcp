@@ -165,3 +165,75 @@ def test_setup_provider_raises_when_login_still_incomplete(monkeypatch):
     )
     with pytest.raises(BridgeError, match="login is still incomplete"):
         agent_setup.setup_provider("codex")
+
+
+def test_ensure_installed_returns_existing_path_without_installing(monkeypatch):
+    calls = []
+    monkeypatch.setattr(agent_setup, "native_executable", lambda name: "C:/codex/codex.exe")
+    monkeypatch.setattr(agent_setup.subprocess, "run", lambda argv, **kwargs: calls.append(argv))
+    assert agent_setup.ensure_installed("codex") == "C:/codex/codex.exe"
+    assert calls == []
+
+
+def test_ensure_installed_installs_via_npm_when_missing(monkeypatch, tmp_path):
+    resolve_calls = {"n": 0}
+
+    def fake_native_executable(name):
+        resolve_calls["n"] += 1
+        if resolve_calls["n"] == 1:
+            raise BridgeError("not found yet")
+        return "C:/codex/codex.exe"
+
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+        if argv[:3] == ["npm", "config", "get"]:
+            return FakeResult(stdout=str(tmp_path / "npm").encode())
+        return FakeResult(returncode=0)
+
+    monkeypatch.setattr(agent_setup, "native_executable", fake_native_executable)
+    monkeypatch.setattr(agent_setup.shutil, "which", lambda name: "C:/npm/npm.cmd")
+    monkeypatch.setattr(agent_setup.subprocess, "run", fake_run)
+
+    assert agent_setup.ensure_installed("codex") == "C:/codex/codex.exe"
+    assert ["npm", "install", "-g", agent_setup.NPM_PACKAGE["codex"]] in calls
+    # ensure_installed never touches login, unlike setup_provider.
+    assert not any(call[1:] == ["login"] for call in calls if call and call[0] == "C:/codex/codex.exe")
+
+
+def test_ensure_installed_rejects_unsupported_provider():
+    with pytest.raises(BridgeError, match="Unsupported provider"):
+        agent_setup.ensure_installed("grok")
+
+
+def test_uninstall_provider_removes_npm_installed_copy(monkeypatch):
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+        return FakeResult(returncode=0)
+
+    monkeypatch.setattr(agent_setup.subprocess, "run", fake_run)
+    monkeypatch.setattr(agent_setup, "native_executable", lambda name: (_ for _ in ()).throw(BridgeError("gone")))
+
+    result = agent_setup.uninstall_provider("codex")
+    assert ["npm", "uninstall", "-g", agent_setup.NPM_PACKAGE["codex"]] in calls
+    assert result == {"provider": "codex", "uninstalled": True, "still_present": False, "hint": None}
+
+
+def test_uninstall_provider_leaves_a_non_npm_copy_in_place(monkeypatch):
+    """A native installer/Homebrew copy must never be deleted by anything other
+    than `npm uninstall -g` — confirmed by letting it keep "resolving" afterward."""
+    monkeypatch.setattr(agent_setup.subprocess, "run", lambda argv, **kwargs: FakeResult(returncode=0))
+    monkeypatch.setattr(agent_setup, "native_executable", lambda name: "/usr/local/bin/codex")
+
+    result = agent_setup.uninstall_provider("codex")
+    assert result["still_present"] is True
+    assert result["uninstalled"] is False
+    assert "npm" in result["hint"]
+
+
+def test_uninstall_provider_rejects_unsupported_provider():
+    with pytest.raises(BridgeError, match="Unsupported provider"):
+        agent_setup.uninstall_provider("grok")

@@ -13,7 +13,7 @@ from typing import Annotated
 import typer
 from typer.core import TyperGroup
 
-from ..adapters.agent_setup import setup_provider
+from ..adapters.agent_setup import setup_provider, uninstall_provider
 from ..adapters.agents.base import native_executable
 from ..adapters.skills import discover_skills, install_skill, list_skills, remove_skill
 from ..adapters.tunnel_client import (
@@ -2305,6 +2305,27 @@ def setup(provider: Annotated[str, typer.Argument()] = "codex"):
             ),
         }
     )
+
+
+@app.command(
+    help=t(
+        "解除安裝本機 Codex／Claude Code CLI（codex、claude 或 all）。只移除 npm 安裝的版本。",
+        "Uninstall the local Codex/Claude Code CLI (codex, claude, or all). Only removes an "
+        "npm-installed copy.",
+        "解除安装本机 Codex／Claude Code CLI（codex、claude 或 all）。只移除 npm 安装的版本。",
+    )
+)
+def uninstall(provider: Annotated[str, typer.Argument()] = "codex"):
+    if provider not in {"codex", "claude", "all"}:
+        raise BridgeError("Unsupported provider: use codex, claude, or all")
+    providers = ["codex", "claude"] if provider == "all" else [provider]
+    removed = []
+    for name in providers:
+        try:
+            removed.append(uninstall_provider(name))
+        except (BridgeError, OSError, subprocess.SubprocessError) as exc:
+            removed.append({"provider": name, "uninstalled": False, "error": redact(str(exc))})
+    output({"removed": removed})
 
 
 @app.command(

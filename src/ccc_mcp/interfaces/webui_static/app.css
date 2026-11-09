@@ -1002,6 +1002,16 @@ tr.clickable:focus-visible { outline: 2px solid var(--accent); outline-offset: -
   line-height: 1.6; max-height: 320px; overflow-y: auto; white-space: pre-wrap; word-break: break-all;
 }
 .log-panel .muted-line { color: #7c8187; }
+.log-panel a { color: #7fb4ff; }
+
+/* --- Provider install/sign-in card --- */
+.provider-login { padding: 14px 0; border-bottom: 1px solid var(--rule); }
+.provider-login:last-child { border-bottom: none; }
+.provider-login-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+.provider-login-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.provider-login-log { margin-bottom: 10px; }
+.provider-login-input { display: flex; gap: 8px; }
+.provider-login-input input { flex: 1; min-width: 0; }
 .status-row { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
 .status-dot { width: 9px; height: 9px; border-radius: 999px; background: var(--faint); flex: none; }
 .status-dot.on { background: var(--positive); }

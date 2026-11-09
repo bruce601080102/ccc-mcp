@@ -110,30 +110,65 @@ def _check_npm_prefix():
         )
 
 
-def setup_provider(provider: str) -> dict:
-    """Resolve, install via npm if missing, and log in to one CLI provider."""
+def ensure_installed(provider: str) -> str:
+    """Resolve the provider's CLI, installing it via npm first if missing. Returns
+    its absolute executable path. Does not touch login state."""
     if provider not in NPM_PACKAGE:
         raise BridgeError(f"Unsupported provider: {provider}")
     path = _resolve_or_none(provider)
-    if path is None:
-        # _ensure_npm() first: on a machine with no Node.js at all, this is what
-        # actually installs it (via winget). Checking the Node version before this
-        # ran meant a brand-new machine failed here before auto-install ever had a
-        # chance to run — a one-line Node install would have fixed it, but the
-        # error told the user to do it manually instead.
-        _ensure_npm()
-        if provider == "claude":
-            node_major = _node_major_version()
-            if node_major is None or node_major < 22:
-                raise BridgeError(
-                    "Claude Code npm installation requires Node.js 22+; the Node.js "
-                    "already installed here is older — upgrade it manually and retry"
-                )
-        _check_npm_prefix()
-        subprocess.run(["npm", "install", "-g", NPM_PACKAGE[provider]], shell=False, check=True)
-        path = native_executable(provider)
+    if path is not None:
+        return path
+    # _ensure_npm() first: on a machine with no Node.js at all, this is what
+    # actually installs it (via winget). Checking the Node version before this
+    # ran meant a brand-new machine failed here before auto-install ever had a
+    # chance to run — a one-line Node install would have fixed it, but the
+    # error told the user to do it manually instead.
+    _ensure_npm()
+    if provider == "claude":
+        node_major = _node_major_version()
+        if node_major is None or node_major < 22:
+            raise BridgeError(
+                "Claude Code npm installation requires Node.js 22+; the Node.js "
+                "already installed here is older — upgrade it manually and retry"
+            )
+    _check_npm_prefix()
+    subprocess.run(["npm", "install", "-g", NPM_PACKAGE[provider]], shell=False, check=True)
+    return native_executable(provider)
+
+
+def setup_provider(provider: str) -> dict:
+    """Resolve, install via npm if missing, and log in to one CLI provider."""
+    path = ensure_installed(provider)
     if not _logged_in(path, provider):
         subprocess.run([path, *LOGIN_ARGS[provider]], shell=False, check=False)
     if not _logged_in(path, provider):
         raise BridgeError(f"{provider} login is still incomplete")
     return {"provider": provider, "path": path, "logged_in": True}
+
+
+def uninstall_provider(provider: str) -> dict:
+    """Undo an `ensure_installed`/npm install. A CLI installed some other way (a
+    native installer, Homebrew, ...) is left alone — only `npm uninstall -g` is
+    ever run, so this can't end up deleting an arbitrary file path."""
+    if provider not in NPM_PACKAGE:
+        raise BridgeError(f"Unsupported provider: {provider}")
+    subprocess.run(
+        ["npm", "uninstall", "-g", NPM_PACKAGE[provider]],
+        capture_output=True,
+        stdin=subprocess.DEVNULL,
+        shell=False,
+        check=False,
+    )
+    still_present = _resolve_or_none(provider) is not None
+    return {
+        "provider": provider,
+        "uninstalled": not still_present,
+        "still_present": still_present,
+        "hint": (
+            f"{provider} is still on this computer — it looks like it wasn't installed "
+            "via npm (a native installer or Homebrew build, for example); remove it with "
+            "that tool instead"
+            if still_present
+            else None
+        ),
+    }

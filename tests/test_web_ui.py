@@ -1037,6 +1037,182 @@ async def test_connection_manager_reports_error_state_on_nonzero_exit(tmp_path):
     assert "3" in manager.error
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="relies on a POSIX shebang script")
+async def test_provider_login_manager_captures_output_and_settles_on_success(tmp_path):
+    from ccc_mcp.interfaces.web import ProviderLoginManager
+
+    script = tmp_path / "fake-codex"
+    script.write_text(f"#!{sys.executable}\nprint('open https://example.test/auth', flush=True)\n")
+    script.chmod(0o755)
+    manager = ProviderLoginManager("codex")
+    await manager.start(str(script))
+    for _ in range(50):
+        if manager.state != "running":
+            break
+        await asyncio.sleep(0.1)
+    assert manager.state == "success"
+    assert any("https://example.test/auth" in line for line in manager.log)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="relies on a POSIX shebang script")
+async def test_provider_login_manager_refuses_a_second_login_while_one_is_running(tmp_path):
+    from ccc_mcp.interfaces.web import ProviderLoginManager
+
+    script = tmp_path / "fake-codex"
+    script.write_text(f"#!{sys.executable}\nimport time\ntime.sleep(3)\n")
+    script.chmod(0o755)
+    manager = ProviderLoginManager("codex")
+    await manager.start(str(script))
+    with pytest.raises(BridgeError, match="already in progress"):
+        await manager.start(str(script))
+    await manager.cancel()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="relies on a POSIX shebang script")
+async def test_provider_login_manager_relays_stdin_to_the_subprocess(tmp_path):
+    from ccc_mcp.interfaces.web import ProviderLoginManager
+
+    script = tmp_path / "fake-claude"
+    script.write_text(
+        f"#!{sys.executable}\n"
+        "paste = input()\n"
+        "print('got: ' + paste, flush=True)\n"
+    )
+    script.chmod(0o755)
+    manager = ProviderLoginManager("claude")
+    await manager.start(str(script))
+    await manager.send_input("ABC-123")
+    for _ in range(50):
+        if manager.state != "running":
+            break
+        await asyncio.sleep(0.1)
+    assert manager.state == "success"
+    assert "got: ABC-123" in list(manager.log)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="relies on a POSIX shebang script")
+async def test_provider_login_manager_cancel_stops_the_subprocess(tmp_path):
+    from ccc_mcp.interfaces.web import ProviderLoginManager
+
+    script = tmp_path / "fake-codex"
+    script.write_text(f"#!{sys.executable}\nimport time\ntime.sleep(10)\n")
+    script.chmod(0o755)
+    manager = ProviderLoginManager("codex")
+    await manager.start(str(script))
+    await manager.cancel()
+    assert manager.state == "idle"
+    assert manager.process.returncode is not None
+
+
+def test_provider_login_endpoints_reject_an_unsupported_provider(tmp_path, client):
+    assert client.post("/api/connect/providers/grok/install").status_code == 400
+    assert client.post("/api/connect/providers/grok/uninstall").status_code == 400
+    assert client.post("/api/connect/providers/grok/login").status_code == 400
+    assert client.get("/api/connect/providers/grok/login").status_code == 400
+
+
+def test_provider_install_endpoint_calls_ensure_installed(tmp_path, client, monkeypatch):
+    import ccc_mcp.interfaces.web as web_module
+
+    calls = []
+    monkeypatch.setattr(web_module, "ensure_installed", lambda provider: calls.append(provider) or "/usr/local/bin/codex")
+    resp = client.post("/api/connect/providers/codex/install")
+    assert resp.status_code == 200
+    assert resp.json() == {"provider": "codex", "path": "/usr/local/bin/codex"}
+    assert calls == ["codex"]
+
+
+def test_provider_uninstall_endpoint_calls_uninstall_provider(tmp_path, client, monkeypatch):
+    import ccc_mcp.interfaces.web as web_module
+
+    monkeypatch.setattr(
+        web_module,
+        "uninstall_provider",
+        lambda provider: {"provider": provider, "uninstalled": True, "still_present": False, "hint": None},
+    )
+    resp = client.post("/api/connect/providers/claude/uninstall")
+    assert resp.status_code == 200
+    assert resp.json()["uninstalled"] is True
+
+
+def test_provider_login_start_requires_the_cli_to_be_installed_first(tmp_path, client, monkeypatch):
+    import ccc_mcp.interfaces.web as web_module
+
+    monkeypatch.setattr(
+        web_module, "native_executable", lambda provider: (_ for _ in ()).throw(BridgeError("missing"))
+    )
+    resp = client.post("/api/connect/providers/codex/login")
+    assert resp.status_code == 400
+    assert "install" in resp.json()["error"].lower()
+
+
+def test_provider_login_start_delegates_to_the_managers_start(tmp_path, client, monkeypatch):
+    # A real TestClient call (without entering it as a `with` context manager) spins
+    # up its own event loop per request — nothing keeps a background asyncio task
+    # (the login subprocess reader) alive between separate calls the way the real,
+    # single-loop `ccc-mcp ui` server does. ProviderLoginManager's own subprocess
+    # handling is covered directly in the async tests above; here we only check
+    # that the endpoint resolves the installed path and calls manager.start with it.
+    import ccc_mcp.interfaces.web as web_module
+
+    monkeypatch.setattr(web_module, "native_executable", lambda provider: "/usr/local/bin/codex")
+    manager = client.app.state.provider_login_managers["codex"]
+    calls = []
+
+    async def fake_start(path):
+        calls.append(path)
+        manager.state = "running"
+
+    monkeypatch.setattr(manager, "start", fake_start)
+    resp = client.post("/api/connect/providers/codex/login")
+    assert resp.status_code == 200
+    assert resp.json()["state"] == "running"
+    assert calls == ["/usr/local/bin/codex"]
+
+
+def test_provider_login_status_reports_the_managers_state(tmp_path, client):
+    manager = client.app.state.provider_login_managers["claude"]
+    manager.state = "failed"
+    manager.error = "claude login exited with code 1"
+    manager.log.append("open https://example.test/auth")
+    resp = client.get("/api/connect/providers/claude/login")
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "provider": "claude",
+        "state": "failed",
+        "error": "claude login exited with code 1",
+        "log": ["open https://example.test/auth"],
+    }
+
+
+def test_provider_login_input_delegates_to_the_managers_send_input(tmp_path, client, monkeypatch):
+    manager = client.app.state.provider_login_managers["codex"]
+    received = []
+
+    async def fake_send_input(text):
+        received.append(text)
+
+    monkeypatch.setattr(manager, "send_input", fake_send_input)
+    resp = client.post("/api/connect/providers/codex/login/input", json={"text": "ABC-123"})
+    assert resp.status_code == 200
+    assert received == ["ABC-123"]
+
+
+def test_provider_login_cancel_delegates_to_the_managers_cancel(tmp_path, client, monkeypatch):
+    manager = client.app.state.provider_login_managers["codex"]
+    cancelled = []
+
+    async def fake_cancel():
+        cancelled.append(True)
+        manager.state = "idle"
+
+    monkeypatch.setattr(manager, "cancel", fake_cancel)
+    resp = client.post("/api/connect/providers/codex/login/cancel")
+    assert resp.status_code == 200
+    assert resp.json()["state"] == "idle"
+    assert cancelled == [True]
+
+
 def test_connect_start_passes_remember_through_to_credential_storage(tmp_path, client, monkeypatch):
     import ccc_mcp.interfaces.web as web_module
     from ccc_mcp.adapters.tunnel_client import load_tunnel_key

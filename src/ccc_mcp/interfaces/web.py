@@ -31,6 +31,8 @@ from starlette.staticfiles import StaticFiles
 
 from .. import __version__
 from ..adapters import mcp_servers as mcp_registry
+from ..adapters.agent_setup import LOGIN_ARGS, ensure_installed, uninstall_provider
+from ..adapters.agents.base import native_executable
 from ..adapters.tunnel_client import (
     connection_profiles,
     forget_connection_profile,
@@ -187,6 +189,73 @@ class ConnectionManager:
             self.process.kill()
             await self.process.wait()
         self.state = "disconnected"
+
+
+class ProviderLoginManager:
+    """Runs one native CLI's interactive login (`codex login` / `claude auth login`)
+    as a subprocess instead of a TTY, modeled on ConnectionManager above, so the
+    Connect page can drive it from the browser — including on a host that has no
+    GUI/browser of its own to show the login flow's own prompts in."""
+
+    def __init__(self, provider):
+        self.provider = provider
+        self.process = None
+        self.state = "idle"  # idle | running | success | failed | cancelled
+        self.error = None
+        self.log = collections.deque(maxlen=200)
+        self._reader_task = None
+
+    def status(self):
+        return {"provider": self.provider, "state": self.state, "error": self.error, "log": list(self.log)}
+
+    async def start(self, path):
+        if self.process is not None and self.process.returncode is None:
+            raise BridgeError("A sign-in is already in progress for this provider")
+        self.state = "running"
+        self.error = None
+        self.log.clear()
+        self.process = await asyncio.create_subprocess_exec(
+            path,
+            *LOGIN_ARGS[self.provider],
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        self._reader_task = asyncio.create_task(self._read_output())
+
+    async def _read_output(self):
+        process = self.process
+        try:
+            async for raw_line in process.stdout:
+                self.log.append(raw_line.decode("utf-8", "replace").rstrip())
+        finally:
+            returncode = await process.wait()
+            if self.state == "cancelled":
+                pass
+            elif returncode == 0:
+                self.state = "success"
+            else:
+                self.state = "failed"
+                self.error = f"{self.provider} login exited with code {returncode}"
+
+    async def send_input(self, text):
+        if self.process is None or self.process.returncode is not None or self.process.stdin is None:
+            raise BridgeError("No sign-in is waiting for input")
+        self.process.stdin.write(f"{text}\n".encode())
+        await self.process.stdin.drain()
+
+    async def cancel(self):
+        if self.process is None or self.process.returncode is not None:
+            self.state = "idle"
+            return
+        self.state = "cancelled"
+        self.process.terminate()
+        try:
+            await asyncio.wait_for(self.process.wait(), timeout=10)
+        except TimeoutError:
+            self.process.kill()
+            await self.process.wait()
+        self.state = "idle"
 
 
 # --- Projects -----------------------------------------------------------------
@@ -1089,6 +1158,59 @@ async def connect_providers(request: Request):
     return JSONResponse({"providers": await run(provider_login_status)})
 
 
+def _provider_login_manager(request: Request) -> ProviderLoginManager:
+    provider = request.path_params["provider"]
+    managers = request.app.state.provider_login_managers
+    if provider not in managers:
+        raise BridgeError("Unsupported provider: use codex or claude")
+    return managers[provider]
+
+
+@endpoint
+async def provider_install(request: Request):
+    provider = _provider_login_manager(request).provider
+    path = await run(ensure_installed, provider)
+    return JSONResponse({"provider": provider, "path": path})
+
+
+@endpoint
+async def provider_uninstall(request: Request):
+    provider = _provider_login_manager(request).provider
+    return JSONResponse(await run(uninstall_provider, provider))
+
+
+@endpoint
+async def provider_login_start(request: Request):
+    manager = _provider_login_manager(request)
+    try:
+        path = native_executable(manager.provider)
+    except BridgeError:
+        raise BridgeError(f"{manager.provider} is not installed yet — install it first") from None
+    await manager.start(path)
+    return JSONResponse(manager.status())
+
+
+@endpoint
+async def provider_login_status_view(request: Request):
+    return JSONResponse(_provider_login_manager(request).status())
+
+
+@endpoint
+async def provider_login_input(request: Request):
+    manager = _provider_login_manager(request)
+    body = await _body(request)
+    text = body.get("text", "")
+    await manager.send_input(text)
+    return JSONResponse({"ok": True})
+
+
+@endpoint
+async def provider_login_cancel(request: Request):
+    manager = _provider_login_manager(request)
+    await manager.cancel()
+    return JSONResponse(manager.status())
+
+
 @endpoint
 async def connect_logs(request: Request):
     manager: ConnectionManager = request.app.state.connection_manager
@@ -1185,6 +1307,12 @@ ROUTES = [
     Route("/api/docs/{language}/{slug}", documentation, methods=["GET"]),
     Route("/api/connect/status", connect_status, methods=["GET"]),
     Route("/api/connect/providers", connect_providers, methods=["GET"]),
+    Route("/api/connect/providers/{provider}/install", provider_install, methods=["POST"]),
+    Route("/api/connect/providers/{provider}/uninstall", provider_uninstall, methods=["POST"]),
+    Route("/api/connect/providers/{provider}/login", provider_login_start, methods=["POST"]),
+    Route("/api/connect/providers/{provider}/login", provider_login_status_view, methods=["GET"]),
+    Route("/api/connect/providers/{provider}/login/input", provider_login_input, methods=["POST"]),
+    Route("/api/connect/providers/{provider}/login/cancel", provider_login_cancel, methods=["POST"]),
     Route("/api/connect/logs", connect_logs, methods=["GET"]),
     Route("/api/connect/start", connect_start, methods=["POST"]),
     Route("/api/connect/save", connect_save, methods=["POST"]),
@@ -1312,5 +1440,9 @@ def create_app(home=None, token=None):
     app.state.bridge = CCCMCP(home)
     app.state.ui_token = token or secrets.token_urlsafe(32)
     app.state.connection_manager = ConnectionManager()
+    app.state.provider_login_managers = {
+        "codex": ProviderLoginManager("codex"),
+        "claude": ProviderLoginManager("claude"),
+    }
     app.add_middleware(BaseHTTPMiddleware, dispatch=_token_guard)
     return app

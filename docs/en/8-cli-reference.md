@@ -6,6 +6,7 @@ Use `ccc-mcp --help` for the installed version's complete command list. Set `CCC
 
 ```bash
 ccc-mcp setup all
+ccc-mcp uninstall codex|claude|all   # npm-installed copies only; same install/uninstall/sign-in is also in `ccc-mcp ui`'s Connect page
 ccc-mcp connect tunnel_...
 ccc-mcp project create <id> [--path <path>] [--profile chatgpt-only|best-model] [--write]
 ccc-mcp project add <path> --id <id> [--write]

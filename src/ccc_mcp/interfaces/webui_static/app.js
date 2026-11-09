@@ -253,6 +253,7 @@
   }
 
   let lastConnectStatus = null;
+  let providerInfoCache = {};
   let activeTimers = [];
   function stopPolling() {
     activeTimers.forEach(clearInterval);
@@ -3223,19 +3224,149 @@
     });
   }
 
-  function providerRow(name, info) {
-    if (!info) return "";
-    const state = !info.installed
-      ? `<span class="pill neutral">${esc(UI.translate("not installed"))}</span>`
-      : info.logged_in
-        ? `<span class="pill positive">${esc(UI.translate("signed in"))}</span>`
-        : `<span class="pill warning">${esc(UI.translate("not signed in"))}</span>`;
+  // Turns a plain https?:// URL in an (already escaped) log line into a clickable
+  // link, so a URL the login CLI prints can be opened in a browser on another
+  // device when the computer running `ccc-mcp ui` has no browser of its own.
+  function linkify(lines) {
+    return lines
+      .map((line) => esc(line).replace(/(https?:\/\/[^\s]+)/g, (url) => `<a href="${url}" target="_blank" rel="noopener">${url}</a>`))
+      .join("\n");
+  }
+
+  function providerCardHtml(provider, label, info, login) {
+    const running = login.state === "running";
+    const installed = !!info.installed;
+    const loggedIn = !!info.logged_in;
+    const pill = running
+      ? `<span class="pill accent">${esc(UI.translate("Signing in…"))}</span>`
+      : !installed
+        ? `<span class="pill neutral">${esc(UI.translate("Not installed"))}</span>`
+        : loggedIn
+          ? `<span class="pill positive">${esc(UI.translate("Signed in"))}</span>`
+          : `<span class="pill warning">${esc(UI.translate("Not signed in"))}</span>`;
+    const actions = running
+      ? `<button class="btn small ghost" data-provider-action="cancel">${esc(UI.translate("Cancel sign-in"))}</button>`
+      : !installed
+        ? `<button class="btn small primary" data-provider-action="install">${esc(UI.translate("Install"))}</button>`
+        : `${loggedIn ? "" : `<button class="btn small primary" data-provider-action="login">${esc(UI.translate("Sign in"))}</button>`}<button class="btn small danger" data-provider-action="uninstall">${esc(UI.translate("Uninstall"))}</button>`;
+    const hint = login.error
+      ? `<div class="hint" style="color:var(--negative)">${esc(login.error)}</div>`
+      : info.hint ? `<div class="hint">${esc(info.hint)}</div>` : "";
+    const log = running
+      ? `<div class="provider-login-log log-panel">${login.log && login.log.length ? linkify(login.log) : `<span class="muted-line">${esc(UI.translate("Waiting for output…"))}</span>`}</div>`
+      : "";
+    const inputRow = running
+      ? `<div class="provider-login-input">
+           <input type="text" class="mono" data-provider-input placeholder="${esc(UI.translate("If sign-in asked you to paste something back, type it here and press Enter"))}" autocomplete="off" />
+           <button class="btn small" data-provider-action="send">${esc(UI.translate("Send"))}</button>
+         </div>`
+      : "";
     return `
-      <div class="kv-row">
-        <span class="k">${esc(name)}</span>
-        <span class="v">${state}${info.hint ? ` <span class="muted">· ${esc(info.hint)}</span>` : ""}</span>
+      <div class="provider-login" data-provider="${esc(provider)}">
+        <div class="provider-login-head"><strong>${esc(label)}</strong>${pill}</div>
+        ${hint}
+        <div class="provider-login-actions">${actions}</div>
+        ${log}
+        ${inputRow}
       </div>
     `;
+  }
+
+  function bindProviderCard(gen, provider, label, el) {
+    el.querySelector('[data-provider-action="install"]')?.addEventListener("click", async (event) => {
+      const button = event.currentTarget;
+      button.disabled = true;
+      button.innerHTML = `<span class="spinner small"></span> ${esc(UI.translate("Installing…"))}`;
+      try {
+        await api(`/connect/providers/${provider}/install`, { method: "POST" });
+        const fresh = await api("/connect/providers");
+        if (stale(gen)) return;
+        providerInfoCache = fresh.providers || {};
+        toast(`${label}: ${UI.translate("installed")}`);
+        renderProviderLogin(gen, provider, label);
+      } catch (err) { toast(err.message, true); button.disabled = false; }
+    });
+    el.querySelector('[data-provider-action="login"]')?.addEventListener("click", async (event) => {
+      const button = event.currentTarget;
+      button.disabled = true;
+      try {
+        await api(`/connect/providers/${provider}/login`, { method: "POST" });
+        if (stale(gen)) return;
+        renderProviderLogin(gen, provider, label);
+      } catch (err) { toast(err.message, true); button.disabled = false; }
+    });
+    el.querySelector('[data-provider-action="cancel"]')?.addEventListener("click", async (event) => {
+      const button = event.currentTarget;
+      button.disabled = true;
+      try {
+        await api(`/connect/providers/${provider}/login/cancel`, { method: "POST" });
+        if (stale(gen)) return;
+        renderProviderLogin(gen, provider, label);
+      } catch (err) { toast(err.message, true); button.disabled = false; }
+    });
+    el.querySelector('[data-provider-action="uninstall"]')?.addEventListener("click", () => {
+      showModal({
+        title: `${UI.translate("Uninstall")} ${label}`,
+        body: UI.translate("This runs npm uninstall -g for the CLI ccc-mcp installed. A copy installed another way (Homebrew, the official installer, ...) is left alone and this will say so."),
+        danger: true,
+        confirmLabel: UI.translate("Uninstall"),
+        onSubmit: async () => {
+          const result = await api(`/connect/providers/${provider}/uninstall`, { method: "POST" });
+          const fresh = await api("/connect/providers");
+          if (stale(gen)) return;
+          providerInfoCache = fresh.providers || {};
+          toast(result.still_present ? result.hint : `${label}: ${UI.translate("uninstalled")}`, !!result.still_present);
+          renderProviderLogin(gen, provider, label);
+        },
+      });
+    });
+    const sendInput = async () => {
+      const input = el.querySelector("[data-provider-input]");
+      if (!input || !input.value) return;
+      const value = input.value;
+      input.value = "";
+      try { await api(`/connect/providers/${provider}/login/input`, { method: "POST", body: { text: value } }); }
+      catch (err) { toast(err.message, true); }
+    };
+    el.querySelector('[data-provider-action="send"]')?.addEventListener("click", sendInput);
+    el.querySelector("[data-provider-input]")?.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") { event.preventDefault(); sendInput(); }
+    });
+  }
+
+  function renderProviderLogin(gen, provider, label) {
+    const el = document.getElementById(`provider-login-${provider}`);
+    if (!el) return;
+    api(`/connect/providers/${provider}/login`).then((login) => {
+      if (stale(gen)) return;
+      el.innerHTML = providerCardHtml(provider, label, providerInfoCache[provider] || {}, login);
+      bindProviderCard(gen, provider, label, el);
+      if (login.state !== "running") return;
+      const intervalId = setInterval(async () => {
+        if (stale(gen)) { clearInterval(intervalId); return; }
+        let fresh;
+        try { fresh = await api(`/connect/providers/${provider}/login`); } catch (e) { return; }
+        if (stale(gen)) { clearInterval(intervalId); return; }
+        const logPanel = el.querySelector(".provider-login-log");
+        if (logPanel) {
+          logPanel.innerHTML = fresh.log && fresh.log.length ? linkify(fresh.log) : `<span class="muted-line">${esc(UI.translate("Waiting for output…"))}</span>`;
+          logPanel.scrollTop = logPanel.scrollHeight;
+        }
+        if (fresh.state === "running") return;
+        clearInterval(intervalId);
+        try {
+          const freshProviders = await api("/connect/providers");
+          if (!stale(gen)) providerInfoCache = freshProviders.providers || {};
+        } catch (e) {}
+        if (stale(gen)) return;
+        el.innerHTML = providerCardHtml(provider, label, providerInfoCache[provider] || {}, fresh);
+        bindProviderCard(gen, provider, label, el);
+      }, 1500);
+      trackTimer(intervalId);
+    }).catch(() => {
+      el.innerHTML = providerCardHtml(provider, label, providerInfoCache[provider] || {}, { state: "idle", log: [], error: null });
+      bindProviderCard(gen, provider, label, el);
+    });
   }
 
   async function renderConnect() {
@@ -3291,17 +3422,20 @@
               </span>
             </div>
           `).join("")) : ""}
-        ${pageCard("test", "Native CLI login", "Codex and Claude Code sign in independently of the Tunnel; ccc-mcp never stores their credentials.",
-          `<div id="provider-status"><div class="kv-row"><span class="k muted"><span class="spinner small"></span> Checking…</span></div></div>`)}
+        ${pageCard("test", "Native CLI login", "Install, sign in to, and uninstall Codex and Claude Code from here; ccc-mcp never stores their credentials. If this computer has no browser of its own, open any link that shows up below on another device and finish signing in there.",
+          `<div id="provider-login-codex"><span class="spinner small"></span> ${esc(UI.translate("Checking…"))}</div><div id="provider-login-claude"><span class="spinner small"></span> ${esc(UI.translate("Checking…"))}</div>`)}
       </div>
     `, { narrow: true, contentClass: "settings-wide" });
     api("/connect/providers").then((r) => {
       if (stale(gen)) return;
-      const el = document.getElementById("provider-status");
-      if (el) el.innerHTML = providerRow("codex", r.providers.codex) + providerRow("claude", r.providers.claude);
+      providerInfoCache = r.providers || {};
+      renderProviderLogin(gen, "codex", "Codex");
+      renderProviderLogin(gen, "claude", "Claude Code");
     }).catch(() => {
-      const el = document.getElementById("provider-status");
-      if (el) el.innerHTML = `<div class="kv-row"><span class="k muted">${esc(UI.translate("Could not check native CLI login status."))}</span></div>`;
+      for (const provider of ["codex", "claude"]) {
+        const el = document.getElementById(`provider-login-${provider}`);
+        if (el) el.innerHTML = `<div class="kv-row"><span class="k muted">${esc(UI.translate("Could not check native CLI login status."))}</span></div>`;
+      }
     });
     if (live) {
       const renderLog = (lines) => {
