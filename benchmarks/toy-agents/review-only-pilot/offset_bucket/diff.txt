@@ -1,0 +1,15 @@
+diff --git a/mod.py b/mod.py
+new file mode 100644
+index 0000000..882c685
+--- /dev/null
++++ b/mod.py
+@@ -0,0 +1,9 @@
++def bucket_for_offset(offset, width):
++    if offset < 0 or width <= 0:
++        raise ValueError('offset and width must be valid')
++    bucket = 0
++    boundary = width
++    while offset > boundary:
++        bucket += 1
++        boundary += width
++    return bucket

@@ -1,0 +1,8 @@
+$ python3 benchmarks/toy-agents/run.py run --out /tmp/acqe-smoke --arms b_retry clamp
+
+quota before: [{"window_mins": 300, "used_percent": 0}, {"window_mins": 10080, "used_percent": 39}]
+run_id: f01211211971
+clamp b_retry resolved tokens 66659 22s
+quota after: [{"window_mins": 300, "used_percent": 0}, {"window_mins": 10080, "used_percent": 39}]
+
+exit code: 0

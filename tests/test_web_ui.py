@@ -906,6 +906,54 @@ def test_mcp_ui_rejects_unlisted_or_remote_server_and_requires_token(tmp_path, c
 TUNNEL = "tunnel_" + "c" * 32
 
 
+def test_onboarding_status_without_project_reports_environment_and_tunnel(client):
+    resp = client.get("/api/onboarding/status")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["environment"]["python"]["available"] is True
+    assert body["environment"]["git"]["available"] is True
+    assert body["tunnel"]["state"] == "disconnected"
+    assert body["project"] is None
+    # Environment and tunnel are both fine on a dev/CI box but the tunnel is not
+    # connected yet, so that is the next thing to fix.
+    assert body["next_action"] == {"key": "connect_tunnel"}
+
+
+def test_onboarding_status_reports_unauthorized_unconfigured_project(tmp_path, client):
+    repo = mkrepo(tmp_path, "fresh")
+    assert client.post("/api/projects/add", json={"path": str(repo), "id": "fresh"}).status_code == 200
+    client.app.state.connection_manager.state = "connected"
+
+    body = client.get("/api/onboarding/status", params={"project_id": "fresh"}).json()
+    assert body["project"]["authorized"] is False
+    assert body["project"]["access_mode"] == "read-only"
+    assert body["project"]["test_command_configured"] is False
+    assert body["next_action"] == {"key": "authorize_project"}
+
+
+def test_onboarding_status_next_action_reaches_all_set(tmp_path, client):
+    repo = mkrepo(tmp_path, "ready")
+    assert client.post("/api/projects/add", json={"path": str(repo), "id": "ready"}).status_code == 200
+    bridge = client.app.state.bridge
+    bridge.authorize_project_web("ready", "ready")
+    bridge.configure_profile("ready", "chatgpt-only")
+    client.app.state.connection_manager.state = "connected"
+
+    body = client.get("/api/onboarding/status", params={"project_id": "ready"}).json()
+    assert body["project"]["authorized"] is True
+    assert body["project"]["profile"] == "chatgpt-only"
+    assert body["next_action"] == {"key": "all_set"}
+
+    bridge.configure_test_command("ready", ["pytest", "-q"])
+    body = client.get("/api/onboarding/status", params={"project_id": "ready"}).json()
+    assert body["project"]["test_command_configured"] is True
+
+
+def test_onboarding_status_is_token_gated(tmp_path):
+    app = create_app(tmp_path / "home", token=TOKEN)
+    assert TestClient(app).get("/api/onboarding/status").status_code == 401
+
+
 def test_connect_status_reports_disconnected_by_default(tmp_path, client):
     resp = client.get("/api/connect/status")
     assert resp.status_code == 200

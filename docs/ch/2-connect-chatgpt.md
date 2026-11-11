@@ -2,6 +2,8 @@
 
 文件核對日期：2026-10-17。官方介面及工作區政策可能改變，以下以連結文件與實際帳戶介面為準。本次交付只完成本機 MCP 與驗證，沒有建立雲端資源或使用帳戶登入。
 
+**模型 API 金鑰 vs. Tunnel runtime 金鑰：**`chatgpt-only` 完全不需要申請按 token 計費的 OpenAI *模型* API 金鑰——它直接使用你現有的 ChatGPT 方案執行，不必另外設定計費。這裡唯一需要的是 Tunnel 的 **runtime API key**，作用只是讓 Tunnel 把 MCP 呼叫轉送到你的本機伺服器；它不是模型金鑰，ccc-mcp 也不會拿它計算 token 費用。
+
 ## Git Bash 快速連線
 
 `ccc-mcp connect` 第一次執行時會自動從官方 release 下載 `tunnel-client`、核對 SHA256，安裝到 `~/.ccc-mcp/tools/tunnel-client/`，不需要事先手動安裝。

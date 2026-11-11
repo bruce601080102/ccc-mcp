@@ -1,6 +1,33 @@
-# 1. 安裝與登入真實 Agent
+# 1. 安裝與登入
 
-下列為預設的 Codex SA／Claude SD/RD 組合。角色現在可互換，或全部交給 ChatGPT；模型、思考等級、用量與路徑請看 [設定指南](5-configuration.md)。只用 ChatGPT 時不需要安裝本機模型 CLI。
+ccc-mcp 有兩條設定路線，**大多數人只需要路線 A**。
+
+## 路線 A（主要）：ChatGPT-only — 不需要安裝 Codex 或 Claude Code
+
+只需要 Git 與 Python 3.11 以上；ChatGPT-only 另外需要一個 OpenAI Platform Tunnel，見[下一步](2-connect-chatgpt.md)。
+
+```bash
+pip install ccc-mcp
+ccc-mcp ui
+```
+
+接著在介面裡：
+
+1. 建立或加入專案，授權該專案寫入。
+2. 連接 ChatGPT（見[下一步](2-connect-chatgpt.md)）：在控制台輸入 Tunnel ID 與 runtime API key。
+3. 在設定頁選擇 `chatgpt-only` profile。
+
+這條路線**不需要**執行 `ccc-mcp setup`，也不需要任何 Codex 或 Claude Code 帳號。
+
+繼續閱讀[連接 ChatGPT](2-connect-chatgpt.md)。
+
+---
+
+## 路線 B（進階）：Codex／Claude Code，選用
+
+> 只有想把部分角色交給 Codex 或 Claude Code CLI（而不是 ChatGPT）執行時才需要讀這一節；`chatgpt-only` 完全不需要它。
+
+下列為這條路線預設的 Codex SA／Claude SD/RD 組合。角色現在可互換，或全部交給 ChatGPT；模型、思考等級、用量與路徑請看 [設定指南](5-configuration.md)。
 
 兩個角色透過 ccc-mcp 的報告與核准方案交接。ChatGPT PM 依進度決定每次派工，不依賴 Agent 彼此的聊天紀錄。
 
@@ -13,7 +40,7 @@ ChatGPT PM → Codex SA → SA-REPORT.md
           → PM 檢查、需要時交 Codex Review
 ```
 
-## 1. 安裝與登入
+### 1. 安裝與登入
 
 先從 PyPI 安裝 ccc-mcp；接著把安裝缺少的 CLI、引導登入交給 `ccc-mcp setup`：
 
@@ -80,7 +107,7 @@ winget.exe install --id Anthropic.ClaudeCode --exact --source winget
 
 若同時啟用了 Conda，npm 產生的 Git Bash `claude` shell shim 可能誤用 Anaconda 的 `cygpath`，形成 `anaconda3/Library/c/Users/...` 之類的錯誤路徑。`ccc-mcp setup claude` 會優先解析 npm 套件內真正的 `claude.exe`，繞過該 shim；重新執行一次即可，不必重裝套件。
 
-## 2. 在 Git Bash 重啟 Tunnel
+### 2. 在 Git Bash 重啟 Tunnel
 
 先在原本連線的終端按 Ctrl+C。接著於專案根目錄執行：
 
@@ -102,7 +129,7 @@ Windows 的 Codex Adapter 會明確傳入 `-c windows.sandbox="elevated"`，同�
 
 Windows Git 的 LF/CRLF 自動轉換不應被誤判為註解修改。Worker 將僅換行不同的 UTF-8 文字檔列在 `line_ending_only_files`，其餘實質變更仍照原本規則檢查；二進位或無法解碼為 UTF-8 的內容不做這項放寬。
 
-## 3. 準備被開發專案的 Git 基準
+### 3. 準備被開發專案的 Git 基準
 
 Codex 的唯讀 SA/Review 支援尚未建立 Git 的已註冊專案：Adapter 使用 `--skip-git-repo-check`，並保留 `--sandbox read-only` 與 `-a never`。此選項依 [OpenAI 官方 CLI 文件](https://learn.chatgpt.com/docs/cli/reference) 允許非 Git 目錄；不解除唯讀限制。SD/RD 的 Worktree 仍需要以下 Git 基準。
 
@@ -110,7 +137,7 @@ Codex 的唯讀 SA/Review 支援尚未建立 Git 的已註冊專案：Adapter �
 
 在 ccc-mcp 本專案第一次建立 Git 基準，可先 `git init`、以 `git add` 加入你已審閱的原始碼，再 `git commit`。若要開發另一個已有 Git 的專案，改用 `ccc-mcp project add 路徑 --id 專案ID` 註冊該專案。
 
-## 4. 若尚未執行 `project authorize`（逐步人工核准模式）
+### 4. 若尚未執行 `project authorize`（逐步人工核准模式）
 
 **先確認你要走哪條路**：[建立第一個專案](3-first-project.md)是預設、建議的路徑——執行一次 `project authorize` 之後，PM 會自動派工、整理 Context、完成任務，不需要你每輪手動建立任務、手動核准計畫。**下面這一節是另一條路**：專案還沒執行 `project authorize`（停留在唯讀模式）時，每個計畫都需要你在本機逐次核准，流程如下。兩條路都是真的在跑 Codex／Claude，差別只在要不要逐次核准。
 
@@ -142,13 +169,13 @@ SA 完成後，PM 用 propose_plan 提出具體方案，request_approval 建立 
 
 目前的實作使用獨立 CLI 程序。結果存於 ccc-mcp，可由網頁工具或 CLI 查詢；未與目前 VS Code Codex 對話視窗同步。
 
-## 操作與核准規則（逐步人工核准模式）
+### 操作與核准規則（逐步人工核准模式）
 
 真實 SD/RD 派工前必須有本機人工核准。相同計畫與 Context Version 的有效核准可供重試使用，不需要每次派工重複核准；計畫內容、計畫版本或 Context Version 改變時，原核准不再適用。已執行 `project authorize` 的專案不受本節限制——持續授權本身就是核准，見 README。
 
 `bootstrap_project` 用來恢復專案，不是必須逐字寫在每則聊天訊息中的指令，也不是 dispatch 的唯一前置讀取方式。PM 必須取得正確專案與目前 Context Version；新對話或切換專案時適合先 bootstrap。使用者可以直接說「請繼續 hello-world 已核准的任務，完成後回報」，讓 PM 選擇適當工具。
 
-## 機械可驗證的整合驗收
+### 機械可驗證的整合驗收
 
 不要只憑模型聊天回覆判定「整合測試通過」。本機已安裝並登入 Codex 與 Claude CLI 時，可直接跑這支腳本，它會真的派 Codex SA、Claude SD/RD、Codex REVIEW，並讓主機實際執行一次設定的測試命令，全程只依賴後端狀態（`get_task_status`／資料庫紀錄）判定是否完成，不採信任何 Agent 自己宣稱的文字：
 

@@ -33,6 +33,7 @@ from .. import __version__
 from ..adapters import mcp_servers as mcp_registry
 from ..adapters.agent_setup import LOGIN_ARGS, ensure_installed, uninstall_provider
 from ..adapters.agents.base import native_executable
+from ..adapters.environment import git_check, python_version
 from ..adapters.tunnel_client import (
     connection_profiles,
     forget_connection_profile,
@@ -1128,6 +1129,62 @@ async def session_info(request: Request):
     return JSONResponse({"home": str(bridge.home), "version": __version__})
 
 
+# --- Onboarding (first-run status) ----------------------------------------------
+
+
+def _next_onboarding_action(environment, tunnel, project):
+    """Priority-ordered "what to do next" for the Get started page — a pure
+    read of facts already exposed by `doctor`/`provider_overview`/`connect_status`,
+    not a second, persisted source of setup state."""
+    if not environment["python"]["available"] or not environment["git"]["available"]:
+        return {"key": "install_environment"}
+    if tunnel["state"] != "connected":
+        return {"key": "connect_tunnel"}
+    if project is None:
+        return {"key": "add_project"}
+    if not project["authorized"]:
+        return {"key": "authorize_project"}
+    if project["profile"] != "chatgpt-only":
+        return {"key": "set_chatgpt_only_profile"}
+    return {"key": "all_set"}
+
+
+@endpoint
+async def onboarding_status(request: Request):
+    """Aggregates existing status sources (environment check, Tunnel connection,
+    per-project profile/authorization/test-command) into one "what's left before
+    your first ChatGPT task" view, instead of adding a second place that tracks
+    setup progress."""
+    bridge = bridge_of(request)
+    manager: ConnectionManager = request.app.state.connection_manager
+    tunnel_installed = await run(lambda: tunnel_client_path(bridge.home).is_file())
+    environment = {
+        "python": {"available": True, "version": python_version()},
+        "git": await run(git_check),
+    }
+    tunnel = {**manager.status(), "tunnel_client_installed": tunnel_installed}
+
+    project = None
+    project_id = request.query_params.get("project_id")
+    if project_id:
+        overview = await run(bridge.provider_overview, project_id)
+        project = {
+            "profile": overview["profile"],
+            "authorized": overview["read_only_status"]["project_access"]["mode"] == "read-write",
+            "access_mode": overview["read_only_status"]["project_access"]["mode"],
+            "test_command_configured": bool(overview["editable"]["test_command"]),
+        }
+
+    return JSONResponse(
+        {
+            "environment": environment,
+            "tunnel": tunnel,
+            "project": project,
+            "next_action": _next_onboarding_action(environment, tunnel, project),
+        }
+    )
+
+
 # --- Connect (ChatGPT Tunnel) ----------------------------------------------------
 
 
@@ -1305,6 +1362,7 @@ async def connect_save(request: Request):
 ROUTES = [
     Route("/api/session", session_info),
     Route("/api/docs/{language}/{slug}", documentation, methods=["GET"]),
+    Route("/api/onboarding/status", onboarding_status, methods=["GET"]),
     Route("/api/connect/status", connect_status, methods=["GET"]),
     Route("/api/connect/providers", connect_providers, methods=["GET"]),
     Route("/api/connect/providers/{provider}/install", provider_install, methods=["POST"]),

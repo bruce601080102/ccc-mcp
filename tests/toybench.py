@@ -26,6 +26,8 @@ TASKS = {
         visible="from mod import clamp\n\n\ndef test_low():\n    assert clamp(-3, 0, 10) == 0\n\n\ndef test_inside():\n    assert clamp(4, 0, 10) == 4\n",
         hidden="from mod import clamp\n\n\ndef test_hidden():\n    assert clamp(15, 0, 10) == 10\n    assert clamp(5, -10, -1) == -1\n",
         own_good="from mod import clamp\n\n\ndef test_upper():\n    assert clamp(15, 0, 10) == 10\n",
+        confirmation_witness="clamp(15, 0, 10)",
+        confirmation_claim_terms=("upper", "hi", "above", "maximum"),
         own_partial="from mod import clamp\n\n\ndef test_upper():\n    assert clamp(15, 0, 10) == 10\n",
     ),
     "slugify": dict(
@@ -36,6 +38,8 @@ TASKS = {
         visible='from mod import slugify\n\n\ndef test_basic():\n    assert slugify("Hello World") == "hello-world"\n',
         hidden='from mod import slugify\n\n\ndef test_hidden():\n    assert slugify("a  b") == "a-b"\n    assert slugify(" a b ") == "a-b"\n',
         own_good='from mod import slugify\n\n\ndef test_spaces():\n    assert slugify("a  b") == "a-b"\n',
+        confirmation_witness='slugify("a  b")',
+        confirmation_claim_terms=("space", "hyphen", "word"),
         own_partial='from mod import slugify\n\n\ndef test_two_words():\n    assert slugify("A B") == "a-b"\n',
     ),
     "average": dict(
@@ -46,6 +50,8 @@ TASKS = {
         visible="from mod import average\n\n\ndef test_basic():\n    assert average([1, 2, 3]) == 2\n",
         hidden="from mod import average\n\n\ndef test_hidden():\n    assert average([]) is None\n",
         own_good="from mod import average\n\n\ndef test_empty():\n    assert average([]) is None\n",
+        confirmation_witness="average([])",
+        confirmation_claim_terms=("empty", "zero"),
         own_partial="from mod import average\n\n\ndef test_empty():\n    assert average([]) == 0\n",
     ),
     "first_word": dict(
@@ -56,6 +62,8 @@ TASKS = {
         visible='from mod import first_word\n\n\ndef test_basic():\n    assert first_word("hi there") == "hi"\n',
         hidden='from mod import first_word\n\n\ndef test_hidden():\n    assert first_word("") == ""\n    assert first_word("  hi there") == "hi"\n',
         own_good='from mod import first_word\n\n\ndef test_leading_space():\n    assert first_word("  hi") == "hi"\n',
+        confirmation_witness='first_word("  hi")',
+        confirmation_claim_terms=("leading", "whitespace", "space"),
         own_partial='from mod import first_word\n\n\ndef test_empty():\n    assert first_word("") == ""\n',
     ),
     "parse_bool": dict(
@@ -66,6 +74,8 @@ TASKS = {
         visible='from mod import parse_bool\n\n\ndef test_basic():\n    assert parse_bool("true") is True\n    assert parse_bool("false") is False\n',
         hidden='from mod import parse_bool\n\n\ndef test_hidden():\n    assert parse_bool(" Yes ") is True\n    assert parse_bool("no") is False\n',
         own_good='from mod import parse_bool\n\n\ndef test_one():\n    assert parse_bool("1") is True\n',
+        confirmation_witness='parse_bool("1")',
+        confirmation_claim_terms=("1", "one", "truth"),
         own_partial='from mod import parse_bool\n\n\ndef test_upper():\n    assert parse_bool("TRUE") is True\n',
     ),
     "dedupe": dict(
@@ -76,7 +86,43 @@ TASKS = {
         visible="from mod import dedupe\n\n\ndef test_basic():\n    assert dedupe([1, 1]) == [1]\n",
         hidden="from mod import dedupe\n\n\ndef test_hidden():\n    assert dedupe([3, 1, 3, 2, 1]) == [3, 1, 2]\n",
         own_good="from mod import dedupe\n\n\ndef test_order():\n    assert dedupe([3, 1, 3]) == [3, 1]\n",
+        confirmation_witness="dedupe([3, 1, 3])",
+        confirmation_claim_terms=("order", "position", "first"),
         own_partial="from mod import dedupe\n\n\ndef test_sorted_equal():\n    assert sorted(dedupe([2, 2, 1])) == [1, 2]\n",
+    ),
+}
+
+# Review-only control: caching by path relies on callers not changing a file between
+# reads. The issue states that current callers satisfy this assumption. A reviewer may
+# cite the risk under future reuse, but the fixture does not contain a proven bug.
+# Keeping it outside TASKS preserves the run command's existing default case set.
+REVIEW_ONLY_TASKS = {
+    "architecture_risk": dict(
+        buggy=(
+            "import json\n\n_cache = {}\n\n"
+            "def load_config(path):\n"
+            "    if path not in _cache:\n"
+            "        with open(path, encoding='utf-8') as stream:\n"
+            "            _cache[path] = json.load(stream)\n"
+            "    return dict(_cache[path])\n"
+        ),
+        visible=(
+            "import json\nfrom mod import load_config\n\n"
+            "def test_repeated_read(tmp_path):\n"
+            "    path = tmp_path / 'config.json'\n"
+            "    path.write_text(json.dumps({'mode': 'safe'}))\n"
+            "    assert load_config(str(path)) == {'mode': 'safe'}\n"
+            "    assert load_config(str(path)) == {'mode': 'safe'}\n"
+        ),
+        hidden=(
+            "import json\nfrom mod import load_config\n\n"
+            "def test_returns_independent_values(tmp_path):\n"
+            "    path = tmp_path / 'private.json'\n"
+            "    path.write_text(json.dumps({'mode': 'safe'}))\n"
+            "    first = load_config(str(path))\n"
+            "    first['mode'] = 'changed'\n"
+            "    assert load_config(str(path)) == {'mode': 'safe'}\n"
+        ),
     ),
 }
 

@@ -1,0 +1,21 @@
+=== B1 (general_review_prompt) (benchmarks/toy-agents/review-only-pilot/offset_bucket/b1_response.txt) ===
+  [major] confirmed  Exact bucket boundaries are assigned to the previous bucket instead of the next bucket under standard zero-based, half-open bucket semantics. For example, `bucket_for_offset(10, 10)` returns `0` instead of `1`, and `bucket_for_offset(20, 10)` returns `1` instead of `2`.
+      evidence: The loop uses `while offset > boundary:` rather than `while offset >= boundary:`, so equality never advances the bucket.
+      host_confirmation: {'probe': 'own_good', 'witness_matched': True}
+  [major] supported  Large offsets with small widths cause excessive execution time because bucket calculation requires a linear number of iterations rather than constant time. For example, `bucket_for_offset(1_000_000_000, 1)` requires approximately one billion loop iterations.
+      evidence: The implementation initializes `bucket = 0` and `boundary = width`, then repeatedly executes `bucket += 1` and `boundary += width` until the boundary reaches the offset.
+
+=== B2 (contextual_review_prompt) (benchmarks/toy-agents/review-only-pilot/offset_bucket/b2_response.txt) ===
+  [major] supported  Large offsets relative to width can cause excessive CPU usage or effectively stall the caller because bucket calculation uses an unbounded linear loop rather than constant-time arithmetic.
+      evidence: `while offset > boundary` increments `boundary` by `width` each iteration, giving O(offset / width) time complexity. For `bucket_for_offset(10**12, 1)`, approximately one trillion iterations are required, despite the visible tests passing.
+  [major] supported  Non-finite floating-point offsets can cause non-termination, violating the function's expected completion lifecycle.
+      evidence: `bucket_for_offset(float('inf'), 1)` passes the input validation (`offset < 0` is false), but `while offset > boundary` cannot terminate because the infinite offset always exceeds every finite boundary; once floating-point precision prevents `boundary += width` from advancing, the loop remains permanently stuck.
+  [assumption] confirmed  Exact bucket boundaries may be assigned to the wrong bucket if the interface expects conventional half-open intervals `[n * width, (n + 1) * width)`.
+      evidence: `while offset > boundary` uses `>` instead of `>=`, so `bucket_for_offset(10, 10)` returns `0` and `bucket_for_offset(20, 10)` returns `1`, rather than `1` and `2`. The visible-test result (`2 passed`) does not establish the intended boundary convention.
+      host_confirmation: {'probe': 'own_good', 'witness_matched': True}
+
+=== Summary ===
+B1 findings: 2 | confirmed: 1
+B2 findings: 3 | confirmed: 1
+
+Reminder: this scores one model response pair against one known case. It is a review-only Finding-quality pilot, not evidence about the full multi-role ccc-mcp workflow (ACQE-GAP-ANALYSIS.md §20.6).

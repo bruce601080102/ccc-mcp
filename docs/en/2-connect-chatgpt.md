@@ -2,6 +2,8 @@
 
 ccc-mcp runs locally. A Secure MCP Tunnel lets the ChatGPT web app call that local server without exposing an unauthenticated endpoint.
 
+**Model API key vs. Tunnel runtime key:** `chatgpt-only` never uses a metered OpenAI *model* API key — it runs on your existing ChatGPT plan, with no separate per-token billing to set up. The only key this page asks for is the Tunnel's **runtime API key**, which only lets the Tunnel relay MCP calls to your local server; it is not a model key, and ccc-mcp never bills tokens against it.
+
 ## Connect
 
 1. Create a Tunnel in the OpenAI Platform and copy its `tunnel_...` ID and runtime API key.

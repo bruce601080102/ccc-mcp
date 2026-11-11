@@ -3,7 +3,6 @@ import json
 import os
 import re
 import shlex
-import shutil
 import sqlite3
 import subprocess
 import sys
@@ -15,6 +14,7 @@ from typer.core import TyperGroup
 
 from ..adapters.agent_setup import setup_provider, uninstall_provider
 from ..adapters.agents.base import native_executable
+from ..adapters.environment import git_check, python_version
 from ..adapters.skills import discover_skills, install_skill, list_skills, remove_skill
 from ..adapters.tunnel_client import (
     ensure_tunnel_client,
@@ -1994,16 +1994,31 @@ def doctor(ctx: typer.Context):
     import importlib.metadata
 
     checks = {
-        "python": sys.version.split()[0],
+        "python": python_version(),
         "sqlite": sqlite3.sqlite_version,
         "mcp": importlib.metadata.version("mcp"),
         "registered_projects": len(bridge(ctx).list_projects()),
     }
-    for executable in ["git", "codex", "claude"]:
+    git_result = git_check()
+    if git_result["available"]:
+        checks["git"] = {
+            "available": True,
+            "version": redact(git_result.get("version", "")),
+            "authentication": "not checked",
+        }
+    elif "error" in git_result:
+        checks["git"] = {"available": False, "error": git_result["error"]}
+    else:
+        checks["git"] = {
+            "available": False,
+            "message": t(
+                "未安裝；Fake 與 Context 功能仍可使用",
+                "Not installed; Fake adapter and Context features still work",
+            ),
+        }
+    for executable in ["codex", "claude"]:
         try:
-            path = (
-                shutil.which(executable) if executable == "git" else native_executable(executable)
-            )
+            path = native_executable(executable)
         except BridgeError:
             path = None
         if not path:

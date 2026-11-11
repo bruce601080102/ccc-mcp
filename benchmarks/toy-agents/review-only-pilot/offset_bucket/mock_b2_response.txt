@@ -1,0 +1,2 @@
+Using an Architecture lens on the interface:
+[minor] the function raises ValueError with a generic message instead of naming which argument was invalid evidence: raise ValueError('offset and width must be valid') does not say which of offset/width failed

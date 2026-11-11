@@ -219,6 +219,8 @@
     if (parts[0] === "p" && parts[1]) {
       return { project: decodeURIComponent(parts[1]), view: parts[2] || "overview", sub: parts[3] ? decodeURIComponent(parts[3]) : undefined };
     }
+    if (parts[0] === "start") return { view: "start", sub: parts[1] ? decodeURIComponent(parts[1]) : undefined };
+    if (parts[0] === "demo") return { view: "demo" };
     if (parts[0] === "connect") return { view: "connect" };
     if (parts[0] === "global-skills") return { view: "global-skills" };
     if (parts[0] === "dashboard") return { view: "dashboard" };
@@ -242,6 +244,7 @@
     back: `<svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M13 8H3m3.5-3.5L3 8l3.5 3.5"/></svg>`,
     sun: `<svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="3"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.5 3.5l1.4 1.4M11.1 11.1l1.4 1.4M3.5 12.5l1.4-1.4M11.1 4.9l1.4-1.4"/></svg>`,
     moon: `<svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M13.5 9.5A5.8 5.8 0 0 1 6.5 2.5 5.8 5.8 0 1 0 13.5 9.5Z"/></svg>`,
+    start: `<svg class="icon" viewBox="0 0 16 16"><path d="M8 1.5c2 2 3 4.3 3 6.5a3 3 0 1 1-6 0c0-2.2 1-4.5 3-6.5Z"/><path d="M5.3 11.3 4 14.5l3-1 1 1 1-1 3 1-1.3-3.2"/></svg>`,
   };
 
   function currentTheme() {
@@ -324,6 +327,7 @@
       <button type="button" class="skip-link" id="skip-link">Skip to content</button>
       <nav class="sidebar" aria-label="Main">
         <div class="brand"><span class="mark">C</span><span>ccc-mcp<small>CONTROL CENTER <span id="app-version" data-no-i18n>${appVersion ? `· v${esc(appVersion)}` : ""}</span></small></span></div>
+        <a class="nav-item ${currentRoute.view === "start" ? "active" : ""}" href="#/start">${ICON.start}Get started</a>
         <a class="nav-item ${currentRoute.view === "projects" ? "active" : ""}" href="#/">${ICON.projects}All projects</a>
         <a class="nav-item ${currentRoute.view === "dashboard" ? "active" : ""}" href="#/dashboard">${ICON.dashboard}Command center</a>
         <a class="nav-item ${currentRoute.view === "global-skills" ? "active" : ""}" href="#/global-skills">${ICON.skills}Global Skills</a>
@@ -765,7 +769,7 @@
         <div class="kpi"><div class="v num">${writable}</div><div class="l">${esc(UI.translate("Read-write"))}</div></div>
         <div class="kpi"><div class="v num">${projects.length - writable}</div><div class="l">${esc(UI.translate("Read-only"))}</div></div>
       </div>` : ""}
-      ${projects.length || groups.length ? `<div class="settings-stack">${groups.map(section).join("") + section(null, groups.length)}</div>` : `<div class="empty">No projects yet. Add an existing folder or create a new one.</div>`}
+      ${projects.length || groups.length ? `<div class="settings-stack">${groups.map(section).join("") + section(null, groups.length)}</div>` : `<div class="empty">No projects yet. Add an existing folder or create a new one.<br><a href="#/start">${esc(UI.translate("See the getting-started guide first"))}</a></div>`}
     `;
     layout(isDashboard ? dashboardHtml : projectsHtml);
     if (isDashboard) {
@@ -976,7 +980,7 @@
   function openCreateProjectModal() {
     showModal({
       title: "Create a new project",
-      body: "Creates a new directory with a Git baseline. It never overwrites an existing folder.",
+      body: "Creates a new directory with a Git baseline. It never overwrites an existing folder. Starts on the chatgpt-only profile — no Codex or Claude Code install needed; change this later in Settings if you want.",
       fields: [
         { label: "Project ID", placeholder: "hello-demo" },
         { label: "Path (optional)", placeholder: "leave empty to use the default projects directory" },
@@ -985,6 +989,10 @@
       onSubmit: async ([id, path]) => {
         if (!id) throw new Error("Project ID is required.");
         const created = await api("/projects/create", { method: "POST", body: { id, path: path || undefined } });
+        // A new project starts on the chatgpt-only path by default (the documented
+        // quickstart route): no separate trip to Settings, no Codex/Claude required.
+        try { await api(`/projects/${encodeURIComponent(created.id)}/config/profile`, { method: "POST", body: { profile: "chatgpt-only" } }); }
+        catch (_) { /* best-effort; the project still exists and can be configured from Settings */ }
         toast(`Created ${created.id}`);
         navTo(`/p/${encodeURIComponent(created.id)}/overview`);
       },
@@ -1258,6 +1266,9 @@
     inbox: '<path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.5 5.1 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.5-6.9A2 2 0 0 0 16.7 4H7.3a2 2 0 0 0-1.8 1.1z"/>',
     link: '<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/>',
     key: '<circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 3 3L22 7l-3-3"/>',
+    xcircle: '<circle cx="12" cy="12" r="10"/><path d="m15 9-6 6M9 9l6 6"/>',
+    neutral: '<circle cx="12" cy="12" r="10"/><path d="M8 12h8"/>',
+    flag: '<path d="M4 22V4"/><path d="M4 4h14l-3 4 3 4H4"/>',
     download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/>',
   };
   const pageIcon = (name) => `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${PAGE_ICONS[name]}</svg>`;
@@ -1856,7 +1867,7 @@
       next: gateCard || (handoff.next_action && !terminal ? `<div class="task-next ${control.paused ? "paused" : ""}"><strong>${esc(UI.translate(control.paused ? "Paused: waiting for you" : "Next step"))}</strong><p>${esc(handoff.next_action)}</p>${control.paused && canMessage ? `<button class="btn small primary" type="button" id="task-resume-inline">${esc(UI.translate("Continue work"))}</button>` : ""}</div>` : ""),
       results: `${teamCard}${deliverableCard}${touchesCode ? `<section class="task-result-grid">
       <div class="task-result-card"><h2>${esc(UI.translate("Changed files and diff"))}</h2>${latestDiff ? `<pre class="mono task-diff">${esc(latestDiff.content || "")}</pre>` : `<p class="muted">${esc(UI.translate("No saved diff yet."))}</p>`}</div>
-      <div class="task-result-card"><h2>${esc(UI.translate("Host test evidence"))}</h2>${verificationLine(brief.tests)}${latestTest ? `<details><summary>${esc(UI.translate("View saved test result"))}</summary><pre class="mono">${esc(latestTest.content)}</pre></details>` : `<p class="muted">${esc(UI.translate("No host test evidence yet."))}</p>`}</div>
+      <div class="task-result-card"><h2>${esc(UI.translate("Host test evidence"))}</h2><p class="muted">${esc(UI.translate("Run by the host on this machine — never taken from the agent's own word."))}</p>${verificationLine(brief.tests)}${latestTest ? `<details><summary>${esc(UI.translate("View saved test result"))}</summary><pre class="mono">${esc(latestTest.content)}</pre></details>` : `<p class="muted">${esc(UI.translate("No host test evidence yet."))}</p>`}</div>
     </section><section class="task-result-card evaluation-section"><div class="evaluation-section-head"><div><h2>${esc(UI.translate("Evaluation and evidence"))}</h2><p>${esc(UI.translate("Scores are separate from task completion."))}</p></div>${settings.editable?.evaluation_engine?.enabled ? `<button class="btn small" id="task-evaluate">${esc(UI.translate("Evaluate latest executions"))}</button>` : `<button class="btn small" id="task-enable-evaluation">${esc(UI.translate("Enable evaluation"))}</button>`}</div>${evaluations.length ? `<div class="evaluation-list">${evaluations.slice().reverse().map(evaluationReport).join("")}</div>` : `<p class="muted">${esc(UI.translate("No evaluations for this task yet."))}</p>`}</section>` : ""}`,
       technical: `<div class="task-technical"><section class="task-result-card"><h2>${esc(UI.translate("Execution history"))}</h2><div class="task-table-scroll"><table><thead><tr><th>Execution</th><th>Role</th><th>Status</th><th>Error</th></tr></thead><tbody>${(status.executions || []).map((e) => `<tr><td class="mono">${esc(e.id)}</td><td>${esc(e.role)}</td><td>${esc(UI.translate(e.status))}</td><td>${esc(e.error || "")}</td></tr>`).join("")}</tbody></table></div></section>
       <section class="task-result-card"><h2>${esc(UI.translate("Original reports"))}</h2>${reportRows.length ? reportRows.map((a) => `<details><summary>${esc(a.path.split("/").at(-1))} · ${esc(a.created)}</summary><pre class="mono">${esc(a.content)}</pre></details>`).join("") : `<p class="muted">${esc(UI.translate("No original reports yet."))}</p>`}</section>
@@ -1924,9 +1935,9 @@
     const gen = renderGen;
     const route = parseRoute();
     const id = route.project, taskId = route.sub;
-    if (taskDetailRoute !== `${id}/${taskId}`) {
+    const isNewTaskRoute = taskDetailRoute !== `${id}/${taskId}`;
+    if (isNewTaskRoute) {
       taskDetailRoute = `${id}/${taskId}`;
-      taskDetailPane = "conversation";
       taskDetailDraft = "";
     }
     const oldInput = document.getElementById("task-message");
@@ -1944,6 +1955,9 @@
       return;
     }
     let data = loaded.data;
+    // Opening a finished task fresh: land on Results (the host test evidence) first,
+    // not the conversation transcript — that's what "did it work" is answered by.
+    if (isNewTaskRoute) taskDetailPane = data.status.state === "COMPLETED" ? "results" : "conversation";
     let parts = buildTaskParts(id, taskId, data);
     const conversationActive = taskDetailPane === "conversation";
     layout(`<div class="task-workspace">
@@ -3534,12 +3548,258 @@
     watchForChanges(gen, () => api("/connect/status"), renderConnect);
   }
 
+  // --- Get started (first-run status) ---------------------------------------------
+
+  const ONBOARDING_NEXT_ACTION = {
+    install_environment: { label: "Install Git and Python 3.11+, then reload this page.", target: null },
+    connect_tunnel: { label: "Connect ChatGPT", target: "#/connect" },
+    add_project: { label: "Add or create a project", target: "#/" },
+    authorize_project: { label: "Open the project and enable write access", target: (id) => `#/p/${encodeURIComponent(id)}/overview` },
+    set_chatgpt_only_profile: { label: "Select the chatgpt-only profile in Settings", target: (id) => `#/p/${encodeURIComponent(id)}/settings` },
+    all_set: { label: "You're set. Open ChatGPT and ask it to make a change.", target: null },
+  };
+
+  let onboardingStepCounter = 0;
+  function diagRow(state, label, detail, hint, fix, monoDetail) {
+    const icon = state === "ok" ? "decision" : state === "fail" ? "xcircle" : "neutral";
+    const numbered = state !== "neutral";
+    return `<div class="diag-row is-${state}">
+      <span class="diag-icon" aria-hidden="true">${pageIcon(icon)}</span>
+      <div class="diag-main">
+        <div class="diag-label-row">
+          ${numbered ? `<span class="diag-step-num">${esc(UI.translate("STEP"))} ${++onboardingStepCounter}</span>` : `<span class="pill neutral">${esc(UI.translate("Optional"))}</span>`}
+          <span class="diag-label">${esc(label)}</span>
+        </div>
+        ${detail ? `<div class="diag-detail${monoDetail ? " mono" : ""}">${esc(detail)}</div>` : ""}
+        ${state === "fail" && hint ? `<div class="diag-hint">${esc(hint)}</div>` : ""}
+      </div>
+      ${state !== "ok" && fix ? `<a class="btn small diag-fix" href="${fix.href}">${esc(fix.label)}</a>` : ""}
+    </div>`;
+  }
+
+  async function renderStart() {
+    const gen = renderGen;
+    layout(loadingView());
+    let projects = [];
+    try { projects = await api("/projects"); } catch (err) { projects = []; }
+    if (stale(gen)) return;
+
+    const currentRoute = parseRoute();
+    const requested = currentRoute.sub && projects.some((p) => p.id === currentRoute.sub) ? currentRoute.sub : null;
+    const selectedId = requested || projects[0]?.id || null;
+
+    let status;
+    try {
+      status = await api(selectedId ? `/onboarding/status?project_id=${encodeURIComponent(selectedId)}` : "/onboarding/status");
+    } catch (err) {
+      if (!stale(gen)) errorView(err);
+      return;
+    }
+    if (stale(gen)) return;
+
+    const env = status.environment;
+    const tunnel = status.tunnel;
+    const envOk = env.python.available && env.git.available;
+    const settingsHref = selectedId ? `#/p/${encodeURIComponent(selectedId)}/settings` : "#/";
+    const overviewHref = selectedId ? `#/p/${encodeURIComponent(selectedId)}/overview` : "#/";
+
+    onboardingStepCounter = 0;
+    const steps = [
+      diagRow(envOk ? "ok" : "fail", "Your computer is ready",
+        envOk ? `Python ${env.python.version} · Git ${env.git.version}` : "",
+        !env.python.available ? "Install Python 3.11 or later, then reload this page." : "Install Git, then reload this page.",
+        null, true),
+      diagRow(tunnel.state === "connected" ? "ok" : "fail", "ChatGPT is connected",
+        tunnel.state === "connected" ? "Tunnel connected" : "",
+        "ChatGPT talks to this computer through a Tunnel. Connect it below.",
+        { href: "#/connect", label: UI.translate("Connect") }),
+    ];
+    if (status.project) {
+      steps.push(diagRow(status.project.authorized ? "ok" : "fail", "This project can be edited",
+        status.project.authorized ? "Write access on" : "",
+        "ccc-mcp needs write access to this project before ChatGPT can change files.",
+        { href: overviewHref, label: UI.translate("Open project") }));
+      steps.push(diagRow(status.project.profile === "chatgpt-only" ? "ok" : "fail", "ChatGPT-only mode is selected",
+        status.project.profile === "chatgpt-only" ? "chatgpt-only" : status.project.profile,
+        "Select the chatgpt-only profile so no Codex/Claude install is required.",
+        { href: settingsHref, label: UI.translate("Open settings") }));
+      steps.push(diagRow("neutral", "Test command",
+        status.project.test_command_configured ? "Configured" : "Not set — ccc-mcp can still run tests automatically",
+        "", null));
+    } else {
+      steps.push(diagRow("fail", "Add or create a project", "",
+        "ChatGPT needs an authorized local folder to work on.",
+        { href: "#/", label: UI.translate("Add project") }));
+    }
+    const countable = [envOk, tunnel.state === "connected",
+      ...(status.project ? [status.project.authorized, status.project.profile === "chatgpt-only"] : [false])];
+    const readyCount = countable.filter(Boolean).length;
+    const totalCount = countable.length;
+
+    const next = ONBOARDING_NEXT_ACTION[status.next_action.key] || ONBOARDING_NEXT_ACTION.all_set;
+    const nextTarget = typeof next.target === "function" ? (selectedId ? next.target(selectedId) : "#/") : next.target;
+    const allSet = status.next_action.key === "all_set";
+
+    const projectPicker = projects.length > 1 ? `
+      <label class="onboarding-project-picker">${esc(UI.translate("Project"))}
+        <select id="onboarding-project">${projects.map((p) => `<option value="${esc(p.id)}" ${p.id === selectedId ? "selected" : ""} data-no-i18n>${esc(p.id)}</option>`).join("")}</select>
+      </label>` : "";
+
+    const heroBody = `<div class="onboarding-hero">
+      <div class="onboarding-hero-text"><strong>${esc(next.label)}</strong><span>${allSet ? esc(UI.translate("Everything below is ready.")) : esc(UI.translate("Finish this to keep moving."))}</span></div>
+      <span class="pill ${allSet ? "positive" : "accent"}">${readyCount}/${totalCount} ${esc(UI.translate("ready"))}</span>
+    </div>`;
+
+    layout(`
+      <div class="title-row"><div><h1>${esc(UI.translate("Get started"))}</h1><div class="sub">${esc(UI.translate("Let ChatGPT write and test code on your computer — with host-run test results you can check, not just its word that it works."))}</div></div></div>
+      <div class="settings-stack">
+        ${pageCard(allSet ? "decision" : "flag", "Next step", "", heroBody, "",
+          { tone: allSet ? "positive" : undefined, actions: nextTarget ? `<a class="btn small primary" href="${nextTarget}">${esc(UI.translate("Go"))}</a>` : "" })}
+        ${pageCard("list", "Setup checklist", "What's left before ChatGPT can work on an authorized project.",
+          `${projectPicker}<div class="diag-list">${steps.join("")}</div>`,
+          `<button class="btn small" id="btn-copy-diagnostics">${esc(UI.translate("Copy diagnostic info"))}</button>`)}
+        <div class="dashboard-usage-grid">
+          ${pageCard("question", "See it in action", "A read-only replay of a full send-back cycle — no setup, nothing touches a real project.",
+            `<p>${esc(UI.translate("Walk through a small real bug getting fixed, caught by a failing test, and reviewed with evidence — or watch the"))} <a href="https://github.com/bruce601080102/ccc-mcp#watch-the-demo" target="_blank" rel="noopener">${esc(UI.translate("recorded video"))}</a> ${esc(UI.translate("instead."))}</p>`,
+            "", { actions: `<a class="btn small primary" href="#/demo">${esc(UI.translate("Open the demo"))}</a>` })}
+          ${pageCard("package", "Advanced: Codex / Claude Code", "Optional. Only needed if you want to assign some roles to the native CLI instead of ChatGPT.",
+            `<p>${esc(UI.translate("chatgpt-only never needs this. Install and sign in to Codex or Claude Code from the"))} <a href="#/connect">${esc(UI.translate("Connect page"))}</a>.</p>`)}
+        </div>
+      </div>
+    `, { narrow: true });
+
+    const picker = document.getElementById("onboarding-project");
+    if (picker) picker.addEventListener("change", () => { navTo(`/start/${encodeURIComponent(picker.value)}`); });
+    document.getElementById("btn-copy-diagnostics").addEventListener("click", async () => {
+      try { await navigator.clipboard.writeText(JSON.stringify(status, null, 2)); toast("Diagnostic info copied."); }
+      catch (_) { toast("Could not copy. Select the text and copy it manually.", true); }
+    });
+  }
+
+  // --- Demo (offline replay) -------------------------------------------------------
+  //
+  // Entirely static, hand-authored sample data — illustrative of a real send-back
+  // cycle, not a captured execution. This function makes no `api()` call and touches
+  // no project, task, or agent: it only renders fixed strings defined below, reusing
+  // the same conversation/evidence renderer and CSS the real Task page uses. See
+  // tests/test_web_ui.py::test_demo_mode_page_makes_no_backend_calls for the
+  // automated guard on that boundary.
+
+  function demoFixtureEvents() {
+    return [
+      {
+        event_id: "demo-1", event_type: "task_created", role: null, execution_id: null,
+        timestamp: "2026-01-01T09:00:00Z",
+        summary: "clamp(value, lo, hi) isn't enforcing the upper bound: clamp(15, 0, 10) returns 15 instead of 10. Please fix it and add tests.",
+      },
+      {
+        event_id: "demo-2", event_type: "agent_completed", role: "SA", execution_id: "exec-sa-1",
+        timestamp: "2026-01-01T09:01:10Z",
+        summary: "Found it: clamp() in utils/clamp.py only checks the lower bound (lo), never the upper one (hi). Scope: one function, one file. Recommend adding the missing upper-bound check plus boundary tests (exactly at lo/hi, past each side, and a normal in-range value).",
+        detail: { report: { summary: "Root cause isolated to utils/clamp.py; no other callers affected.", next_action: "Hand off to the build role with the missing-upper-bound finding." } },
+      },
+      {
+        event_id: "demo-3", event_type: "agent_completed", role: "RD", execution_id: "exec-rd-1",
+        timestamp: "2026-01-01T09:04:40Z",
+        summary: "Implemented the fix: clamp() now returns min(value, lo, hi). Diff and tests are attached.",
+        detail: { report: { summary: "Rewrote clamp() to a one-line min() call.", next_action: "Run the host test suite." } },
+      },
+      {
+        event_id: "demo-4", event_type: "host_test_completed", role: null, execution_id: "exec-rd-1",
+        timestamp: "2026-01-01T09:04:55Z",
+        detail: {
+          executed_by_host: true, passed: false, no_tests_collected: false,
+          command: ["pytest", "-q", "tests/test_clamp.py"],
+          selection: { mode: "changed_test_files", paths: ["tests/test_clamp.py"] },
+          stdout: "tests/test_clamp.py::test_clamp_in_range PASSED\ntests/test_clamp.py::test_clamp_lower_bound PASSED\ntests/test_clamp.py::test_clamp_upper_bound FAILED\n\nassert 0 == 10\n 1 failed, 2 passed in 0.02s",
+        },
+      },
+      {
+        event_id: "demo-5", event_type: "agent_completed", role: "REVIEW", execution_id: "exec-review-1",
+        timestamp: "2026-01-01T09:05:30Z",
+        summary: "Blocking: min(value, lo, hi) always pulls the result toward the smallest of the three arguments, so it can never clamp upward. Evidence: the host run above — test_clamp_upper_bound asserts 0 == 10. Sending back to the build role with that failing test as the fix target.",
+        detail: { report: { summary: "min(value, lo, hi) is not a clamp; it collapses to the minimum of all three.", next_action: "Send back to the build role; fix target is test_clamp_upper_bound." }, evidence_refs: ["exec-rd-1"] },
+        evidence_refs: ["exec-rd-1"],
+      },
+      {
+        event_id: "demo-6", event_type: "agent_completed", role: "RD", execution_id: "exec-rd-2",
+        timestamp: "2026-01-01T09:07:15Z",
+        summary: "Fixed per review: clamp() now returns max(lo, min(value, hi)) — clamps to hi first, then guarantees the result never drops below lo.",
+        detail: { report: { summary: "Replaced min()-only with max(lo, min(value, hi)).", next_action: "Re-run the host test suite." } },
+      },
+      {
+        event_id: "demo-7", event_type: "host_test_completed", role: null, execution_id: "exec-rd-2",
+        timestamp: "2026-01-01T09:07:28Z",
+        detail: {
+          executed_by_host: true, passed: true, no_tests_collected: false,
+          command: ["pytest", "-q", "tests/test_clamp.py"],
+          selection: { mode: "changed_test_files", paths: ["tests/test_clamp.py"] },
+          stdout: "tests/test_clamp.py::test_clamp_in_range PASSED\ntests/test_clamp.py::test_clamp_lower_bound PASSED\ntests/test_clamp.py::test_clamp_upper_bound PASSED\n\n3 passed in 0.02s",
+        },
+      },
+      {
+        event_id: "demo-8", event_type: "agent_completed", role: "REVIEW", execution_id: "exec-review-2",
+        timestamp: "2026-01-01T09:07:50Z",
+        summary: "All three tests pass and the fix matches the finding above. Approved.",
+        detail: { report: { summary: "Verified against the host run: 3 passed.", next_action: "None — accepted." } },
+      },
+      {
+        event_id: "demo-9", event_type: "task_completed", role: null, execution_id: null,
+        timestamp: "2026-01-01T09:07:55Z",
+        summary: "This work round completed. Open the Results tab to read what each step produced.",
+      },
+    ];
+  }
+
+  const DEMO_DIFF = `--- a/utils/clamp.py
++++ b/utils/clamp.py
+@@ -1,5 +1,5 @@
+ def clamp(value, lo, hi):
+-    return min(value, lo, hi)
++    return max(lo, min(value, hi))`;
+
+  function renderDemo() {
+    const events = demoFixtureEvents();
+    const banner = `<div class="demo-banner" role="note">
+      <span><strong>${esc(UI.translate("Demo Replay"))}</strong> — ${esc(UI.translate("sample data, not a live AI session. Nothing here touches a real project."))}</span>
+      <span class="demo-banner-actions"><a class="btn small primary" href="#/start">${esc(UI.translate("Set up a real project"))} →</a></span>
+    </div>`;
+    const scenario = pageCard("question", "The scenario", "A small, reproducible bug — clamp(value, lo, hi) never enforces the upper bound.",
+      `<p>${esc(UI.translate("This replay shows one real kind of value this product adds: a review that sends work back with a specific failing test as evidence, not just an opinion — and the host actually re-running the tests before anyone calls it done."))}</p>`);
+    const conversation = `<div class="demo-conversation">${taskConversation(events, new Set())}</div>`;
+    const recap = pageCard("decision", "What happened", "",
+      `<p>${esc(UI.translate("The build role's first attempt failed a real host-run test. The reviewer cited that exact failure as evidence and sent it back. The second attempt passed, and the reviewer approved it against that passing run — not against anyone's say-so."))}</p>`);
+    const diffCard = pageCard("code", "Final diff", "", `<pre class="mono task-diff">${esc(DEMO_DIFF)}</pre>`);
+    const testCard = pageCard("test", "Host test evidence", "",
+      `<p class="muted">${esc(UI.translate("Run by the host on this machine — never taken from the agent's own word."))}</p>${verificationLine({ executed_by_host: true, passed: true })}<details><summary>${esc(UI.translate("View saved test result"))}</summary><pre class="mono">tests/test_clamp.py::test_clamp_in_range PASSED
+tests/test_clamp.py::test_clamp_lower_bound PASSED
+tests/test_clamp.py::test_clamp_upper_bound PASSED
+
+3 passed in 0.02s</pre></details>`);
+    const closing = `<div class="demo-banner" role="note"><span><strong>${esc(UI.translate("That's the whole replay."))}</strong> ${esc(UI.translate("Your own tasks look like this, built from what actually happened on your machine."))}</span><span class="demo-banner-actions"><a class="btn small primary" href="#/start">${esc(UI.translate("Set up a real project"))} →</a></span></div>`;
+    layout(`
+      ${banner}
+      <div class="title-row"><div><h1>${esc(UI.translate("Demo: a send-back cycle"))}</h1><div class="sub">${esc(UI.translate("Read-only. Scroll through the conversation, then see the final diff and test evidence below."))}</div></div></div>
+      <div class="settings-stack">
+        ${scenario}
+        <section class="task-result-card demo-scenario"><h2>${esc(UI.translate("Task meeting room"))}</h2>${conversation}</section>
+        ${recap}
+        ${diffCard}
+        ${testCard}
+      </div>
+      ${closing}
+    `, { narrow: true });
+    bindChatDetailButtons(events);
+  }
+
   function route() {
     renderGen += 1;
     captureTokenFromHash();
     const r = parseRoute();
     refreshConnectDot();
     if (r.view === "docs") return renderDocs();
+    if (r.view === "start") return renderStart();
+    if (r.view === "demo") return renderDemo();
     if (r.view === "connect") return renderConnect();
     if (r.view === "global-skills") return renderGlobalSkills();
     if (r.view === "dashboard") return renderDashboard();
