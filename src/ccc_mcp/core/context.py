@@ -15,7 +15,14 @@ from ..adapters.skills import available_skills
 from ..adapters.storage import artifact, decode, now
 from ..infra.config import metadata_name
 from ..infra.errors import BridgeError, PermissionDenied, VersionConflict
-from ..infra.security import atomic_write, canonical, digest, reject_secrets, safe_path
+from ..infra.security import (
+    atomic_write,
+    canonical,
+    digest,
+    redact,
+    reject_secrets,
+    safe_path,
+)
 from .models import PROTOCOL_VERSION, ContextPatch, ContextSnapshot, SourceRef
 from .roles import (
     AGENT_ROLES,
@@ -34,6 +41,20 @@ DOCUMENTS = {
     "state": "context/CURRENT_STATE.md",
     "constraints": "context/CONSTRAINTS.md",
     "handoff": "handoffs/SESSION-HANDOFF.md",
+}
+CONTINUATION_TARGETS = {"claude": "Claude Code", "codex": "Codex CLI", "chatgpt": "ChatGPT"}
+CONTINUATION_PLAN_EXCERPT_CHARS = 3000
+# ccc-mcp state -> (zh, en) wording for work that is still pending.
+CONTINUATION_WAITING = {
+    "AGENT_RUNNING": ("Agent 仍在執行，尚未回報結果", "An Agent is still running and has not reported yet"),
+    "CHATGPT_HANDOFF_PENDING": ("等待 ChatGPT 接手這個角色（尚未開始）", "Waiting for ChatGPT to take over this role (not started yet)"),
+    "BLOCKED": ("任務被阻擋，需先解除阻礙", "Task is blocked; the blocker must be cleared first"),
+    "PM_REFINEMENT": ("PM 需先整理 Context patch", "PM must refine the Context patch first"),
+    "PM_DECISION": ("等待 PM 決策", "Waiting for a PM decision"),
+    "USER_APPROVAL": ("等待使用者核准計畫", "Waiting for user approval of the plan"),
+    "DISPATCH_RETRY_NEEDED": ("下一個角色的派工未確認，需重新派工", "Next role dispatch was never confirmed; re-dispatch needed"),
+    "PM_CLARIFICATION_DECISION": ("等待 PM 回覆澄清問題", "Waiting for PM to answer a clarification question"),
+    "PM_FLOW_DECISION": ("等待 PM 決定流程閘門結果", "Waiting for PM to decide the workflow gate outcome"),
 }
 TASK_DOCUMENTS = [
     "REQUIREMENT.md",
@@ -1492,6 +1513,434 @@ class ContextHub:
             "language": language,
             "policy": context_policy(language),
         }
+
+    def _plan_authorization(self, project_id, task_id):
+        """Classify the task's latest plan from the persisted plans and approvals rows.
+
+        Read-only, and deliberately separate from approved_plan(), whose semantics the
+        implementation gate depends on. States:
+        - "approved": the latest plan has a matching APPROVED approval row, and that row
+          is the newest matching one.
+        - "draft": the latest plan has no matching approval, or its newest matching row
+          is PENDING, REJECTED or INVALIDATED. It is not an implementation authorization.
+        - "unconfirmed": matching approval rows disagree on hash or use an unknown
+          status, so no status can be stated.
+        - "none": no plan was ever proposed.
+        `earlier_approved` is an older APPROVED row for a different plan version that
+        the latest plan has superseded; any newer plan supersedes an older approval.
+        """
+        latest = self.store.one(
+            "SELECT * FROM plans WHERE project_id=? AND task_id=? "
+            "ORDER BY created DESC, version DESC LIMIT 1",
+            (project_id, task_id),
+        )
+        mode = self.get_project_access(project_id)["mode"]
+        if not latest:
+            return {"state": "none", "plan": None, "approval": None,
+                    "earlier_approved": None, "mode": mode}
+        rows = self.store.all(
+            "SELECT * FROM approvals WHERE project_id=? AND task_id=? ORDER BY created DESC",
+            (project_id, task_id),
+        )
+        def is_latest(row):
+            return row["plan_id"] == latest["id"] and row["plan_version"] == latest["version"]
+
+        same = [r for r in rows if is_latest(r)]
+        known = {"APPROVED", "PENDING", "REJECTED", "INVALIDATED"}
+        if any(r["status"] not in known for r in same) or any(
+            r["plan_hash"] != latest["hash"] for r in same
+        ):
+            state, approval = "unconfirmed", None
+        else:
+            approval = same[0] if same else None
+            state = "approved" if approval and approval["status"] == "APPROVED" else "draft"
+        earlier = next(
+            (r for r in rows if r["status"] == "APPROVED" and not is_latest(r)), None
+        )
+        return {
+            "state": state,
+            "plan": latest,
+            "approval": approval,
+            "earlier_approved": earlier,
+            "mode": mode,
+        }
+
+    def continuity_handoff(self, project_id, task_id=None, target=None):
+        """Assemble one copy-ready package so a different coding Agent can continue this
+        task without the operator retyping what happened.
+
+        Reads only data ccc-mcp already persists: the task requirement and acceptance,
+        the Approved Plan (plans table, read through approved_plan()), persisted decisions,
+        Agent results, the host's TEST-RESULT, and a live `git status`/`git diff --stat`.
+        Every section is labeled as Host evidence, an Agent's own self-report, or ccc-mcp's
+        derived state. Remaining work is derived from state, not invented: where it cannot
+        be determined reliably it is written as "待確認" with the sources to check.
+        With `target`, the same sections are wrapped in a Continuation Prompt addressed to
+        that Agent; writing the prompt does not mean the target has taken over the work.
+        """
+        task_id = task_id or self.project_workstream_task(project_id)
+        if target is not None and target not in CONTINUATION_TARGETS:
+            raise BridgeError(
+                f"Unsupported continuation target: {target} "
+                f"(expected one of: {', '.join(CONTINUATION_TARGETS)})"
+            )
+        # bootstrap_project and get_task_status each take the project lock themselves;
+        # this method must not wrap them in a second, outer self.lock(project_id).
+        root = Path(self.project(project_id)["root"])
+        base = self.bootstrap_project(project_id)
+        status = self.get_task_status(project_id, task_id)
+        brief = status["brief"]
+        verification = brief["verification"]
+        task_row = self.task(project_id, task_id)
+        requirement = task_row["requirement"]
+        acceptance = task_row["acceptance"]
+        acceptance_text = (
+            "; ".join(str(item) for item in acceptance)
+            if isinstance(acceptance, list)
+            else str(acceptance or "")
+        ).strip()
+        plan_auth = self._plan_authorization(project_id, task_id)
+        # Only a plan with a matching APPROVED approval is labeled as approved.
+        approved = plan_auth["plan"] if plan_auth["state"] == "approved" else None
+        status_result = git(root, "status", "--porcelain", check=False)
+        diff_result = git(root, "diff", "--stat", "HEAD", check=False)
+        dirty = status_result.stdout.decode("utf-8", "replace").strip()
+        diff_text = diff_result.stdout.decode("utf-8", "replace").strip()
+        zh = self.get_project_settings(project_id)["language"] in {"zh-TW", "ch"}
+        metadata = metadata_name(root)
+        task_dir = f"{metadata}/tasks/{task_id}"
+        host_passed = verification["host_verification"] == "passed"
+        waiting = brief["waiting_on"]
+        state = brief["state"]
+        latest_execution = status["executions"][-1]["id"] if status["executions"] else None
+
+        def h(zh_text, en_text):
+            return zh_text if zh else en_text
+
+        def blocker_text(blocker):
+            if isinstance(blocker, dict) and blocker.get("text"):
+                return blocker["text"]
+            if isinstance(blocker, dict) and "id" in blocker:
+                return f"{blocker['id']}: {blocker.get('state')}"
+            return str(blocker)
+
+        # ---- Approved Plan body (bounded excerpt, never a bare hash) ----
+        if approved:
+            content = approved["content"]
+            try:
+                reject_secrets(content)
+            except BridgeError:
+                excerpt = h(
+                    "（計畫本文含疑似敏感內容，未輸出；請查閱來源檔人工確認）",
+                    "(plan text contains a suspected secret; not included, check the source file)",
+                )
+            else:
+                excerpt = content
+                if len(content) > CONTINUATION_PLAN_EXCERPT_CHARS:
+                    excerpt = content[:CONTINUATION_PLAN_EXCERPT_CHARS] + "\n" + h(
+                        "…（已截斷；完整內容見上列來源）",
+                        "… (truncated; full text is at the source above)",
+                    )
+            plan_section = [
+                f"- Plan ID / version: {approved['id']} v{approved['version']}",
+                f"- hash: {approved['hash']}",
+                f"- {h('核准依據', 'approval basis')}: {plan_auth['approval']['id']} "
+                f"({h('核准者', 'approver')}: {plan_auth['approval']['identity']}"
+                + (
+                    h("；專案授權 read-write 模式自動核准", "; auto-approved under project authorization in read-write mode")
+                    if plan_auth["mode"] == "read-write"
+                    else ""
+                )
+                + ")",
+                f"- {h('來源', 'source')}: {task_dir}/APPROVED-PLAN.md "
+                f"({h('ccc-mcp 的 plans 紀錄', 'ccc-mcp plans record')} "
+                f"{approved['id']} v{approved['version']})",
+                "```",
+                excerpt,
+                "```",
+            ]
+        elif plan_auth["plan"] is None:
+            plan_section = [
+                h(
+                    "（沒有 Approved Plan：尚未提出任何計畫；ccc-mcp 無法提供計畫內容，請勿自行推定計畫）",
+                    "(no Approved Plan: no plan was ever proposed; plan content is unavailable, do not infer one)",
+                )
+            ]
+        else:
+            # A proposed plan that is not approved is shown as metadata only: its text is
+            # not included so a new Agent cannot mistake it for an implementation order.
+            latest_plan = plan_auth["plan"]
+            if plan_auth["state"] == "unconfirmed":
+                status_text = h(
+                    "核准狀態未確認（approvals 紀錄不一致或狀態不明），不得視為已核准",
+                    "approval status not confirmed (approval rows disagree or use an unknown "
+                    "status); do not treat as approved",
+                )
+            else:
+                status_text = h(
+                    "未核准草稿，不是實作授權",
+                    "unapproved draft; NOT an implementation authorization",
+                )
+                earlier = plan_auth["earlier_approved"]
+                if earlier:
+                    status_text += h(
+                        f"；較早的已核准版本 {earlier['plan_id']} v{earlier['plan_version']} "
+                        "已被此草稿取代，不可作為實作依據",
+                        f"; the earlier approved version {earlier['plan_id']} "
+                        f"v{earlier['plan_version']} is superseded by this draft and is not an "
+                        "implementation basis",
+                    )
+            plan_section = [
+                f"- {h('狀態', 'status')}: {status_text}",
+                f"- Plan ID / version: {latest_plan['id']} v{latest_plan['version']}",
+                f"- hash: {latest_plan['hash']}",
+                f"- {h('來源', 'source')}: {h('ccc-mcp plans 紀錄（未核准，本文未納入）', 'ccc-mcp plans record (not approved; text not included)')}",
+            ]
+
+        plan_heading = (
+            h("已核准計畫", "Approved Plan")
+            if approved
+            else h("計畫核准狀態（不是實作授權）", "Plan approval status (not an implementation authorization)")
+        )
+        no_approval_text = {
+            "draft": h(
+                "最新計畫仍是未核准草稿，不能作為實作依據，無法判斷具體剩餘步驟",
+                "the latest plan is an unapproved draft and is not an implementation basis, so concrete remaining steps cannot be determined",
+            ),
+            "unconfirmed": h(
+                "計畫核准狀態未確認，無法判斷具體剩餘步驟",
+                "plan approval status is not confirmed, so concrete remaining steps cannot be determined",
+            ),
+        }.get(
+            plan_auth["state"],
+            h(
+                "沒有任何計畫，無法判斷具體剩餘步驟",
+                "no plan exists, so concrete remaining steps cannot be determined",
+            ),
+        )
+        if approved:
+            plan_line = (
+                f"- approved plan: {approved['id']} v{approved['version']} hash={approved['hash']}"
+            )
+        elif plan_auth["plan"] is None:
+            plan_line = "- approved plan: (none approved for this task)"
+        else:
+            # Never let a draft or unconfirmed plan read as an approved implementation order.
+            plan_line = (
+                f"- plan status: {plan_auth['state']} — {plan_auth['plan']['id']} "
+                f"v{plan_auth['plan']['version']} is NOT an approved implementation order"
+            )
+
+        # ---- Completed work: Agent self-reports, kept apart from Host evidence ----
+        completed_lines = [
+            f"- [{h('Agent 自述', 'Agent self-report')} {result.get('role')}/"
+            f"{result.get('provider')}] {result.get('summary')}"
+            for result in base["working_context"].get("agent_results", [])
+        ] or [h("（尚無 Agent 執行紀錄）", "(no Agent execution recorded yet)")]
+        if host_passed:
+            host_line = f"- [{h('主機證據', 'Host evidence')}] {verification['message']}"
+        else:
+            host_line = (
+                f"- [{h('主機證據', 'Host evidence')}, "
+                f"{h('尚未通過，不算已完成', 'not passing, not counted as done')}] "
+                f"{verification['message']}"
+            )
+
+        # ---- Remaining work: derived from ccc-mcp state, never from generic text ----
+        remaining = []
+        if state != "COMPLETED":
+            if waiting in CONTINUATION_WAITING:
+                zh_text, en_text = CONTINUATION_WAITING[waiting]
+                remaining.append(f"- [{h('ccc-mcp 狀態', 'ccc-mcp state')}] "
+                                 f"{h(zh_text, en_text)}")
+            if not host_passed:
+                remaining.append(
+                    f"- [{h('主機證據', 'Host evidence')}] "
+                    + h(
+                        "驗收條件尚未由主機實際執行並通過",
+                        "Acceptance is not yet passed by a host-run test",
+                    )
+                )
+            if approved:
+                remaining.append(
+                    f"- [{h('待確認', 'to confirm')}] "
+                    + h(
+                        "計畫中各步驟的逐項完成狀況 ccc-mcp 不追蹤；請對照上方計畫本文與下方 git 修改",
+                        "ccc-mcp does not track each plan step; compare the plan text above with the git changes below",
+                    )
+                )
+            else:
+                remaining.append(f"- [{h('待確認', 'to confirm')}] {no_approval_text}")
+            if brief.get("next_action"):
+                remaining.append(
+                    f"- [{h('Agent 自述，未驗證', 'Agent self-report, unverified')}] "
+                    f"{brief['next_action']}"
+                )
+        remaining_lines = remaining or [
+            h("（ccc-mcp 狀態：任務已完成）", "(ccc-mcp state: task is completed)")
+        ]
+
+        # ---- Next concrete action ----
+        if state == "COMPLETED":
+            next_text = h("無；任務已標示完成，請只做 git diff 確認", "none; task is marked complete, only confirm the git diff")
+        elif waiting == "AGENT_RUNNING":
+            next_text = h(
+                f"等待執行 {latest_execution} 回報，請勿重複派工",
+                f"wait for execution {latest_execution} to report; do not dispatch again",
+            )
+        elif waiting == "CHATGPT_HANDOFF_PENDING":
+            next_text = h(
+                f"以 {brief.get('role')} 角色完成這次交接的工作，回報後再交回主機驗證",
+                f"do the {brief.get('role')} role's work for this handoff, then report for host verification",
+            )
+        elif waiting in CONTINUATION_WAITING and approved is not None:
+            next_text = h(
+                f"先處理 ccc-mcp 狀態 {waiting}（見上方剩餘工作），再繼續實作",
+                f"resolve the ccc-mcp state {waiting} first (see Remaining work), then continue",
+            )
+        elif approved is None:
+            next_text = {
+                "draft": h(
+                    "請 PM／使用者核准最新計畫後才可實作；在此之前不得依未核准草稿實作",
+                    "the PM or user must approve the latest plan before implementing; do not implement from the draft",
+                ),
+                "unconfirmed": h(
+                    "先確認計畫核准狀態；不得推定為已核准",
+                    "first confirm the plan approval status; do not presume approval",
+                ),
+            }.get(
+                plan_auth["state"],
+                h(
+                    "待確認：請 PM 先提供計畫，再決定下一步",
+                    "to confirm: PM must provide a plan before the next step",
+                ),
+            )
+        else:
+            next_text = h(
+                "依上方計畫本文找出第一個尚未完成的步驟，對照未提交修改確認完成度後開始；"
+                "完成後依下方驗證方式執行測試",
+                "find the first unfinished step in the plan text above, check it against the "
+                "uncommitted changes, start there, then run the verification below",
+            )
+
+        acceptance_display = acceptance_text or h(
+            "（未記錄驗收條件，待確認）", "(no acceptance recorded; to confirm)"
+        )
+        verification_text = h(
+            f"驗收條件：{acceptance_display}。由主機執行測試，並取得 executed_by_host=true 且 "
+            "passed=true 的 TEST-RESULT。Agent 自述不算驗證。",
+            f"Acceptance: {acceptance_display}. The host must run the tests and produce a "
+            "TEST-RESULT with executed_by_host=true and passed=true. An Agent's claim is not "
+            "verification.",
+        )
+
+        # ---- Existing changes that must not be broken ----
+        keep_lines = [
+            "```",
+            dirty or h("（工作目錄乾淨）", "(working tree is clean)"),
+            "```",
+            f"HEAD: {base['current_git_revision']}",
+        ]
+        if diff_text:
+            keep_lines += [h("對 HEAD 的變更統計：", "Diff stat against HEAD:"), "```", diff_text, "```"]
+        constraint_lines = [
+            f"- {blocker_text(c)}" for c in base["constraints"]
+        ] or [h("（沒有記錄的約束）", "(no recorded constraints)")]
+
+        decision_lines = [
+            f"- {d.get('content')} ({d.get('status')})" for d in base["latest_decisions"][:10]
+        ] or [h("（尚無記錄的決策）", "(no decisions recorded yet)")]
+        blocker_lines = [
+            f"- {blocker_text(b)}" for b in base["current_blockers"]
+        ] or [h("（目前沒有記錄的阻礙）", "(no blockers recorded right now)")]
+        error_lines = (
+            [f"- [{h('最近一次執行錯誤', 'latest execution error')}] {brief['error']}"]
+            if brief.get("error") else []
+        )
+
+        lines = [
+            f"# Continuity Handoff — {project_id} / {task_id}",
+            "",
+            h(
+                "來源：ccc-mcp 既有的 Approved Plan、決策、Agent 結果、主機測試紀錄，以及這次即時讀取的 "
+                "git status／diff。每段都標示證據來源。",
+                "Source: the persisted Approved Plan, decisions, Agent results and host test record, "
+                "plus a live git status/diff read just now. Each section is labeled by source.",
+            ),
+            "",
+            f"## {h('專案／任務', 'Project / Task')}",
+            f"- project_id: {project_id}",
+            f"- {h('專案目的', 'purpose')}: {base['project_summary']}",
+            f"- task_id: {task_id}",
+            f"- {h('任務需求', 'requirement')}: {requirement}",
+            f"- {h('驗收條件', 'acceptance')}: {acceptance_display}",
+            f"- {h('狀態', 'state')}: {state} (waiting_on: {waiting})",
+            f"- {h('目前角色／提供者', 'current role / provider')}: "
+            f"{brief.get('role')} / {brief.get('agent')}",
+            f"- context_version: {brief['context_version']}",
+            "",
+            f"## {plan_heading} [{h('ccc-mcp plans 紀錄', 'ccc-mcp plans record')}]",
+            *plan_section,
+            "",
+            f"## {h('已做出的關鍵決策', 'Key decisions made')} "
+            f"[{h('ccc-mcp Context，持久化', 'ccc-mcp Context, persisted')}]",
+            *decision_lines,
+            "",
+            f"## {h('已完成事項', 'Completed work')}",
+            *completed_lines,
+            *(f"- [ccc-mcp] {t['id']}: {t['state']}" for t in base["active_tasks"]),
+            "",
+            f"## {h('主機驗證狀態', 'Host verification status')}",
+            host_line,
+            "",
+            f"## {h('剩餘工作', 'Remaining work')}",
+            *remaining_lines,
+            "",
+            f"## {h('下一個具體動作', 'Next concrete action')} "
+            f"[{h('由 ccc-mcp 狀態與計畫推導，非獨立驗證', 'derived from ccc-mcp state and the plan, not independently verified')}]",
+            next_text,
+            "",
+            f"## {h('必要驗證方式', 'Required verification')}",
+            verification_text,
+            "",
+            f"## {h('不可破壞的既有修改', 'Existing changes that must not be broken')} "
+            f"[{h('即時 git 讀取，非 Agent 自述', 'live git read, not an Agent self-report')}]",
+            *keep_lines,
+            "",
+            f"## {h('約束', 'Constraints')} [{h('ccc-mcp Context', 'ccc-mcp Context')}]",
+            *constraint_lines,
+            "",
+            f"## {h('已知阻礙及風險', 'Known blockers and risks')} [{h('ccc-mcp Context', 'ccc-mcp Context')}]",
+            *blocker_lines,
+            *error_lines,
+            "",
+            f"## {h('來源路徑', 'Source paths')}",
+            f"- {task_dir}/ ({h('任務文件與測試結果', 'task documents and test results')})",
+            f"- {task_dir}/APPROVED-PLAN.md",
+            f"- {task_dir}/TEST-RESULT.md",
+            f"- {metadata}/context/ ({h('共享 Context', 'shared Context')})",
+            f"- {h('參考：ccc-mcp 原始 next_action（泛用，僅供參考）', 'reference: ccc-mcp raw next_action (generic, for reference only)')}: "
+            f"{base['suggested_next_action']}",
+        ]
+        body = redact("\n".join(lines) + "\n")
+        if target is None:
+            return body
+        prompt = [
+            f"# Continuation Prompt — for {CONTINUATION_TARGETS[target]}",
+            "",
+            f"You are taking over task {task_id} in project {project_id}. The state below was "
+            "produced by another Agent; it is handoff material, not proof that the work is done.",
+            f"- requirement: {requirement}",
+            plan_line,
+            "- 「已派工」不等於「已完成」: a dispatched or handed-off task is not finished.",
+            "- Treat Agent self-reports as unverified. Check the git state and the host test "
+            "results before you claim anything is complete.",
+            "- Start from 'Next concrete action', then run the 'Required verification'. Do not "
+            "break the existing uncommitted changes. Do not commit, push or release unless the "
+            "user asks.",
+            "",
+        ]
+        return "\n".join(prompt) + "\n" + body
 
     def get_context(self, project_id, role="PM", task_id=None, scope=None):
         if scope is not None and scope not in {"project", "architecture", "constraints", "state"}:

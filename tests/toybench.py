@@ -96,6 +96,18 @@ TASKS = {
 # reads. The issue states that current callers satisfy this assumption. A reviewer may
 # cite the risk under future reuse, but the fixture does not contain a proven bug.
 # Keeping it outside TASKS preserves the run command's existing default case set.
+#
+# "architecture_risk" is a PUBLIC Smoke Test / no-defect control, not a private blind
+# case: this module is committed to this repository's Git history, so its "hidden"
+# text is already in HEAD and reachable by anything that can read this repo. That is
+# also structurally honest for what this case always was -- its own comment above
+# already says "the fixture does not contain a proven bug", i.e. it never withheld a
+# real answer the way a genuine private Fixture (always Host-only, outside any Git
+# worktree -- see docs/development/ACQE-GAP-ANALYSIS.md §17) does. Do not add a
+# `confirmation_witness`/`own_good` here and then treat it as if it were privately
+# withheld; `assert_fixture_not_in_committed_head()` correctly refuses it the same way
+# it refuses "clamp" and the other committed TASKS below -- that refusal is the guard
+# working as designed, not a bug to route around.
 REVIEW_ONLY_TASKS = {
     "architecture_risk": dict(
         buggy=(

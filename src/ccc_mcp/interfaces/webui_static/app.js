@@ -1779,6 +1779,64 @@
   // What counts as "something changed" for the live conversation. Fields that tick every
   // second while an agent runs (elapsed time, the waiting note) are left out on purpose, or
   // the page would rebuild itself on every poll.
+  // Provider Switching visibility (minimal, read-only addition): one card per recorded
+  // quota-exhaustion failure, built only from already-fetched timeline events and
+  // status.executions/brief -- the same `failure_kind`/`fallback`/`agent`/`execution_id`/
+  // `waiting_on` fields get_task_result and get_task_status already return. Never reads
+  // the role's *current* configured provider for this: "from"/"to" always come from the
+  // historical execution rows themselves, so a later manual `config role` change can never
+  // be mistaken for what actually ran. A field this cannot confirm renders as "Unconfirmed"
+  // rather than a guess.
+  function providerSwitchCard(events, status) {
+    const quotaEvents = (events || []).filter(
+      (e) => e.event_type === "agent_failed" && e.detail?.failure_kind === "QUOTA_EXHAUSTED"
+    );
+    if (!quotaEvents.length) return "";
+    const executionsById = new Map((status.executions || []).map((e) => [e.id, e]));
+    const latestExecutionId = (status.executions || []).at(-1)?.id;
+    const brief = status.brief || {};
+    const unconfirmed = () => UI.translate("Unconfirmed");
+    const cards = quotaEvents.map((event) => {
+      const from = event.actor || unconfirmed();
+      const reasonLabel = esc(UI.translate("Quota exhausted"));
+      const fallback = event.detail.fallback;
+      const head = `<span class="pill warning">${reasonLabel}</span>`;
+      if (!fallback) {
+        return `<div class="provider-switch-card">${head}<p><strong data-no-i18n>${esc(from)}</strong> — ${esc(UI.translate("no fallback provider is configured for this role"))}</p></div>`;
+      }
+      const to = fallback.target || unconfirmed();
+      const arrow = `<strong data-no-i18n>${esc(from)}</strong> → <strong data-no-i18n>${esc(to)}</strong>`;
+      if (!fallback.attempted) {
+        return `<div class="provider-switch-card">${head}<p>${arrow}: ${esc(UI.translate("not switched"))} — ${esc(fallback.reason || unconfirmed())}</p></div>`;
+      }
+      if (!fallback.dispatched) {
+        return `<div class="provider-switch-card"><span class="pill negative">${reasonLabel}</span><p>${arrow}: ${esc(UI.translate("fallback dispatch failed"))} — ${esc(fallback.failed_reason || unconfirmed())}</p></div>`;
+      }
+      const fallbackExec = fallback.fallback_execution_id ? executionsById.get(fallback.fallback_execution_id) : null;
+      let stateLabel = unconfirmed();
+      let stateTone = "warning";
+      if (fallbackExec) {
+        if (fallbackExec.status === "RUNNING" && brief.waiting_on === "CHATGPT_HANDOFF_PENDING" && brief.agent === to) {
+          stateLabel = UI.translate("Waiting for a human to hand off");
+        } else if (["RUNNING", "QUEUED"].includes(fallbackExec.status)) {
+          stateLabel = UI.translate("In progress");
+        } else if (fallbackExec.status === "SUCCEEDED") {
+          stateLabel = UI.translate("Completed");
+          stateTone = "positive";
+        } else if (fallbackExec.status === "FAILED") {
+          stateLabel = UI.translate("Fallback also failed");
+          stateTone = "negative";
+        } else if (fallbackExec.status === "CANCELLED") {
+          stateLabel = UI.translate("Cancelled");
+        }
+      }
+      const verification = fallback.fallback_execution_id === latestExecutionId && brief.verification?.message
+        ? `<p class="muted">${esc(brief.verification.message)}</p>` : "";
+      return `<div class="provider-switch-card">${head}<p>${arrow}: ${esc(UI.translate("automatically dispatched"))}</p><p class="muted">${esc(UI.translate("Current status"))}: <span class="pill ${stateTone}">${esc(stateLabel)}</span>${fallback.fallback_execution_id ? ` <span class="mono">${esc(fallback.fallback_execution_id)}</span>` : ""}</p>${verification}</div>`;
+    }).join("");
+    return `<section class="task-result-card provider-switch-section"><h2>${esc(UI.translate("Provider switching"))}</h2>${cards}</section>`;
+  }
+
   function taskSignature(status, timeline) {
     return JSON.stringify({
       state: status.state,
@@ -1869,7 +1927,7 @@
       <div class="task-result-card"><h2>${esc(UI.translate("Changed files and diff"))}</h2>${latestDiff ? `<pre class="mono task-diff">${esc(latestDiff.content || "")}</pre>` : `<p class="muted">${esc(UI.translate("No saved diff yet."))}</p>`}</div>
       <div class="task-result-card"><h2>${esc(UI.translate("Host test evidence"))}</h2><p class="muted">${esc(UI.translate("Run by the host on this machine — never taken from the agent's own word."))}</p>${verificationLine(brief.tests)}${latestTest ? `<details><summary>${esc(UI.translate("View saved test result"))}</summary><pre class="mono">${esc(latestTest.content)}</pre></details>` : `<p class="muted">${esc(UI.translate("No host test evidence yet."))}</p>`}</div>
     </section><section class="task-result-card evaluation-section"><div class="evaluation-section-head"><div><h2>${esc(UI.translate("Evaluation and evidence"))}</h2><p>${esc(UI.translate("Scores are separate from task completion."))}</p></div>${settings.editable?.evaluation_engine?.enabled ? `<button class="btn small" id="task-evaluate">${esc(UI.translate("Evaluate latest executions"))}</button>` : `<button class="btn small" id="task-enable-evaluation">${esc(UI.translate("Enable evaluation"))}</button>`}</div>${evaluations.length ? `<div class="evaluation-list">${evaluations.slice().reverse().map(evaluationReport).join("")}</div>` : `<p class="muted">${esc(UI.translate("No evaluations for this task yet."))}</p>`}</section>` : ""}`,
-      technical: `<div class="task-technical"><section class="task-result-card"><h2>${esc(UI.translate("Execution history"))}</h2><div class="task-table-scroll"><table><thead><tr><th>Execution</th><th>Role</th><th>Status</th><th>Error</th></tr></thead><tbody>${(status.executions || []).map((e) => `<tr><td class="mono">${esc(e.id)}</td><td>${esc(e.role)}</td><td>${esc(UI.translate(e.status))}</td><td>${esc(e.error || "")}</td></tr>`).join("")}</tbody></table></div></section>
+      technical: `<div class="task-technical">${providerSwitchCard(events, status)}<section class="task-result-card"><h2>${esc(UI.translate("Execution history"))}</h2><div class="task-table-scroll"><table><thead><tr><th>Execution</th><th>Role</th><th>Status</th><th>Error</th></tr></thead><tbody>${(status.executions || []).map((e) => `<tr><td class="mono">${esc(e.id)}</td><td>${esc(e.role)}</td><td>${esc(UI.translate(e.status))}</td><td>${esc(e.error || "")}</td></tr>`).join("")}</tbody></table></div></section>
       <section class="task-result-card"><h2>${esc(UI.translate("Original reports"))}</h2>${reportRows.length ? reportRows.map((a) => `<details><summary>${esc(a.path.split("/").at(-1))} · ${esc(a.created)}</summary><pre class="mono">${esc(a.content)}</pre></details>`).join("") : `<p class="muted">${esc(UI.translate("No original reports yet."))}</p>`}</section>
       <section class="task-result-card"><h2>${esc(UI.translate("Context and handoff"))}</h2><details><summary>${esc(UI.translate("View current handoff"))}</summary><pre class="mono">${esc(JSON.stringify(handoff, null, 2))}</pre></details><details><summary>${esc(UI.translate("View task status and events"))}</summary><pre class="mono">${esc(JSON.stringify(status, null, 2))}</pre></details><button class="btn small" id="task-load-context">${esc(UI.translate("Load project context"))}</button><div id="task-context-output"></div></section>
       <section class="task-result-card"><h2>${esc(UI.translate("Usage and raw executions"))}</h2><button class="btn small" id="task-load-raw">${esc(UI.translate("Load original records"))}</button><div id="task-raw-output"></div></section></div>`,

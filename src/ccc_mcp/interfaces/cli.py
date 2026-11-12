@@ -1551,6 +1551,38 @@ def task_handoff(ctx: typer.Context, task_id: Annotated[str | None, typer.Argume
 
 
 @task_app.command(
+    "continue",
+    help=t(
+        "唯讀：把這個任務目前的狀態組成一份可直接貼給另一個 Coding Agent（例如從 Claude Code "
+        "換到 Codex，或反過來）的純文字接續包。重用既有的 bootstrap_project／task status，"
+        "只新增即時的 git status／diff；每段都標示是主機證據、Agent 自述，還是 ccc-mcp 的"
+        "既有 Context。",
+        "Read-only: assemble this task's current state into one plain-text continuation "
+        "package, ready to paste into another coding Agent (for example switching from "
+        "Claude Code to Codex, or back). Reuses existing bootstrap_project/task status; "
+        "only adds a live git status/diff. Every section is labeled as Host evidence, "
+        "an Agent's own self-report, or ccc-mcp's existing Context.",
+    ),
+)
+def task_continue(
+    ctx: typer.Context,
+    task_id: Annotated[str | None, typer.Argument()] = None,
+    target: Annotated[
+        str | None,
+        typer.Option(
+            "--target",
+            help=t(
+                "輸出成給指定 Agent 的 Continuation Prompt：claude／codex／chatgpt",
+                "Wrap the package as a Continuation Prompt for claude, codex or chatgpt",
+            ),
+        ),
+    ] = None,
+):
+    service, project = bridge(ctx), project_id(ctx)
+    typer.echo(service.continuity_handoff(project, task_id, target=target))
+
+
+@task_app.command(
     "meeting",
     help=t(
         "唯讀：印出這個任務 Meeting Mode 的完整 SA／SD 對話紀錄（不截斷），"

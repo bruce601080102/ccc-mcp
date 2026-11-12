@@ -2496,3 +2496,41 @@ as a finding about review-lens effectiveness: per §21's conclusion, N=1 and a
 scorer-artifact-free tie on the one real defect both arms found is not evidence
 either way about B1 vs. B2 review quality. No new case was added and none is
 proposed here; that decision is left to whoever asks for the next round.
+
+## 23. `architecture_risk` reclassified as a public Smoke Test, not a private case (2026-11-11)
+
+Committing the ACQE work (`9e8f086`) put `REVIEW_ONLY_TASKS["architecture_risk"]`'s
+own `hidden` test literally into this repository's Git HEAD, which made
+`tests/test_toy_agents_run.py::test_review_cli_refuses_committed_hidden_answer_before_agent_call`
+fail: its line asserting `assert_fixture_not_in_committed_head("architecture_risk")`
+raises nothing was written back when that case lived only in an uncommitted working
+tree. **The guard was right; the test's expectation went stale.** Verified with
+`git stash` that the failure is present with zero Continuity Handoff changes applied
+— unrelated to that work, caused solely by the commit itself.
+
+This is not treated as a false positive to route around. `architecture_risk`'s own
+code comment already says "the fixture does not contain a proven bug" — unlike
+`clamp`/`slugify`/the other `TASKS` entries (which hide a real fix an Agent could
+cheat by reading), it never withheld an answer that blind review depended on; it is
+structurally a no-defect control, i.e. honestly a public Smoke Test. The fix:
+
+- `tests/toybench.py`: added a comment on `REVIEW_ONLY_TASKS` stating plainly that
+  `architecture_risk` is public/committed and must never be treated as if its
+  `hidden`/`own_good` text were still privately withheld. No test data changed.
+- `tests/test_toy_agents_run.py`: the stale assertion now expects the same
+  `RuntimeError` `assert_fixture_not_in_committed_head` already raises for `clamp`,
+  instead of expecting no exception.
+
+`assert_fixture_not_in_committed_head()` itself (`benchmarks/toy-agents/run.py`) is
+**unchanged** — same literal-source-walk, same fail-closed behavior, same refusal
+for every genuinely committed case. Nothing was deleted, skipped, or hardcoded past;
+the real private Fixture cases (§17's `offset_bucket` etc.) already live Host-only,
+outside any Git worktree, and remain exactly as isolated as before — this section
+only concerns the public toy fixture, never the private Phase 2 one.
+
+Verification: the previously-failing test, `tests/test_toy_agents_run.py` (70 tests
+total with `test_acqe_private_phase2.py`/`test_context.py`), ruff, and
+`git diff --check` all pass; the full suite result is recorded wherever this round's
+final report lands. `architecture_risk` remains usable only as what it always
+structurally was — a no-defect Smoke Test control for false-positive checking, never
+as a stand-in for a genuinely withheld private answer.

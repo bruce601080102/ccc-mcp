@@ -757,7 +757,13 @@ def test_review_cli_rejects_missing_model_before_any_agent_call(run_module, tmp_
 
 def test_review_cli_refuses_committed_hidden_answer_before_agent_call(run_module, monkeypatch):
     assert run_module.REVIEW_TASKS["clamp"]["hidden"]
-    assert run_module.assert_fixture_not_in_committed_head("architecture_risk") is None
+    # "architecture_risk" is committed in this repo's own Git history (toybench.py's own
+    # comment on it: public Smoke Test / no-defect control, never a withheld private
+    # answer -- see docs/development/ACQE-GAP-ANALYSIS.md §23). The guard must refuse it
+    # exactly like any other committed case; it must NOT pass silently as if its answer
+    # were still private.
+    with pytest.raises(RuntimeError, match="Private Fixture for architecture_risk has committed"):
+        run_module.assert_fixture_not_in_committed_head("architecture_risk")
     monkeypatch.setattr(
         run_module.sys, "argv",
         [

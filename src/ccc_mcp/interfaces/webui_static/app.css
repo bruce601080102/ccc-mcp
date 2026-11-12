@@ -427,6 +427,9 @@ button.nav-item { width: 100%; border: none; background: none; font: inherit; te
 .task-result-card h2 { margin: 0 0 13px; font-size: 17px; letter-spacing: -.015em; }
 .task-result-card details { margin-top: 12px; }
 .task-result-card .task-diff { max-height: 560px; }
+.provider-switch-card { padding: 10px 0; }
+.provider-switch-card + .provider-switch-card { border-top: 1px solid var(--border); }
+.provider-switch-card p { margin: 4px 0; }
 .task-technical { display: grid; gap: 0; }
 .task-table-scroll { overflow-x: auto; }
 .task-table-scroll table { min-width: 600px; }
