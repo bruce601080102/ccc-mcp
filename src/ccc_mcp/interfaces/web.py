@@ -827,6 +827,21 @@ async def task_handoff(request: Request):
 
 
 @endpoint
+async def task_continuation(request: Request):
+    # Read-only: the same package as `ccc-mcp task continue`. Without ?target it is the
+    # plain handoff report; with ?target=claude|codex|chatgpt it is a Continuation Prompt.
+    bridge = bridge_of(request)
+    target = request.query_params.get("target") or None
+    text = await run(
+        bridge.continuity_handoff,
+        request.path_params["project_id"],
+        request.path_params["task_id"],
+        target=target,
+    )
+    return JSONResponse({"target": target, "text": text})
+
+
+@endpoint
 async def task_timeline(request: Request):
     bridge = bridge_of(request)
     return JSONResponse(await run(
@@ -1453,6 +1468,7 @@ ROUTES = [
     Route("/api/projects/{project_id}/tasks/{task_id}/approvals", task_approvals, methods=["GET"]),
     Route("/api/projects/{project_id}/tasks/{task_id}/meeting", task_meeting, methods=["GET"]),
     Route("/api/projects/{project_id}/tasks/{task_id}/handoff", task_handoff, methods=["GET"]),
+    Route("/api/projects/{project_id}/tasks/{task_id}/continuation", task_continuation, methods=["GET"]),
     Route("/api/projects/{project_id}/tasks/{task_id}/timeline", task_timeline, methods=["GET"]),
     Route("/api/projects/{project_id}/tasks/{task_id}/artifacts", task_artifacts, methods=["GET"]),
     Route("/api/projects/{project_id}/tasks/{task_id}/pause", task_pause, methods=["POST"]),

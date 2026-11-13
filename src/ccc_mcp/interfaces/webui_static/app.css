@@ -424,6 +424,27 @@ button.nav-item { width: 100%; border: none; background: none; font: inherit; te
 .task-composer .muted { margin: 7px 0 0; font-size: 10px; }
 .task-result-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(260px, .8fr); gap: 16px; }
 .task-result-card { min-width: 0; margin-bottom: 16px; padding: 20px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; }
+.continuation-buttons { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 14px; }
+.btn.handoff-choice[aria-pressed="true"] { background: var(--primary); border-color: var(--primary); color: #fff; }
+.btn.handoff-choice[aria-pressed="true"]:hover { background: var(--primary-hover); border-color: var(--primary-hover); }
+.btn.handoff-choice[aria-pressed="true"]::before { content: "✓"; font-weight: 700; margin-right: 6px; }
+.btn.handoff-choice:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.handoff-status { margin: 0; color: var(--muted); }
+.handoff-status.is-error { color: var(--negative); }
+.handoff-ready-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin: 0 0 12px; }
+.handoff-ready-title { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
+.handoff-stale { margin: 0 0 12px; padding: 8px 10px; border-radius: 8px; background: var(--pill-warning-bg); color: var(--pill-warning-ink); font-size: 13px; }
+.handoff-summary { margin: 0; display: grid; }
+.handoff-summary > div { display: grid; grid-template-columns: minmax(7em, max-content) minmax(0, 1fr); gap: 6px 16px; padding: 12px 0; border-top: 1px solid var(--border); }
+.handoff-summary dt { color: var(--muted); font-size: 13px; }
+.handoff-summary dd { margin: 0; font-size: 14px; line-height: 1.55; overflow-wrap: anywhere; }
+.handoff-list { margin: 0; padding-left: 18px; }
+.handoff-list li { margin: 2px 0; }
+.run-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.run-list li { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 13px; }
+.run-status { color: var(--muted); }
+.run-error { color: var(--negative); width: 100%; overflow-wrap: anywhere; }
+@media (max-width: 640px) { .handoff-summary > div { grid-template-columns: 1fr; } }
 .task-result-card h2 { margin: 0 0 13px; font-size: 17px; letter-spacing: -.015em; }
 .task-result-card details { margin-top: 12px; }
 .task-result-card .task-diff { max-height: 560px; }

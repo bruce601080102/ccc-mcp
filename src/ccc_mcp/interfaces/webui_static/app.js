@@ -1848,6 +1848,109 @@
 
   // Everything the task page shows, as HTML strings, so a first paint and a later in-place
   // update share one source of truth.
+  // ---- Handoff panel (任務 → 技術紀錄 → 交給另一個 AI) ----
+  // The chosen AI and its prepared handoff survive re-renders of the technical pane. They
+  // are keyed by task, so another task never shows this content. The copy button copies
+  // the full handoff for the new AI; the page only shows the few lines a person needs.
+  let handoffView = null;
+  const HANDOFF_TARGETS = [
+    ["claude", "Hand off to Claude Code"],
+    ["codex", "Hand off to Codex CLI"],
+    ["chatgpt", "Hand off to ChatGPT"],
+  ];
+  const HANDOFF_TAG = /^\[([^\]]*)\]\s*/;
+  const HANDOFF_FILE_ROW = /^(\?\?|[ MADRCU?]{1,2})\s+(\S.*)$/;
+
+  // Reads the handoff text (plain markdown-like lines) into sections of blocks.
+  function parseHandoffText(text) {
+    const sections = [];
+    let section = null;
+    let fence = null;
+    for (const line of String(text || "").replace(/\r/g, "").split("\n")) {
+      if (fence) {
+        if (line.startsWith("```")) {
+          section?.blocks.push({ type: "fence", lines: fence });
+          fence = null;
+        } else {
+          fence.push(line);
+        }
+      } else if (line.startsWith("```")) {
+        fence = [];
+      } else if (line.startsWith("## ")) {
+        section = { title: line.slice(3).trim(), blocks: [] };
+        sections.push(section);
+      } else if (section && line.trim()) {
+        const item = line.match(/^\s*-\s+(.*)$/);
+        section.blocks.push({ type: item ? "item" : "text", text: (item ? item[1] : line).trim() });
+      }
+    }
+    return sections;
+  }
+
+  // Short, readable lines from one section. Source tags such as "[主機證據]" are kept
+  // only where they change the meaning, as a "待確認" prefix.
+  function handoffSectionLines(section) {
+    if (!section) return [];
+    return section.blocks
+      .filter((block) => block.type !== "fence")
+      .map((block) => {
+        const tag = block.text.match(HANDOFF_TAG);
+        const body = block.text.replace(HANDOFF_TAG, "");
+        return tag && /待確認|to confirm/.test(tag[1]) ? `${UI.translate("To confirm")}: ${body}` : body;
+      });
+  }
+
+  function handoffChangedFiles(section) {
+    const rows = (section?.blocks.find((block) => block.type === "fence")?.lines || []).map((row) => row.trim());
+    return rows.filter((row) => HANDOFF_FILE_ROW.test(row)).map((row) => row.match(HANDOFF_FILE_ROW)[2]);
+  }
+
+  function handoffReadyHtml(view, signature) {
+    const sections = parseHandoffText(view.text);
+    const find = (pattern) => sections.find((section) => pattern.test(section.title));
+    const next = handoffSectionLines(find(/下一個具體動作|Next concrete action/))[0];
+    const remaining = handoffSectionLines(find(/剩餘工作|Remaining work/)).slice(0, 4);
+    const test = handoffSectionLines(find(/主機驗證狀態|Host verification/))[0];
+    const files = handoffChangedFiles(find(/不可破壞|Existing changes/));
+    const list = (items, empty) => items.length
+      ? `<ul class="handoff-list">${items.map((item) => `<li>${esc(item)}</li>`).join("")}</ul>`
+      : `<span class="muted">${esc(empty)}</span>`;
+    const stale = view.signature !== signature
+      ? `<p class="handoff-stale" role="status">${esc(UI.translate("The task has new progress since this was prepared. Choose an AI again to refresh it."))}</p>`
+      : "";
+    return `<div class="handoff-ready">`
+      + `<div class="handoff-ready-head"><p class="handoff-ready-title">${esc(UI.translate("Ready to paste into the new AI session."))} `
+      + `<span class="muted">${esc(view.generatedAt)}</span></p>`
+      + `<button class="btn small primary" type="button" id="task-handoff-copy">${esc(UI.translate("Copy for the new session"))}</button></div>`
+      + `${stale}`
+      + `<dl class="handoff-summary">`
+      + `<div><dt>${esc(UI.translate("Next step"))}</dt><dd>${esc(next || UI.translate("Nothing recorded"))}</dd></div>`
+      + `<div><dt>${esc(UI.translate("Still to do"))}</dt><dd>${list(remaining, UI.translate("Nothing recorded"))}</dd></div>`
+      + `<div><dt>${esc(UI.translate("Test result"))}</dt><dd>${esc(test || UI.translate("Nothing recorded"))}</dd></div>`
+      + `<div><dt>${esc(UI.translate("Uncommitted changes"))}</dt><dd>${list(files, UI.translate("No uncommitted changes"))}</dd></div>`
+      + `</dl></div>`;
+  }
+
+  function handoffPanelHtml(key, signature) {
+    const view = handoffView && handoffView.key === key ? handoffView : null;
+    const choices = HANDOFF_TARGETS.map(([targetId, label]) => {
+      const selected = view?.target === targetId;
+      return `<button class="btn small handoff-choice${selected ? " is-selected" : ""}" type="button" `
+        + `data-handoff-target="${targetId}" aria-pressed="${selected}">${esc(UI.translate(label))}</button>`;
+    }).join("");
+    let result = "";
+    if (view?.status === "loading") {
+      result = `<p class="handoff-status" role="status" aria-busy="true">${esc(UI.translate("Preparing the handoff from the saved task state…"))}</p>`;
+    } else if (view?.status === "error") {
+      result = `<p class="handoff-status is-error" role="alert">${esc(UI.translate("Could not prepare the handoff."))} ${esc(view.error)}</p>`;
+    } else if (view?.status === "ready") {
+      result = handoffReadyHtml(view, signature);
+    }
+    return `<div class="continuation-panel" id="task-continuation-panel">`
+      + `<div class="continuation-buttons" role="group" aria-label="${esc(UI.translate("Hand off to another AI"))}">${choices}</div>`
+      + `<div id="task-continuation-result" aria-live="polite">${result}</div></div>`;
+  }
+
   function buildTaskParts(id, taskId, data) {
     const { status, timeline, evaluations, artifacts, settings, handoff } = data;
     activeRoleNames = settings?.role_names || settings?.editable?.role_names || {};
@@ -1889,7 +1992,6 @@
     const deleteButton = REMOVABLE_STATES.has(status.state) ? `<button class="btn small danger" id="task-delete">${esc(UI.translate("Delete task"))}</button>` : "";
     const diffRows = artifacts.filter((a) => a.path.endsWith("/CHANGES.diff"));
     const testRows = artifacts.filter((a) => /\/executions\/TEST-[^/]+\/TEST-RESULT\.md$/.test(a.path));
-    const reportRows = artifacts.filter((a) => /\/(SA-REPORT|SD-REPORT|SW-REPORT|SPEC|SR-REPORT|AR-REPORT|SEC-REPORT|QA-REPORT|IMPLEMENTATION|REVIEW|CONTEXT-UPDATES)\.md$/.test(a.path));
     // Documents the steps handed over (the specification, or an everyday team's research, plan,
     // draft...), newest first; the code cards below only matter when something changes code.
     const docRole = (path) => { const m = path.match(/\/(SPEC|([A-Z]{2})-DOCUMENT)\.md$/); return m ? (m[1] === "SPEC" ? "SW" : m[2]) : null; };
@@ -1927,10 +2029,7 @@
       <div class="task-result-card"><h2>${esc(UI.translate("Changed files and diff"))}</h2>${latestDiff ? `<pre class="mono task-diff">${esc(latestDiff.content || "")}</pre>` : `<p class="muted">${esc(UI.translate("No saved diff yet."))}</p>`}</div>
       <div class="task-result-card"><h2>${esc(UI.translate("Host test evidence"))}</h2><p class="muted">${esc(UI.translate("Run by the host on this machine — never taken from the agent's own word."))}</p>${verificationLine(brief.tests)}${latestTest ? `<details><summary>${esc(UI.translate("View saved test result"))}</summary><pre class="mono">${esc(latestTest.content)}</pre></details>` : `<p class="muted">${esc(UI.translate("No host test evidence yet."))}</p>`}</div>
     </section><section class="task-result-card evaluation-section"><div class="evaluation-section-head"><div><h2>${esc(UI.translate("Evaluation and evidence"))}</h2><p>${esc(UI.translate("Scores are separate from task completion."))}</p></div>${settings.editable?.evaluation_engine?.enabled ? `<button class="btn small" id="task-evaluate">${esc(UI.translate("Evaluate latest executions"))}</button>` : `<button class="btn small" id="task-enable-evaluation">${esc(UI.translate("Enable evaluation"))}</button>`}</div>${evaluations.length ? `<div class="evaluation-list">${evaluations.slice().reverse().map(evaluationReport).join("")}</div>` : `<p class="muted">${esc(UI.translate("No evaluations for this task yet."))}</p>`}</section>` : ""}`,
-      technical: `<div class="task-technical">${providerSwitchCard(events, status)}<section class="task-result-card"><h2>${esc(UI.translate("Execution history"))}</h2><div class="task-table-scroll"><table><thead><tr><th>Execution</th><th>Role</th><th>Status</th><th>Error</th></tr></thead><tbody>${(status.executions || []).map((e) => `<tr><td class="mono">${esc(e.id)}</td><td>${esc(e.role)}</td><td>${esc(UI.translate(e.status))}</td><td>${esc(e.error || "")}</td></tr>`).join("")}</tbody></table></div></section>
-      <section class="task-result-card"><h2>${esc(UI.translate("Original reports"))}</h2>${reportRows.length ? reportRows.map((a) => `<details><summary>${esc(a.path.split("/").at(-1))} · ${esc(a.created)}</summary><pre class="mono">${esc(a.content)}</pre></details>`).join("") : `<p class="muted">${esc(UI.translate("No original reports yet."))}</p>`}</section>
-      <section class="task-result-card"><h2>${esc(UI.translate("Context and handoff"))}</h2><details><summary>${esc(UI.translate("View current handoff"))}</summary><pre class="mono">${esc(JSON.stringify(handoff, null, 2))}</pre></details><details><summary>${esc(UI.translate("View task status and events"))}</summary><pre class="mono">${esc(JSON.stringify(status, null, 2))}</pre></details><button class="btn small" id="task-load-context">${esc(UI.translate("Load project context"))}</button><div id="task-context-output"></div></section>
-      <section class="task-result-card"><h2>${esc(UI.translate("Usage and raw executions"))}</h2><button class="btn small" id="task-load-raw">${esc(UI.translate("Load original records"))}</button><div id="task-raw-output"></div></section></div>`,
+      technical: `<div class="task-technical">${providerSwitchCard(events, status)}<section class="task-result-card"><h2>${esc(UI.translate("Execution history"))}</h2>${(status.executions || []).length ? `<ul class="run-list">${(status.executions || []).map((e) => `<li><span>${esc(roleName(e.role))}</span><span class="run-status">${esc(UI.translate(e.status))}</span>${e.error ? `<span class="run-error">${esc(e.error)}</span>` : ""}</li>`).join("")}</ul>` : `<p class="muted">${esc(UI.translate("No executions yet."))}</p>`}</section><section class="task-result-card"><h2>${esc(UI.translate("Hand off to another AI"))}</h2>${handoffPanelHtml(`${id}/${taskId}`, taskSignature(data.status, data.timeline))}</section></div>`,
     };
   }
 
@@ -2043,6 +2142,55 @@
 
     // Handlers on parts that are rebuilt in place use `onclick`, so binding again replaces
     // the old handler instead of stacking a second one.
+    // Handoff panel state for this task (see handoffPanelHtml above).
+    const handoffKey = `${id}/${taskId}`;
+    const handoffSignature = () => taskSignature(data.status, data.timeline);
+    const bindHandoffPanel = () => {
+      const panel = document.getElementById("task-continuation-panel");
+      if (!panel) return;
+      panel.onclick = (event) => {
+        const choice = event.target.closest("[data-handoff-target]");
+        if (choice) {
+          requestHandoff(choice.dataset.handoffTarget);
+          return;
+        }
+        if (event.target.closest("#task-handoff-copy") && handoffView?.text) {
+          navigator.clipboard.writeText(handoffView.text).then(
+            () => toast("Prompt copied."),
+            () => toast("Could not copy. Select the text and copy it manually.", true),
+          );
+        }
+      };
+    };
+    const paintHandoffPanel = (target) => {
+      const current = document.getElementById("task-continuation-panel");
+      if (!current) return;
+      const hadFocus = current.contains(document.activeElement);
+      current.outerHTML = handoffPanelHtml(handoffKey, handoffSignature());
+      bindHandoffPanel();
+      if (hadFocus && target) {
+        document.querySelector(`#task-continuation-panel [data-handoff-target="${target}"]`)?.focus({ preventScroll: true });
+      }
+    };
+    const requestHandoff = async (target) => {
+      const started = { key: handoffKey, target, status: "loading", signature: handoffSignature(), text: "", error: "", generatedAt: "" };
+      handoffView = started;
+      paintHandoffPanel(target);
+      try {
+        const result = await api(`${taskBase}/continuation?target=${encodeURIComponent(target)}`);
+        if (stale(gen) || handoffView !== started) return;
+        handoffView = {
+          ...started,
+          status: "ready",
+          text: result.text,
+          generatedAt: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        };
+      } catch (err) {
+        if (stale(gen) || handoffView !== started) return;
+        handoffView = { ...started, status: "error", error: err.message };
+      }
+      paintHandoffPanel(target);
+    };
     const bindDynamic = () => {
       const { control } = parts;
       bindChatDetailButtons(parts.events);
@@ -2094,16 +2242,7 @@
         try { await api(`${taskBase}/reevaluate`, { method: "POST", body: { execution_id: button.dataset.reevaluate } }); toast("New evaluation version saved."); refresh(); }
         catch (err) { toast(err.message, true); }
       }; });
-      const loadContext = document.getElementById("task-load-context");
-      if (loadContext) loadContext.onclick = async () => {
-        try { const result = await api(`/projects/${encodeURIComponent(id)}/context`); document.getElementById("task-context-output").innerHTML = `<pre class="mono">${esc(JSON.stringify(result, null, 2))}</pre>`; }
-        catch (err) { toast(err.message, true); }
-      };
-      const loadRaw = document.getElementById("task-load-raw");
-      if (loadRaw) loadRaw.onclick = async () => {
-        try { const [usage, result] = await Promise.all([api(`${taskBase}/usage`), api(`${taskBase}/result`)]); document.getElementById("task-raw-output").innerHTML = `<pre class="mono">${esc(JSON.stringify({ usage, result }, null, 2))}</pre>`; }
-        catch (err) { toast(err.message, true); }
-      };
+      bindHandoffPanel();
     };
 
     // Update the page in place: only what actually changed is touched.

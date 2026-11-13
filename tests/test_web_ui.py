@@ -1467,3 +1467,30 @@ def test_project_icons_reject_bad_input(tmp_path, client, body):
     repo = mkrepo(tmp_path, "alpha")
     client.post("/api/projects/add", json={"path": str(repo), "id": "alpha"})
     assert client.post("/api/project-groups", json={"action": "icon", **body}).status_code == 400
+
+
+def test_continuation_prompt_is_available_from_the_task_page_and_token_gated(tmp_path, client):
+    repo = mkrepo(tmp_path, "continuation-ui")
+    assert client.post(
+        "/api/projects/add", json={"path": str(repo), "id": "continuation-ui"}
+    ).status_code == 200
+    bridge = client.app.state.bridge
+    task_id = bridge.create_task("continuation-ui", "新增 greet 函式")["id"]
+    base = f"/api/projects/continuation-ui/tasks/{task_id}/continuation"
+
+    for target, label in [("claude", "Claude Code"), ("codex", "Codex CLI"), ("chatgpt", "ChatGPT")]:
+        body = client.get(base, params={"target": target}).json()
+        assert body["target"] == target
+        assert f"# Continuation Prompt — for {label}" in body["text"]
+        assert "requirement: 新增 greet 函式" in body["text"]
+
+    plain = client.get(base).json()
+    assert plain["target"] is None
+    assert plain["text"].startswith("# Continuity Handoff")
+    assert "Continuation Prompt" not in plain["text"]
+
+    rejected = client.get(base, params={"target": "gpt-unknown"})
+    assert rejected.status_code == 400
+    assert "Unsupported continuation target" in rejected.json()["error"]
+
+    assert TestClient(client.app).get(base).status_code == 401

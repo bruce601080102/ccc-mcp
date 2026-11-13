@@ -4,10 +4,6 @@
 
 # ccc-mcp
 
-**一支在你電腦上工作、並且讓你看見過程的 AI 角色團隊。**
-
-讓 ChatGPT Chat 以聊天室的方式，帶著一群專家寫程式、跑測試、完成審查，也能規劃旅行、寫企劃、查證事實。
-
 [![手動 CI](https://img.shields.io/github/actions/workflow/status/bruce601080102/ccc-mcp/ci.yaml?branch=main&style=flat-square&logo=githubactions&logoColor=white&label=Manual%20CI)](https://github.com/bruce601080102/ccc-mcp/actions/workflows/ci.yaml)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![Platforms](https://img.shields.io/badge/Platforms-macOS%20%7C%20Linux%20%7C%20Windows-555555?style=flat-square)](docs/ch/1-install-and-sign-in.md)
@@ -18,18 +14,118 @@
 [![Codex](https://img.shields.io/badge/Codex-選用-000000?style=flat-square)](docs/ch/4-workflow.md)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-選用-D97757?style=flat-square)](docs/ch/4-workflow.md)
 
-ccc-mcp 透過 MCP，把 ChatGPT Chat 接上你電腦上的開發環境，讓它能在**已授權的本機專案**工作。核心想法是：**不要只聽 AI 說程式沒問題，而是留下本機證據。**測試由主機執行、不由 Agent 自己回報；每一次 diff、測試結果與審查都會保存並可接續，這些是單純的聊天視窗做不到的事。額外好處是：它直接用你現有的 ChatGPT 方案運作，不必另外申請按 token 計費的模型 API。**主要用法是 ChatGPT-only**；Codex 與 Claude Code 是選用的協作工具。
+**換 AI，不必重新開始。**
+
+你在任務做到一半時換 AI，通常得從頭來：得重新解釋哪些已經決定、哪些已經能動、還缺什麼，以及測試到底跑出什麼結果。新的 AI 還是可能在某處猜錯。
+
+**ccc-mcp 把這些狀態保存在你的專案裡，並從中產生交接 Prompt。** Prompt 來自已保存的任務、已核准的計畫、共用 Context、即時 Git 狀態，以及主機實際跑出的測試。下一個 AI 從已記錄的事實開始，而不是從你的摘要開始。
+
+**為什麼不自己複製摘要？** 你的摘要只與你記得的一樣完整。產生的交接會把主機驗證過的結果與 Agent 自述分開，也會列出換手後必須保留的未提交修改。
+
+**真實證據。** 在一次已記錄的測試中，Claude Code 實作 `slugify`，新的 Codex 對話接續該交接，實作 `count_words`。使用者在本機執行的 pytest 通過（2 passed），它不是 ccc-mcp 的主機 TEST-RESULT。這次測試的條件與限制見[真實的跨對話測試](#真實的跨對話測試)。
+
+**現在怎麼試。**
+
+- 已發行版本（PyPI 0.3.2）：`pip install ccc-mcp`，再執行 `ccc-mcp ui`。0.3.2 還沒有 `task continue` 指令。
+- 交接指令（開發預覽，從 `main` 安裝）：依照[安裝與發行狀態](#安裝與發行狀態)的步驟從原始碼安裝。
+
+```bash
+ccc-mcp --project my-project task continue --target codex
+```
+
+只用 ChatGPT 就能完整使用。它使用你現有的 ChatGPT 方案，不另外計費模型 API，因此不需要第二個 AI 訂閱。Claude Code 與 Codex CLI 為選用。
 
 > [English README](README.md) · [繁體中文文件](docs/ch/1-install-and-sign-in.md)
 
-## 亮點功能
+## 真實的跨對話測試
+
+這是在一個小型 Python 專案 `continuity-session-test` 上的一次已記錄測試。兩個 AI 對話都在同一個專案中工作。
+
+| 步驟 | 發生了什麼 |
+| --- | --- |
+| 1. Claude Code（對話 A） | 實作 `slugify`，`slugify` 的測試通過。`count_words` 仍保留 `NotImplementedError`。 |
+| 2. 交接 | 執行 `ccc-mcp --project <id> task continue --target codex`，產生接續 Prompt。 |
+| 3. Codex（新對話 B） | 讀取 Prompt、共用 Context 與專案。在使用者明確授權第二階段後，實作 `count_words`，並保留 Claude 對 `slugify` 的修改。 |
+| 4. 本機檢查 | 使用者執行 `python -m pytest -q`：**2 passed**。`git diff --check` 通過。沒有修改既有測試。沒有自行 commit 或 push。 |
+
+**怎麼讀這次測試**
+
+- 同一個專案、兩個獨立的 AI 對話。對話 B 沒有繼承對話 A 的聊天記錄。
+- 交接來自產生的接續 Prompt，加上 ccc-mcp 的共用 Context。
+- 第二階段只在使用者明確授權後才進行。
+- `2 passed` 是使用者在本機執行的 pytest。它不是 ccc-mcp 正式的主機 TEST-RESULT，ccc-mcp 自己的 PM 關卡也沒有自動完成。
+
+**這沒有說明什麼：** 不代表每個專案或每次切換都會這樣順利，不代表新的 AI 記得前一個對話，也不代表 token 或時間因此減少。
+
+## 交接如何運作
+
+ccc-mcp 是一個本機的 MCP server 與命令列工具，把 ChatGPT Chat、Claude Code 或 Codex CLI 接到**已授權的專案**。它遵循一個原則：不要聽 AI 說程式沒問題。測試由主機執行，每一次 diff、測試結果與審查都保存在專案的 `.ccc-mcp` 資料中，因此任務可以在另一個對話接續。**ChatGPT-only 是主要用法。** Codex 與 Claude Code 是選用的協作工具，適合想把角色分配到不同工具的團隊。
+
+共用 Context 與已核准的計畫是事實來源，Prompt 只是把它們帶給下一個 AI。它包含：
+
+- **任務與計畫：** 需求、驗收條件，以及已核准計畫的編號、版本、hash 與本文。若沒有核准的計畫，或最新計畫只是未核准的草稿，Prompt 會直接寫明，不會把草稿當成指令。
+- **Agent 自述與主機證據分開：** 每個 Agent 的回報都標示為它自己的說法；主機實際跑出的測試結果則標示為主機證據。主機尚未驗證的項目標示為未完成。
+- **剩餘工作：** 由任務狀態推導。若 ccc-mcp 無法判斷還剩什麼，Prompt 會寫「待確認」，並指出該查看的檔案。
+- **即時 Git 狀態：** `git status` 與 diff 摘要，並提醒不得破壞既有的未提交修改。
+- **來源路徑：** 下一個 AI 可以回頭核對每一點的原始檔案。
+
+使用 `--target claude`、`--target codex` 或 `--target chatgpt`，可以指定 Prompt 交給哪一個 AI；省略則輸出一般的交接報告。
+
+產生 Prompt 不代表下一個 AI 已經接手。新的對話仍然必須讀取 Prompt、在同一個專案裡工作，並通過主機的測試。
+
+## 與另一個 AI 接續工作
+
+有三種不同的機制，請分開看待，留意狀態欄。
+
+| 機制 | 運作方式 | 狀態 |
+| --- | --- | --- |
+| **Prompt 優先的手動交接** | 執行 `task continue --target`，再把 Prompt 貼進新的對話。不會替你自動切換。 | 開發預覽：在 `main` 上，尚未收錄於 PyPI 0.3.2 |
+| **共用 Context 與 MCP 協助接續** | 新的 ChatGPT 對話透過 ccc-mcp 的 MCP 工具，讀取專案 `.ccc-mcp` 資料中保存的任務狀態。 | 已在發行版本中 |
+| **額度備援（Quota fallback）** | 當某個角色的 provider 回報額度用盡，ccc-mcp 可以把同一個任務重新派工給你用 `--quota-fallback` 設定的備援 provider。派工不等於完成：備援可能停在 `CHATGPT_HANDOFF_PENDING`，等待有人接手。 | 已在發行版本中 |
+
+**目前尚未支援：**
+
+- 一鍵或完全自動的 provider 切換。
+- 轉移 Claude 或 Codex 內部的對話記憶。只會轉移已記錄的任務狀態。
+- 在沒有共用專案的情況下接續。下一個 AI 需要能存取同一個專案，以及任務所涉及的檔案。
+- 切換正在執行中的 Agent。沒有即時搶占。
+- 跳過核准。計畫在專案要求核准的情況下仍需要核准。
+- 證明 token 較少，或 Benchmark 成績更好。
+
+## 安裝與發行狀態
+
+`main` 分支已經領先最近一次的 PyPI 發行版本。依照本 README 的指令操作前，請先確認你使用的是哪一個版本。
+
+| 功能 | PyPI 0.3.2（`pip install ccc-mcp`） | `main`（原始碼） |
+| --- | --- | --- |
+| 共用 Context、任務紀錄、主機執行的測試 | 有 | 有 |
+| 額度備援（`--quota-fallback`） | 有 | 有 |
+| `task continue --target` 接續 Prompt | 沒有 | 開發預覽 |
+| 控制台任務頁的交接面板（技術紀錄） | 沒有 | 尚未收錄於 `main` |
+
+**已發行版本：**
+
+```bash
+pip install ccc-mcp
+ccc-mcp ui
+```
+
+**開發預覽（交接指令）：** 已提交到 `main` 並推送，但尚未發行。請從原始碼安裝：
+
+```bash
+git clone https://github.com/bruce601080102/ccc-mcp.git
+cd ccc-mcp
+pip install -e .
+ccc-mcp --project <id> task continue --target codex
+```
+
+原始碼安裝在下次發行前仍會顯示版本 0.3.1。若 `ccc-mcp --project <id> task continue --help` 出現查無此指令的訊息，代表你使用的是已發行版本。
+
+## 更多功能
 
 <p align="center">
   <img src="docs/assets/screenshots/console-chat-zh.png" alt="任務像聊天室：每個 AI 角色有自己的像素頭像，用自己的口吻回報" width="860">
 </p>
-
-### 要證據，不聽自我回報
-測試由主機執行，不由 Agent 自己說。每一次 diff、測試結果與審查都存在專案旁邊，可以檢視、暫停，或在另一個對話接續。Agent 說「測試通過」不算數。
 
 ### 一間 AI 專家的聊天室
 工作就是一場對話。**19 個角色**（分析、設計、開發、程式碼審查、資安審查、研究員、撰稿人、事實查核員…）各有**像素頭像和可以自己取的名字**，任務傳到誰就由誰用自己的口吻回報。隨時可以暫停、停止或留下修正意見，不必再猜現在輪到誰、上一個做了什麼。
@@ -61,6 +157,17 @@ ChatGPT 擔任日常團隊的某一步時，交出報告後下一步立刻開始
 
 `ccc-mcp ui` 把專案（可**自訂圖示**：像素角色、表情符號或文字，再選顏色）、群組、設定、Context、Skills 與 MCP 工具集中在一處。有淺色與深色主題、繁體中文與英文，手機寬度也能用。
 
+### 暫停、修正與接續
+
+在本機介面以有證據的對話閱讀每個任務；暫停、繼續、停止，或留下修正意見。保存的交接資訊會讓 ChatGPT 與下一個 Agent 都知道目前狀況。
+
+### 可追溯的執行評估
+
+選用的評估引擎會根據已保存的證據（主機測試、diff、靜態檢查）評分已完成的執行。見[評分是怎麼算的](#評分是怎麼算的)。
+
+### Skills 與 MCP 工具
+
+安裝可重複使用的 `SKILL.md` 工作指引，支援多層目錄的補充檔案；在 UI 選擇全域 Skills，讓所有專案與角色都能使用。可探索本機 MCP server，為專案安裝並勾選允許使用的工具，再由 ChatGPT 呼叫。例如 `codebase-memory-mcp` 可以提供程式架構與關聯。Skill 提供工作方法，MCP 工具提供即時能力。
 
 ## 觀看 Demo
 
@@ -69,6 +176,8 @@ ChatGPT 擔任日常團隊的某一步時，交出報告後下一步立刻開始
 https://github.com/user-attachments/assets/eb7512b3-7f67-4a2e-aa7a-9e4b06a9a7d2
 
 [Google Drive 也保留原始錄影](https://drive.google.com/drive/folders/15vn8wYrZ55JL5Aetb1IR6YGm7fK1i81m)；[SWE-bench 證據](#實際成果三題選定的-swe-bench-verified-案例)則另外記錄官方 harness 的結果。
+
+這段影片沒有展示跨對話交接。那次測試見[真實的跨對話測試](#真實的跨對話測試)。
 
 想自己操作？下方的快速開始會帶你從 `ccc-mcp ui` 連上 ChatGPT，並讓它處理已授權的本機專案。
 
@@ -81,31 +190,16 @@ pip install ccc-mcp
 ccc-mcp ui
 ```
 
-需要 Git 與 Python 3.11 以上。接著在介面裡：
+需要 Git 與 Python 3.11 以上。以上是已發行版本的安裝方式；`task continue --target` 交接指令尚未收錄於此版本，要使用時請從原始碼安裝，見[安裝與發行狀態](#安裝與發行狀態)。接著在介面裡：
 
-1. **所有專案：**建立專案或加入既有資料夾，再授權該專案寫入。
-2. **連線：**依[連接 ChatGPT](docs/ch/2-connect-chatgpt.md)建立 OpenAI Platform Tunnel，在控制台輸入 Tunnel ID 與 runtime API key。
-3. **設定：**選擇 `chatgpt-only` profile。**測試指令**可以留空：ccc-mcp 會安裝專案宣告的 Python 相依套件，並在可能時依本次修改的測試檔選擇測試。需要指定測試範圍時再填指令。
-4. **ChatGPT：**選取 ccc-mcp 連線，直接提出修改需求；回到 UI 的**任務**與**脈絡**查看實際變更、測試結果和下一步。
+1. **所有專案：** 建立專案或加入既有資料夾，再授權該專案寫入。
+2. **連線：** 依[連接 ChatGPT](docs/ch/2-connect-chatgpt.md)建立 OpenAI Platform Tunnel，在控制台輸入 Tunnel ID 與 runtime API key。
+3. **設定：** 選擇 `chatgpt-only` profile。**測試指令**可以留空：ccc-mcp 會安裝專案宣告的 Python 相依套件，並在可能時依本次修改的測試檔選擇測試。需要指定測試範圍時再填指令。
+4. **ChatGPT：** 選取 ccc-mcp 連線，直接提出修改需求；回到 UI 的**任務**與**脈絡**查看實際變更、測試結果和下一步。
 
 UI 只在本機 `127.0.0.1` 提供服務，按 Ctrl+C 停止。[查看控制台所有頁面](#web-控制台)。
 
-**關於 token 與金鑰：**此工作流使用你現有的 ChatGPT 方案，無須另外申請 OpenAI *模型* API 金鑰，也不產生模型 API 的逐 token 計費；[ChatGPT 方案本身仍有使用限制](https://learn.chatgpt.com/docs/pricing)。ccc-mcp 並不宣稱比單一 Agent 更省 token：`SA → SD/RD → REVIEW` 流程多了幾輪，換來的是可驗證性；每個任務的 token 比較仍在量測中。Tunnel 連線會使用獨立的 runtime API key，詳見[連線設定](docs/ch/2-connect-chatgpt.md)。
-
-## 特色一覽
-
-| 能力 | 你可以做什麼 |
-| --- | --- |
-| **證據，不是口頭回報** | 由主機安裝宣告的相依套件並自行執行 pytest；Agent 說「測試通過」不算數。每一輪都保存主機回傳的結果、可取得的 exit code、diff、報告與審查證據。 |
-| **ChatGPT Chat 寫本機程式** | 在對話中讓 ChatGPT 讀取、修改已授權專案，接著執行測試；`chatgpt-only` 不需要安裝 Codex 或 Claude Code。 |
-| **可接續的工作流** | 預設以 `SA → SD → RD → CR` 處理任務（也可選經典、完整、日常團隊或自己組合的工作流），保存版本化共用 Context 與執行紀錄；在另一個聊天室從專案內的 `.ccc-mcp` 資料接續。 |
-| **有身分的角色** | 19 個角色，各有像素頭像和可自取的名字，以聊天室呈現。審查者會退回問題，退回次數有上限，發現必須附證據。 |
-| **能力圖** | 每個角色有六軸能力圖，每套工作流有合併後的能力圖與戰力，執行前就能看出一支隊伍擅長什麼。 |
-| **任務對話與控制** | 以有證據的對話閱讀每個任務；在本機介面暫停、繼續、停止或留下修正意見，並透過保存的交接資訊告知 ChatGPT 與下一個 Agent。 |
-| **可追溯的執行評估** | 選用評估引擎會將主機測試、diff 與靜態檢查整理成逐次評估報告；品質分數同時顯示證據覆蓋率，缺資料不會假裝成滿分。可在任務頁評估、檢查來源並保留重新評估版本。 |
-| **Skills，包含 MCP 型 Skill** | 安裝可重複使用的 `SKILL.md` 工作指引，支援多層目錄的補充檔案；在 UI 選擇全域 Skills，提供所有專案及角色使用。Skill 可引導 Agent 呼叫已另外安裝的 MCP 工具。 |
-| **MCP Server 與工具** | 探索本機 MCP Server，為專案安裝並勾選允許使用的工具，再由 ChatGPT 呼叫。例如使用 `codebase-memory-mcp` 分析程式架構與關聯。Skill 提供工作方法，MCP 工具提供即時能力。 |
-| **一個本機控制中心** | 用 `ccc-mcp ui` 管理專案、權限、連線、全域 Skills、各專案 MCP 工具、任務及脈絡；CLI 仍可供腳本與進階操作使用。 |
+**關於 token 與金鑰：** 此工作流使用你現有的 ChatGPT 方案，無須另外申請 OpenAI *模型* API 金鑰，也不產生模型 API 的逐 token 計費；[ChatGPT 方案本身仍有使用限制](https://learn.chatgpt.com/docs/pricing)。ccc-mcp 並不宣稱比單一 Agent 更省 token：`SA → SD/RD → REVIEW` 流程多了幾輪，換來的是可驗證性；每個任務的 token 比較仍在量測中。Tunnel 連線會使用獨立的 runtime API key，詳見[連線設定](docs/ch/2-connect-chatgpt.md)。
 
 ## 評分是怎麼算的
 
@@ -135,6 +229,8 @@ UI 只在本機 `127.0.0.1` 提供服務，按 Ctrl+C 停止。[查看控制台�
 ## 以 ChatGPT 為主，其他 Agent 選用
 
 選擇 `chatgpt-only` profile 後，由 ChatGPT 擔任專案管理者，並完成所選工作流的每個角色。每次交接都保存紀錄，方便在新聊天室讀取既有狀態繼續工作。
+
+在 `chatgpt-only` 模式下，ChatGPT 可以讀取並修改已授權的本機專案，然後在同一個對話中繼續工作。不需要安裝 Codex 或 Claude Code；它使用你現有的 ChatGPT 方案，不另外計費模型 API。
 
 ```text
 ChatGPT Chat → 本機專案 → 測試、diff、審查
@@ -175,7 +271,7 @@ Claude 額度同步須自行啟用：開啟**工作戰情中心 → 用量與剩
 | **Skills 與 MCP** | 查看共用 Skills；替單一專案探索、安裝及管理本機 stdio MCP server 與其可用工具。 |
 | **文件** | 在控制台內閱讀隨套件安裝的繁中與英文指南。 |
 
-在 **Skills 與 MCP** 頁可檢查工具、勾選此專案允許使用的工具、以 JSON 參數呼叫已授權工具，並查看最近的 MCP 呼叫紀錄。全域安裝的 MCP server 也會顯示於此，但仍須用 CLI 移除。側邊欄可切換介面語言，這項瀏覽器偏好與專案報告語言分開。**連線**頁可選擇將金鑰記住在這台裝置上（`~/.ccc-mcp/tunnel/credentials.json`，只開放本機帳號讀取）；金鑰儲存後不會再回傳給瀏覽器。啟用寫入、清除歷史和刪除等操作都需要輸入確認文字；詳見[可靠性與安全邊界](docs/ch/7-reliability-and-security.md#web-控制台)。
+在 **Skills 與 MCP** 頁可檢查工具、勾選此專案允許使用的工具、以 JSON 參數呼叫已授權工具，並查看最近的 MCP 呼叫紀錄。全域安裝的 MCP server 也會顯示於此，但仍須用 CLI 移除。側邊欄可切換介面語言，這項瀏覽器偏好與專案報告語言分開。**連線**頁可選擇將金鑰記住在這台裝置上（`~/.ccc-mcp/tunnel/credentials.json`，只開放本機帳號讀取）；金鑰儲存後不會再回傳給瀏覽器。啟用寫入、清除歷史和刪除等操作都需要輸入確認文字；詳見[可靠性與安全邊界](docs/ch/7-reliability-and-security.md#10-web-控制台)。
 
 **所有專案**頁可建立自訂群組，透過下拉選單或拖放移動專案卡片，並調整群組順序；分類只儲存在本機 `<home>/ui/project_groups.json`，不更動專案路徑或設定。**連線**頁可儲存多筆具名稱的設定，同一 Tunnel ID 也能存不同金鑰；選取設定後按「連線」即可切換，但同時間只執行一組 Tunnel 連線。
 

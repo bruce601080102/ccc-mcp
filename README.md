@@ -4,10 +4,6 @@
 
 # ccc-mcp
 
-**A team of AI roles that works on your computer, and shows its work.**
-
-Let ChatGPT Chat write, test, and review code (or plan a trip, draft a proposal, check the facts) as a chat room of specialists.
-
 [![Manual CI](https://img.shields.io/github/actions/workflow/status/bruce601080102/ccc-mcp/ci.yaml?branch=main&style=flat-square&logo=githubactions&logoColor=white&label=Manual%20CI)](https://github.com/bruce601080102/ccc-mcp/actions/workflows/ci.yaml)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![Platforms](https://img.shields.io/badge/Platforms-macOS%20%7C%20Linux%20%7C%20Windows-555555?style=flat-square)](docs/en/1-install-and-sign-in.md)
@@ -18,18 +14,118 @@ Let ChatGPT Chat write, test, and review code (or plan a trip, draft a proposal,
 [![Codex](https://img.shields.io/badge/Codex-Optional-000000?style=flat-square)](docs/en/4-workflow.md)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-Optional-D97757?style=flat-square)](docs/en/4-workflow.md)
 
-ccc-mcp connects ChatGPT Chat to a local coding workspace through MCP, so it can work on an **authorized repository**. Its core idea: **don't take an AI's word that the code works — keep local evidence.** Tests are run by the host, not reported by the agent; every diff, test result and review is saved and resumable, which a chat window can't do on its own. As a bonus, it runs on your existing ChatGPT plan, with no separately metered model API to set up. **ChatGPT-only is the primary workflow.** Codex and Claude Code are optional providers for teams that want to split roles across tools.
+**Switch AI. Keep Your Progress.**
+
+Mid-task, switching AI usually means starting over. You re-explain what was decided, what already works, what is still missing, and what the tests actually said, and the new AI still guesses wrong about something.
+
+**ccc-mcp keeps that state in your repository and writes a handoff prompt from it.** The prompt is built from the saved task, the approved plan, shared Context, live Git status and the tests the host ran. The next AI starts from recorded facts, not from your summary.
+
+**Why not copy a summary by hand?** Your summary is only as complete as your memory. The generated handoff keeps what the host verified apart from what an Agent claimed, and it lists the uncommitted changes that must survive the switch.
+
+**Real evidence.** In one recorded run, Claude Code implemented `slugify`, and a new Codex session continued from the handoff and implemented `count_words`. A pytest run done locally by the user passed (2 passed). It is not a ccc-mcp Host TEST-RESULT. The conditions and limits of that run are in [A real cross-session test](#a-real-cross-session-test).
+
+**Try it now.**
+
+- Released version (PyPI 0.3.2): `pip install ccc-mcp`, then `ccc-mcp ui`. Version 0.3.2 has no `task continue` command yet.
+- Handoff command (Development Preview, from `main`): install from source as shown in [Install and release status](#install-and-release-status).
+
+```bash
+ccc-mcp --project my-project task continue --target codex
+```
+
+ChatGPT-only is a complete setup. It runs on your existing ChatGPT plan with no separately metered model API, so you do not need a second AI subscription. Claude Code and Codex CLI are optional.
 
 > [繁體中文 README](README_ZH.md) · [English documentation](docs/en/1-install-and-sign-in.md)
 
-## Highlights
+## A real cross-session test
+
+One recorded run on a small Python project, `continuity-session-test`. Both AI sessions worked in the same repository.
+
+| Step | What happened |
+| --- | --- |
+| 1. Claude Code (session A) | Implemented `slugify`. The `slugify` tests passed. `count_words` still raised `NotImplementedError`. |
+| 2. Handoff | Ran `ccc-mcp --project <id> task continue --target codex` to produce the Continuation Prompt. |
+| 3. Codex (new session B) | Read the prompt, the shared Context and the repository. After the user explicitly authorized the second phase, implemented `count_words` and kept Claude's `slugify` change. |
+| 4. Local check | The user ran `python -m pytest -q`: **2 passed**. `git diff --check` was clean. No existing test was changed. Nothing was committed or pushed. |
+
+**How to read this run**
+
+- Same repository, different AI sessions. Session B did not inherit session A's chat history.
+- The handoff was the generated Continuation Prompt plus ccc-mcp's shared Context.
+- The second phase ran only after the user explicitly authorized it.
+- The `2 passed` is a local pytest run by the user. It is not a ccc-mcp formal Host TEST-RESULT, and ccc-mcp's own PM gate was not completed automatically.
+
+**What it does not show:** that every project or every switch works this way, that the new AI remembers the earlier session, or that tokens or time went down.
+
+## How the handoff works
+
+ccc-mcp is a local MCP server and command-line tool. It connects ChatGPT Chat, Claude Code or Codex CLI to an **authorized repository**, and it follows one rule: don't take an AI's word that the code works. The host runs the tests. Every diff, test result and review is saved in the project's `.ccc-mcp` data, so a task can be resumed from another chat. **ChatGPT-only is the primary workflow.** Codex and Claude Code are optional providers for teams that want to split roles across tools.
+
+The shared Context and the Approved Plan are the source of truth. The prompt carries them to the next AI. It includes:
+
+- **Task and plan:** the requirement, the acceptance criteria, and the approved plan's ID, version, hash and text. If no plan is approved, or the newest plan is an unapproved draft, the prompt says so and does not present the draft as an order.
+- **Claims and host evidence, kept apart:** each Agent's report is labeled as its own claim. Host-run test results are labeled as host evidence. A claim the host has not verified is marked as not done.
+- **Remaining work:** derived from the task's state. Where ccc-mcp cannot tell what is left, the prompt says "to confirm" and names the files to check.
+- **Live Git state:** `git status` and a diff summary, with an instruction not to break existing uncommitted changes.
+- **Source paths:** the files the next AI should read to check each point.
+
+Use `--target claude`, `--target codex` or `--target chatgpt` to address the prompt to a specific AI. Without `--target`, you get the plain handoff report.
+
+Writing the prompt does not mean the next AI has taken over. The new session still has to read it, work in the same repository, and pass the host's tests.
+
+## Continue work with another AI
+
+Three mechanisms are involved. They are separate, so read the status column.
+
+| Mechanism | How it works | Status |
+| --- | --- | --- |
+| **Prompt-first handoff** | You run `task continue --target` and paste the prompt into the new session. Nothing is switched for you. | Development Preview: on `main`, not in PyPI 0.3.2 |
+| **Shared Context and MCP-assisted resume** | A new ChatGPT chat reads the saved task state from the project's `.ccc-mcp` data through ccc-mcp's MCP tools. | In the released version |
+| **Quota fallback** | When a role's provider reports quota exhaustion, ccc-mcp can re-dispatch the same task to a fallback provider you configured with `--quota-fallback`. Dispatching is not completion: the fallback may wait in `CHATGPT_HANDOFF_PENDING` until someone takes it over. | In the released version |
+
+**Not supported yet:**
+
+- A one-click or fully automatic provider switch.
+- Moving a Claude or Codex internal session memory. Only the recorded task state moves.
+- Continuing without the shared repository. The next AI needs access to the same repository and the files the task touches.
+- Switching an Agent that is already running. There is no live preemption.
+- Skipping approval. Plans still need approval where the project requires it.
+- Proof of fewer tokens or better benchmark results.
+
+## Install and release status
+
+The `main` branch is ahead of the last PyPI release. Check which one you have before you follow a command in this README.
+
+| Feature | PyPI 0.3.2 (`pip install ccc-mcp`) | `main` (source checkout) |
+| --- | --- | --- |
+| Shared Context, task records, host-run tests | Yes | Yes |
+| Quota fallback (`--quota-fallback`) | Yes | Yes |
+| `task continue --target` Continuation Prompt | No | Development Preview |
+| Handoff panel in the console (Technical record) | No | Not on `main` yet |
+
+**Released version:**
+
+```bash
+pip install ccc-mcp
+ccc-mcp ui
+```
+
+**Development Preview (the handoff command):** committed to `main` and pushed, but not yet released. Install from source:
+
+```bash
+git clone https://github.com/bruce601080102/ccc-mcp.git
+cd ccc-mcp
+pip install -e .
+ccc-mcp --project <id> task continue --target codex
+```
+
+A source checkout still reports version 0.3.1 until the next release. If `ccc-mcp --project <id> task continue --help` says there is no such command, you have the released version.
+
+## More features
 
 <p align="center">
   <img src="docs/assets/screenshots/console-chat.png" alt="A task shown as a chat room: each AI role has a pixel avatar and reports in its own voice" width="860">
 </p>
-
-### Evidence, not self-reports
-The host runs the tests, not the agent. Every diff, test result and review is saved next to the project, so a task can be inspected, paused or resumed from another chat. An agent saying “tests pass” never counts.
 
 ### A chat room of AI specialists
 Work is a conversation. **19 roles** (analyst, designer, developer, code reviewer, security reviewer, researcher, writer, fact checker and more) each have a **pixel avatar and a name you choose**, and report in their own voice as the task moves from one to the next. Pause, stop, or leave a correction at any point. No more guessing who is working now or what the last one did.
@@ -61,6 +157,17 @@ When ChatGPT plays an everyday-team step, the next step starts as soon as it han
 
 `ccc-mcp ui` gives you projects (with **custom icons**: a pixel character, an emoji or a letter, in your color), groups, settings, Context, Skills and MCP tools in one place. Light and dark themes, English and Traditional Chinese, and a layout that works on a phone.
 
+### Pause, correct and resume
+
+Read each task as an evidence-backed conversation. Pause, resume, stop, or leave a correction from the local UI. Saved handoffs keep ChatGPT and the next agent informed.
+
+### Traceable execution evaluation
+
+The optional evaluation engine scores finished executions from saved evidence: host tests, the diff and lint findings. See [How execution evaluation works](#how-execution-evaluation-works).
+
+### Skills and MCP tools
+
+Install reusable `SKILL.md` guidance, including nested supporting files, and choose global Skills in the UI so every project and role can use them. Discover local MCP servers, install one for a project, select which tools the project may use, and call them from ChatGPT. For example, `codebase-memory-mcp` can provide repository structure and code relationships. Skills guide the workflow; MCP tools supply live capabilities.
 
 ## Watch the demo
 
@@ -70,11 +177,13 @@ https://github.com/user-attachments/assets/eb7512b3-7f67-4a2e-aa7a-9e4b06a9a7d2
 
 The [original recording is on Google Drive](https://drive.google.com/drive/folders/15vn8wYrZ55JL5Aetb1IR6YGm7fK1i81m). The separate [SWE-bench evidence](#proof-three-selected-swe-bench-verified-cases) records the official harness results.
 
+This recording does not show the cross-session handoff. For that test, see [A real cross-session test](#a-real-cross-session-test).
+
 Want to try it yourself? The quick start below takes you from `ccc-mcp ui` to a ChatGPT conversation connected to an authorized local project.
 
 ## Start with the UI
 
-Install ccc-mcp, then open its local control center:
+Install the released version, then open its local control center. The `task continue --target` handoff is not in this release; see [Install and release status](#install-and-release-status).
 
 ```bash
 pip install ccc-mcp
@@ -91,21 +200,6 @@ Requires Git and Python 3.11+. In the UI:
 The UI runs on local `127.0.0.1` and stops with Ctrl+C. [See every console page](#web-console).
 
 **About tokens and keys:** This workflow uses your existing ChatGPT plan instead of an OpenAI *model* API key and its per-token API billing. [ChatGPT plan limits](https://learn.chatgpt.com/docs/pricing) still apply. ccc-mcp does not claim to use fewer tokens than a single agent: the `SA → SD/RD → REVIEW` workflow adds rounds in exchange for verification, and a per-task token comparison is still being measured. The Tunnel connection uses its own runtime API key; [connection setup](docs/en/2-connect-chatgpt.md) explains that key.
-
-## What makes ccc-mcp useful
-
-| Capability | What you get |
-| --- | --- |
-| **Evidence, not self-reports** | The host installs declared dependencies and runs pytest itself; an agent saying “tests pass” never counts. Host-observed results, exit codes when available, diffs, reports and review evidence are kept for every round. |
-| **ChatGPT Chat as the coding agent** | ChatGPT can read and edit an authorized local project, then continue the work in the same conversation. No Codex or Claude Code installation is required for `chatgpt-only`. |
-| **A recoverable workflow** | Run the default `SA → SD → RD → CR` workflow (or Classic, Full, an everyday team, or your own) with versioned shared Context and saved execution records. Resume a task in another chat from the project’s `.ccc-mcp` data. |
-| **Roles with identities** | 19 roles, each with a pixel avatar and a name you choose, shown as a chat room. Reviewers send work back, with capped rounds and evidence-backed findings. |
-| **Ability charts** | A six-axis chart for every role and a combined chart and team power for every workflow, so you can see what a team is good at before you run it. |
-| **Task conversation and controls** | Read each task as an evidence-backed conversation. Pause, resume, stop, or leave a correction from the local UI; saved handoffs keep ChatGPT and the next agent informed. |
-| **Traceable execution evaluation** | The optional evaluation engine turns host tests, diffs, and lint findings into versioned reports. Quality scores are paired with evidence coverage; missing signals are never silently treated as perfect. Evaluate and inspect results from the task page. |
-| **Skills, including MCP-oriented Skills** | Install reusable `SKILL.md` guidance, including nested supporting files. Choose global Skills in the UI so every project and role can use them. A Skill can guide an agent to use an MCP tool after that server is installed. |
-| **MCP servers and tools** | Discover local MCP servers, install one for a project, select which tools the project may use, and call them from ChatGPT. For example, `codebase-memory-mcp` can provide repository structure and code relationships. Skills guide the workflow; MCP tools supply live capabilities. |
-| **One local control center** | Manage projects, permissions, connections, global Skills, per-project MCP tools, tasks, and Context from `ccc-mcp ui`. The CLI remains available for scripts and advanced use. |
 
 ## How execution evaluation works
 
@@ -135,6 +229,8 @@ Using **ChatGPT-only**, ccc-mcp resolved three selected [SWE-bench Verified](htt
 ## ChatGPT first; other agents are optional
 
 With the `chatgpt-only` profile selected, ChatGPT handles the project manager and every role of the selected workflow. The workflow records each handoff so the next chat can pick up the saved state.
+
+In `chatgpt-only`, ChatGPT can read and edit an authorized local project, then continue the work in the same conversation. No Codex or Claude Code installation is required. It runs on your existing ChatGPT plan, with no separately metered model API.
 
 ```text
 ChatGPT Chat → local project → tests, diff, review
