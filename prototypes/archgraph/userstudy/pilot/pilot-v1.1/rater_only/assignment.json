@@ -1,0 +1,36 @@
+{
+  "P1": [
+    {
+      "block": "block1_notes",
+      "case": "case1_notes",
+      "condition": "A"
+    },
+    {
+      "block": "block2_bookmarks",
+      "case": "case2_bookmarks",
+      "condition": "B"
+    },
+    {
+      "block": "block3_todos",
+      "case": "case3_todos",
+      "condition": "C"
+    }
+  ],
+  "P2": [
+    {
+      "block": "block1_notes",
+      "case": "case1_notes",
+      "condition": "C"
+    },
+    {
+      "block": "block2_bookmarks",
+      "case": "case2_bookmarks",
+      "condition": "B"
+    },
+    {
+      "block": "block3_todos",
+      "case": "case3_todos",
+      "condition": "A"
+    }
+  ]
+}

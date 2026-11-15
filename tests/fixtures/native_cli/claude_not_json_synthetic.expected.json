@@ -1,0 +1,8 @@
+{
+  "provenance": {"kind": "synthetic", "note": "non-JSON output; nothing may be inferred"},
+  "provider": "claude",
+  "requested": "sonnet",
+  "usage": {"available": false},
+  "canonical": {"status": "UNAVAILABLE", "total_assumed": null, "total_range": null, "total_status": "UNAVAILABLE"},
+  "identity": {"status": "UNKNOWN", "reason": "CLI_REPORTED_NO_MODEL"}
+}

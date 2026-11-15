@@ -1,0 +1,215 @@
+{
+  "task": "TASK-0003",
+  "title": "JSON 儲存改為 SQLite，保留舊 JSON 匯入",
+  "features": [
+    {
+      "id": "F-01",
+      "title_plain": "新增筆記",
+      "members": [
+        "notes/cli.py::cmd_add"
+      ]
+    },
+    {
+      "id": "F-02",
+      "title_plain": "列出筆記",
+      "members": [
+        "notes/cli.py::cmd_list"
+      ]
+    },
+    {
+      "id": "F-03",
+      "title_plain": "搜尋筆記",
+      "members": [
+        "notes/cli.py::cmd_search",
+        "notes/search.py::search_notes"
+      ]
+    },
+    {
+      "id": "F-04",
+      "title_plain": "本機儲存（SQLite）",
+      "renamed_from": "本機儲存（JSON 檔）",
+      "members": [
+        "notes/sqlite_store.py::SqliteStore",
+        "notes/sqlite_store.py::SqliteStore.save",
+        "notes/sqlite_store.py::SqliteStore.load",
+        "notes/storage.py::NotesStore.save_json"
+      ]
+    },
+    {
+      "id": "F-05",
+      "title_plain": "標籤功能",
+      "members": [
+        "notes/tags.py::normalize_tags",
+        "notes/models.py::Note"
+      ]
+    },
+    {
+      "id": "F-06",
+      "title_plain": "匯入舊 JSON",
+      "members": [
+        "notes/migrate.py::JsonImporter.read",
+        "notes/migrate.py::import_into_sqlite"
+      ],
+      "new": true
+    }
+  ],
+  "symbols": [
+    {
+      "key": "notes/storage.py::NotesStore",
+      "action": "REMOVE",
+      "reason": "JSON 儲存移除，功能由 SqliteStore 與 JsonImporter 取代"
+    },
+    {
+      "key": "notes/storage.py::NotesStore.__init__",
+      "action": "REMOVE",
+      "reason": "同上"
+    },
+    {
+      "key": "notes/storage.py::NotesStore.load_json",
+      "action": "REMOVE",
+      "reason": "讀取舊 JSON 的功能搬到 migrate.py"
+    },
+    {
+      "key": "notes/storage.py::NotesStore.save_json",
+      "action": "REMOVE",
+      "reason": "改用 SQLite"
+    },
+    {
+      "key": "notes/migrate.py::JsonImporter",
+      "action": "ADD",
+      "reason": "一次性匯入舊 JSON"
+    },
+    {
+      "key": "notes/migrate.py::JsonImporter.__init__",
+      "action": "ADD",
+      "reason": "匯入路徑"
+    },
+    {
+      "key": "notes/migrate.py::JsonImporter.read",
+      "action": "ADD",
+      "reason": "讀取並驗證舊 JSON"
+    },
+    {
+      "key": "notes/migrate.py::import_into_sqlite",
+      "action": "ADD",
+      "reason": "匯入到 SQLite"
+    },
+    {
+      "key": "notes/sqlite_store.py::SqliteStore",
+      "action": "ADD",
+      "reason": "SQLite 儲存"
+    },
+    {
+      "key": "notes/sqlite_store.py::SqliteStore.__init__",
+      "action": "ADD",
+      "reason": "開啟資料庫"
+    },
+    {
+      "key": "notes/sqlite_store.py::SqliteStore.save",
+      "action": "ADD",
+      "reason": "寫入"
+    },
+    {
+      "key": "notes/sqlite_store.py::SqliteStore.load",
+      "action": "ADD",
+      "reason": "讀取"
+    },
+    {
+      "key": "notes/cli.py::main",
+      "action": "MODIFY",
+      "reason": "改用 SqliteStore"
+    },
+    {
+      "key": "notes/cli.py::cmd_add",
+      "action": "MODIFY",
+      "reason": "改用 SqliteStore"
+    },
+    {
+      "key": "notes/cli.py::cmd_list",
+      "action": "MODIFY",
+      "reason": "改用 SqliteStore"
+    },
+    {
+      "key": "notes/cli.py::cmd_search",
+      "action": "MODIFY",
+      "reason": "改用 SqliteStore"
+    },
+    {
+      "key": "tests/test_migrate.py::test_json_importer_reads_list",
+      "action": "ADD",
+      "reason": "匯入測試"
+    },
+    {
+      "key": "tests/test_migrate.py::test_import_into_sqlite_roundtrip",
+      "action": "ADD",
+      "reason": "匯入往返測試"
+    }
+  ],
+  "files": {
+    "delete": [
+      "notes/storage.py"
+    ],
+    "add": [
+      "notes/migrate.py",
+      "notes/sqlite_store.py",
+      "tests/test_migrate.py"
+    ],
+    "modify": [
+      "notes/cli.py"
+    ]
+  },
+  "module_titles": {
+    "notes/__init__.py": "套件入口",
+    "notes/cli.py": "命令列入口",
+    "notes/models.py": "筆記資料結構",
+    "notes/storage.py": "JSON 儲存（舊）",
+    "notes/search.py": "搜尋邏輯",
+    "notes/util.py": "時間工具",
+    "notes/tags.py": "標籤整理",
+    "notes/sqlite_store.py": "SQLite 儲存",
+    "notes/migrate.py": "舊 JSON 匯入",
+    "notes/schema.sql": "資料表定義",
+    "tests/test_search.py": "搜尋測試",
+    "tests/test_tags.py": "標籤測試",
+    "tests/test_migrate.py": "匯入測試",
+    ".gitignore": "專案設定"
+  },
+  "planned_dependencies": [
+    [
+      "notes/cli.py",
+      "notes/sqlite_store.py"
+    ],
+    [
+      "notes/cli.py",
+      "notes/search.py"
+    ],
+    [
+      "notes/cli.py",
+      "notes/tags.py"
+    ],
+    [
+      "notes/cli.py",
+      "notes/util.py"
+    ],
+    [
+      "notes/migrate.py",
+      "notes/sqlite_store.py"
+    ],
+    [
+      "tests/test_search.py",
+      "notes/search.py"
+    ],
+    [
+      "tests/test_migrate.py",
+      "notes/migrate.py"
+    ],
+    [
+      "tests/test_migrate.py",
+      "notes/sqlite_store.py"
+    ],
+    [
+      "tests/test_tags.py",
+      "notes/tags.py"
+    ]
+  ]
+}

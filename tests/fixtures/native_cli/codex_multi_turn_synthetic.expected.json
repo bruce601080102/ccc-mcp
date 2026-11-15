@@ -1,0 +1,20 @@
+{
+  "provenance": {"kind": "synthetic", "note": "two turns; cumulative vs per-turn meaning is UNKNOWN"},
+  "provider": "codex",
+  "requested": null,
+  "usage": {
+    "available": true,
+    "tokens": {"input_tokens": 1200, "cached_input_tokens": 800, "cache_write_input_tokens": 0, "output_tokens": 130, "reasoning_output_tokens": 0},
+    "turns": 2,
+    "reported_models": []
+  },
+  "canonical": {
+    "status": "COMPLETE",
+    "fields": {"input_uncached": 400, "cache_read": 800, "cache_write": 0, "output_visible": 130, "reasoning": 0},
+    "total_assumed": 1330,
+    "total_range": [780, 1330],
+    "total_status": "UNVERIFIED",
+    "components_sum": 1330
+  },
+  "identity": {"status": "UNKNOWN", "reason": "REQUEST_UNSPECIFIED"}
+}

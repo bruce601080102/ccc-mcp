@@ -1,0 +1,2505 @@
+{
+  "passed": 357,
+  "total": 357,
+  "results": [
+    {
+      "case": "case1_notes",
+      "task": "TASK-0001",
+      "check": "A gate status equals recomputed approval gate",
+      "ok": true,
+      "detail": "header=BLOCKED recomputed=BLOCKED"
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0001",
+      "check": "A gate blocker codes equal recomputed blockers",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0001",
+      "check": "A commit state equals delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0001",
+      "check": "A structure state equals delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0001",
+      "check": "A host test equals delta host-test state",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0001",
+      "check": "A out-of-plan list equals delta",
+      "ok": true,
+      "detail": "header=['notes/util.py'] delta=['notes/util.py']"
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0001",
+      "check": "A pending count equals delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0001",
+      "check": "A pending pairs in alerts equal delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0001",
+      "check": "A excluded count equals delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0001",
+      "check": "A unattributed out-of-plan files are a subset of out-of-plan files",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0001",
+      "check": "B planned tab nodes equal the approved plan files",
+      "ok": true,
+      "detail": "tab-only=[] plan-only=[]"
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0001",
+      "check": "C engineer file states equal delta file states",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0001",
+      "check": "C engineer out-of-plan list equals delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0001",
+      "check": "C engineer excluded paths equal delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0001",
+      "check": "C engineer identity events equal delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0001",
+      "check": "C engineer task id equals the Task",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0001",
+      "check": "novice view task equals the Task",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0001",
+      "check": "novice provisional flag equals delta current.provisional",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0001",
+      "check": "novice feature nodes equal novice.json features",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0001",
+      "check": "novice feature markers equal novice.json",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0001",
+      "check": "novice unattributed node exists exactly when files are unattributed",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0001",
+      "check": "novice feature files equal the plan's members",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0001",
+      "check": "novice edges connect existing feature nodes",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0001",
+      "check": "feature arrows: direct only with single-feature file evidence, else inferred",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0001",
+      "check": "no unconfirmed field mixes Git, scope and identity in the novice view",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0001",
+      "check": "every pending pair is reachable from the novice view",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0001",
+      "check": "history ends with the reported step",
+      "ok": true,
+      "detail": "history=commit:72167102fa0715410f3b17e8aca530e9fbdb9a37 expected=commit:72167102fa0715410f3b17e8aca530e9fbdb9a37"
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0001",
+      "check": "history base step equals delta base commit",
+      "ok": true,
+      "detail": "history=empty delta=empty"
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0001",
+      "check": "prior_tasks in view A are the earlier Tasks, in order",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0001",
+      "check": "HTML shows the gate status",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0001",
+      "check": "HTML names every out-of-plan file",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0001",
+      "check": "HTML names the Task",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0001",
+      "check": "host test state agrees with exit code",
+      "ok": true,
+      "detail": "state=PASSED exit=0"
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0002",
+      "check": "A gate status equals recomputed approval gate",
+      "ok": true,
+      "detail": "header=READY recomputed=READY"
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0002",
+      "check": "A gate blocker codes equal recomputed blockers",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0002",
+      "check": "A commit state equals delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0002",
+      "check": "A structure state equals delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0002",
+      "check": "A host test equals delta host-test state",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0002",
+      "check": "A out-of-plan list equals delta",
+      "ok": true,
+      "detail": "header=[] delta=[]"
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0002",
+      "check": "A pending count equals delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0002",
+      "check": "A pending pairs in alerts equal delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0002",
+      "check": "A excluded count equals delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0002",
+      "check": "A unattributed out-of-plan files are a subset of out-of-plan files",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0002",
+      "check": "B planned tab nodes equal the approved plan files",
+      "ok": true,
+      "detail": "tab-only=[] plan-only=[]"
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0002",
+      "check": "C engineer file states equal delta file states",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0002",
+      "check": "C engineer out-of-plan list equals delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0002",
+      "check": "C engineer excluded paths equal delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0002",
+      "check": "C engineer identity events equal delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0002",
+      "check": "C engineer task id equals the Task",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0002",
+      "check": "novice view task equals the Task",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0002",
+      "check": "novice provisional flag equals delta current.provisional",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0002",
+      "check": "novice feature nodes equal novice.json features",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0002",
+      "check": "novice feature markers equal novice.json",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0002",
+      "check": "novice unattributed node exists exactly when files are unattributed",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0002",
+      "check": "novice feature files equal the plan's members",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0002",
+      "check": "novice edges connect existing feature nodes",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0002",
+      "check": "feature arrows: direct only with single-feature file evidence, else inferred",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0002",
+      "check": "no unconfirmed field mixes Git, scope and identity in the novice view",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0002",
+      "check": "every pending pair is reachable from the novice view",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0002",
+      "check": "history ends with the reported step",
+      "ok": true,
+      "detail": "history=commit:ec10fda2c9b625a702939cd8416bbea4c330ffe9 expected=commit:ec10fda2c9b625a702939cd8416bbea4c330ffe9"
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0002",
+      "check": "history base step equals delta base commit",
+      "ok": true,
+      "detail": "history=commit:72167102fa0715410f3b17e8aca530e9fbdb9a37 delta=commit:72167102fa0715410f3b17e8aca530e9fbdb9a37"
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0002",
+      "check": "prior_tasks in view A are the earlier Tasks, in order",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0002",
+      "check": "HTML shows the gate status",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0002",
+      "check": "HTML names every out-of-plan file",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0002",
+      "check": "HTML names the Task",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0002",
+      "check": "host test state agrees with exit code",
+      "ok": true,
+      "detail": "state=PASSED exit=0"
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0003",
+      "check": "A gate status equals recomputed approval gate",
+      "ok": true,
+      "detail": "header=BLOCKED recomputed=BLOCKED"
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0003",
+      "check": "A gate blocker codes equal recomputed blockers",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0003",
+      "check": "A commit state equals delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0003",
+      "check": "A structure state equals delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0003",
+      "check": "A host test equals delta host-test state",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0003",
+      "check": "A out-of-plan list equals delta",
+      "ok": true,
+      "detail": "header=['notes/models.py', 'notes/schema.sql'] delta=['notes/models.py', 'notes/schema.sql']"
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0003",
+      "check": "A pending count equals delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0003",
+      "check": "A pending pairs in alerts equal delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0003",
+      "check": "A excluded count equals delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0003",
+      "check": "A unattributed out-of-plan files are a subset of out-of-plan files",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0003",
+      "check": "B planned tab nodes equal the approved plan files",
+      "ok": true,
+      "detail": "tab-only=[] plan-only=[]"
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0003",
+      "check": "C engineer file states equal delta file states",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0003",
+      "check": "C engineer out-of-plan list equals delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0003",
+      "check": "C engineer excluded paths equal delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0003",
+      "check": "C engineer identity events equal delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0003",
+      "check": "C engineer task id equals the Task",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0003",
+      "check": "novice view task equals the Task",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0003",
+      "check": "novice provisional flag equals delta current.provisional",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0003",
+      "check": "novice feature nodes equal novice.json features",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0003",
+      "check": "novice feature markers equal novice.json",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0003",
+      "check": "novice unattributed node exists exactly when files are unattributed",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0003",
+      "check": "novice feature files equal the plan's members",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0003",
+      "check": "novice edges connect existing feature nodes",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0003",
+      "check": "feature arrows: direct only with single-feature file evidence, else inferred",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0003",
+      "check": "no unconfirmed field mixes Git, scope and identity in the novice view",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0003",
+      "check": "every pending pair is reachable from the novice view",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0003",
+      "check": "history ends with the reported step",
+      "ok": true,
+      "detail": "history=worktree expected=worktree"
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0003",
+      "check": "history base step equals delta base commit",
+      "ok": true,
+      "detail": "history=commit:ec10fda2c9b625a702939cd8416bbea4c330ffe9 delta=commit:ec10fda2c9b625a702939cd8416bbea4c330ffe9"
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0003",
+      "check": "prior_tasks in view A are the earlier Tasks, in order",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0003",
+      "check": "HTML shows the gate status",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0003",
+      "check": "HTML names every out-of-plan file",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0003",
+      "check": "HTML names the Task",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "TASK-0003",
+      "check": "host test state agrees with exit code",
+      "ok": true,
+      "detail": "state=PASSED exit=0"
+    },
+    {
+      "case": "case1_notes",
+      "task": "ALL",
+      "check": "verify_keys: TASK-0001 changed files equal git's view",
+      "ok": true,
+      "detail": "git=['.gitignore', 'notes/__init__.py', 'notes/cli.py', 'notes/models.py', 'notes/search.py', 'notes/storage.py', 'notes/util.py', 'tests/test_search.py'] facts=['.gitignore', 'notes/__init__.py', 'notes/cli.py', 'notes/models.py', 'notes/search.py', 'notes/storage.py', 'notes/util.py', 'tests/test_search.py']"
+    },
+    {
+      "case": "case1_notes",
+      "task": "ALL",
+      "check": "verify_keys: TASK-0001 every feature is ADD (base is empty)",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "ALL",
+      "check": "verify_keys: TASK-0001 host test re-run agrees with recorded state",
+      "ok": true,
+      "detail": "re-run=PASSED 1 passed in 0.01s"
+    },
+    {
+      "case": "case1_notes",
+      "task": "ALL",
+      "check": "verify_keys: TASK-0001 re-run summary reports passing tests",
+      "ok": true,
+      "detail": "1 passed in 0.01s"
+    },
+    {
+      "case": "case1_notes",
+      "task": "ALL",
+      "check": "verify_keys: TASK-0002 changed files equal git's view",
+      "ok": true,
+      "detail": "git=['notes/cli.py', 'notes/models.py', 'notes/search.py', 'notes/tags.py', 'tests/test_tags.py'] facts=['notes/cli.py', 'notes/models.py', 'notes/search.py', 'notes/tags.py', 'tests/test_tags.py']"
+    },
+    {
+      "case": "case1_notes",
+      "task": "ALL",
+      "check": "verify_keys: TASK-0002 ADD set equals git-derived ADD set",
+      "ok": true,
+      "detail": "git=['標籤功能']"
+    },
+    {
+      "case": "case1_notes",
+      "task": "ALL",
+      "check": "verify_keys: TASK-0002 MODIFY set equals git-derived MODIFY set",
+      "ok": true,
+      "detail": "git=['列出筆記', '搜尋筆記', '新增筆記']"
+    },
+    {
+      "case": "case1_notes",
+      "task": "ALL",
+      "check": "verify_keys: TASK-0002 host test re-run agrees with recorded state",
+      "ok": true,
+      "detail": "re-run=PASSED 2 passed in 0.01s"
+    },
+    {
+      "case": "case1_notes",
+      "task": "ALL",
+      "check": "verify_keys: TASK-0002 re-run summary reports passing tests",
+      "ok": true,
+      "detail": "2 passed in 0.01s"
+    },
+    {
+      "case": "case1_notes",
+      "task": "ALL",
+      "check": "verify_keys: TASK-0003 changed files equal git's view",
+      "ok": true,
+      "detail": "git=['notes/cli.py', 'notes/migrate.py', 'notes/models.py', 'notes/schema.sql', 'notes/sqlite_store.py', 'notes/storage.py', 'tests/test_migrate.py'] facts=['notes/cli.py', 'notes/migrate.py', 'notes/models.py', 'notes/schema.sql', 'notes/sqlite_store.py', 'notes/storage.py', 'tests/test_migrate.py']"
+    },
+    {
+      "case": "case1_notes",
+      "task": "ALL",
+      "check": "verify_keys: TASK-0003 ADD set equals git-derived ADD set",
+      "ok": true,
+      "detail": "git=['匯入舊 JSON']"
+    },
+    {
+      "case": "case1_notes",
+      "task": "ALL",
+      "check": "verify_keys: TASK-0003 MODIFY set equals git-derived MODIFY set",
+      "ok": true,
+      "detail": "git=['列出筆記', '搜尋筆記', '新增筆記', '本機儲存（SQLite）', '標籤功能']"
+    },
+    {
+      "case": "case1_notes",
+      "task": "ALL",
+      "check": "verify_keys: TASK-0003 out-of-plan files equal git minus plan",
+      "ok": true,
+      "detail": "git=['notes/models.py', 'notes/schema.sql']"
+    },
+    {
+      "case": "case1_notes",
+      "task": "ALL",
+      "check": "verify_keys: G2 implementation file defines the search function",
+      "ok": true,
+      "detail": "notes/search.py"
+    },
+    {
+      "case": "case1_notes",
+      "task": "ALL",
+      "check": "verify_keys: I1 dependents equal import evidence in the worktree",
+      "ok": true,
+      "detail": "import evidence=['notes/cli.py', 'tests/test_search.py']"
+    },
+    {
+      "case": "case1_notes",
+      "task": "ALL",
+      "check": "verify_keys: TASK-0003 host test re-run agrees with recorded state",
+      "ok": true,
+      "detail": "re-run=PASSED 4 passed in 0.03s"
+    },
+    {
+      "case": "case1_notes",
+      "task": "ALL",
+      "check": "verify_keys: TASK-0003 re-run summary reports passing tests",
+      "ok": true,
+      "detail": "4 passed in 0.03s"
+    },
+    {
+      "case": "case1_notes",
+      "task": "ALL",
+      "check": "verify_keys: E1 blocking reasons match the gate blockers",
+      "ok": true,
+      "detail": "['OUT_OF_PLAN', 'PENDING_IDENTITY']"
+    },
+    {
+      "case": "case1_notes",
+      "task": "ALL",
+      "check": "verify_keys: E1 answer is NO because the gate is BLOCKED",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case1_notes",
+      "task": "ALL",
+      "check": "verify_keys: E1 pending action is the commit, and it is not a blocker",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0001",
+      "check": "A gate status equals recomputed approval gate",
+      "ok": true,
+      "detail": "header=BLOCKED recomputed=BLOCKED"
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0001",
+      "check": "A gate blocker codes equal recomputed blockers",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0001",
+      "check": "A commit state equals delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0001",
+      "check": "A structure state equals delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0001",
+      "check": "A host test equals delta host-test state",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0001",
+      "check": "A out-of-plan list equals delta",
+      "ok": true,
+      "detail": "header=['bookmarks/util.py'] delta=['bookmarks/util.py']"
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0001",
+      "check": "A pending count equals delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0001",
+      "check": "A pending pairs in alerts equal delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0001",
+      "check": "A excluded count equals delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0001",
+      "check": "A unattributed out-of-plan files are a subset of out-of-plan files",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0001",
+      "check": "B planned tab nodes equal the approved plan files",
+      "ok": true,
+      "detail": "tab-only=[] plan-only=[]"
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0001",
+      "check": "C engineer file states equal delta file states",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0001",
+      "check": "C engineer out-of-plan list equals delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0001",
+      "check": "C engineer excluded paths equal delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0001",
+      "check": "C engineer identity events equal delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0001",
+      "check": "C engineer task id equals the Task",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0001",
+      "check": "novice view task equals the Task",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0001",
+      "check": "novice provisional flag equals delta current.provisional",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0001",
+      "check": "novice feature nodes equal novice.json features",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0001",
+      "check": "novice feature markers equal novice.json",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0001",
+      "check": "novice unattributed node exists exactly when files are unattributed",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0001",
+      "check": "novice feature files equal the plan's members",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0001",
+      "check": "novice edges connect existing feature nodes",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0001",
+      "check": "feature arrows: direct only with single-feature file evidence, else inferred",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0001",
+      "check": "no unconfirmed field mixes Git, scope and identity in the novice view",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0001",
+      "check": "every pending pair is reachable from the novice view",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0001",
+      "check": "history ends with the reported step",
+      "ok": true,
+      "detail": "history=commit:046f276fbd324eae7e937f508ef69546151b4b10 expected=commit:046f276fbd324eae7e937f508ef69546151b4b10"
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0001",
+      "check": "history base step equals delta base commit",
+      "ok": true,
+      "detail": "history=empty delta=empty"
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0001",
+      "check": "prior_tasks in view A are the earlier Tasks, in order",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0001",
+      "check": "HTML shows the gate status",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0001",
+      "check": "HTML names every out-of-plan file",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0001",
+      "check": "HTML names the Task",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0001",
+      "check": "host test state agrees with exit code",
+      "ok": true,
+      "detail": "state=PASSED exit=0"
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0002",
+      "check": "A gate status equals recomputed approval gate",
+      "ok": true,
+      "detail": "header=READY recomputed=READY"
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0002",
+      "check": "A gate blocker codes equal recomputed blockers",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0002",
+      "check": "A commit state equals delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0002",
+      "check": "A structure state equals delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0002",
+      "check": "A host test equals delta host-test state",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0002",
+      "check": "A out-of-plan list equals delta",
+      "ok": true,
+      "detail": "header=[] delta=[]"
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0002",
+      "check": "A pending count equals delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0002",
+      "check": "A pending pairs in alerts equal delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0002",
+      "check": "A excluded count equals delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0002",
+      "check": "A unattributed out-of-plan files are a subset of out-of-plan files",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0002",
+      "check": "B planned tab nodes equal the approved plan files",
+      "ok": true,
+      "detail": "tab-only=[] plan-only=[]"
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0002",
+      "check": "C engineer file states equal delta file states",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0002",
+      "check": "C engineer out-of-plan list equals delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0002",
+      "check": "C engineer excluded paths equal delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0002",
+      "check": "C engineer identity events equal delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0002",
+      "check": "C engineer task id equals the Task",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0002",
+      "check": "novice view task equals the Task",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0002",
+      "check": "novice provisional flag equals delta current.provisional",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0002",
+      "check": "novice feature nodes equal novice.json features",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0002",
+      "check": "novice feature markers equal novice.json",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0002",
+      "check": "novice unattributed node exists exactly when files are unattributed",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0002",
+      "check": "novice feature files equal the plan's members",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0002",
+      "check": "novice edges connect existing feature nodes",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0002",
+      "check": "feature arrows: direct only with single-feature file evidence, else inferred",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0002",
+      "check": "no unconfirmed field mixes Git, scope and identity in the novice view",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0002",
+      "check": "every pending pair is reachable from the novice view",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0002",
+      "check": "history ends with the reported step",
+      "ok": true,
+      "detail": "history=commit:732ce81c2fee363a8678e8c55e37c1be319ca624 expected=commit:732ce81c2fee363a8678e8c55e37c1be319ca624"
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0002",
+      "check": "history base step equals delta base commit",
+      "ok": true,
+      "detail": "history=commit:046f276fbd324eae7e937f508ef69546151b4b10 delta=commit:046f276fbd324eae7e937f508ef69546151b4b10"
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0002",
+      "check": "prior_tasks in view A are the earlier Tasks, in order",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0002",
+      "check": "HTML shows the gate status",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0002",
+      "check": "HTML names every out-of-plan file",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0002",
+      "check": "HTML names the Task",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0002",
+      "check": "host test state agrees with exit code",
+      "ok": true,
+      "detail": "state=PASSED exit=0"
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0003",
+      "check": "A gate status equals recomputed approval gate",
+      "ok": true,
+      "detail": "header=BLOCKED recomputed=BLOCKED"
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0003",
+      "check": "A gate blocker codes equal recomputed blockers",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0003",
+      "check": "A commit state equals delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0003",
+      "check": "A structure state equals delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0003",
+      "check": "A host test equals delta host-test state",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0003",
+      "check": "A out-of-plan list equals delta",
+      "ok": true,
+      "detail": "header=['bookmarks/models.py', 'bookmarks/schema.sql'] delta=['bookmarks/models.py', 'bookmarks/schema.sql']"
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0003",
+      "check": "A pending count equals delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0003",
+      "check": "A pending pairs in alerts equal delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0003",
+      "check": "A excluded count equals delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0003",
+      "check": "A unattributed out-of-plan files are a subset of out-of-plan files",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0003",
+      "check": "B planned tab nodes equal the approved plan files",
+      "ok": true,
+      "detail": "tab-only=[] plan-only=[]"
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0003",
+      "check": "C engineer file states equal delta file states",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0003",
+      "check": "C engineer out-of-plan list equals delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0003",
+      "check": "C engineer excluded paths equal delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0003",
+      "check": "C engineer identity events equal delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0003",
+      "check": "C engineer task id equals the Task",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0003",
+      "check": "novice view task equals the Task",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0003",
+      "check": "novice provisional flag equals delta current.provisional",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0003",
+      "check": "novice feature nodes equal novice.json features",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0003",
+      "check": "novice feature markers equal novice.json",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0003",
+      "check": "novice unattributed node exists exactly when files are unattributed",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0003",
+      "check": "novice feature files equal the plan's members",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0003",
+      "check": "novice edges connect existing feature nodes",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0003",
+      "check": "feature arrows: direct only with single-feature file evidence, else inferred",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0003",
+      "check": "no unconfirmed field mixes Git, scope and identity in the novice view",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0003",
+      "check": "every pending pair is reachable from the novice view",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0003",
+      "check": "history ends with the reported step",
+      "ok": true,
+      "detail": "history=worktree expected=worktree"
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0003",
+      "check": "history base step equals delta base commit",
+      "ok": true,
+      "detail": "history=commit:732ce81c2fee363a8678e8c55e37c1be319ca624 delta=commit:732ce81c2fee363a8678e8c55e37c1be319ca624"
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0003",
+      "check": "prior_tasks in view A are the earlier Tasks, in order",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0003",
+      "check": "HTML shows the gate status",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0003",
+      "check": "HTML names every out-of-plan file",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0003",
+      "check": "HTML names the Task",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "TASK-0003",
+      "check": "host test state agrees with exit code",
+      "ok": true,
+      "detail": "state=PASSED exit=0"
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "ALL",
+      "check": "verify_keys: TASK-0001 changed files equal git's view",
+      "ok": true,
+      "detail": "git=['.gitignore', 'bookmarks/__init__.py', 'bookmarks/cli.py', 'bookmarks/models.py', 'bookmarks/search.py', 'bookmarks/storage.py', 'bookmarks/util.py', 'tests/test_search.py'] facts=['.gitignore', 'bookmarks/__init__.py', 'bookmarks/cli.py', 'bookmarks/models.py', 'bookmarks/search.py', 'bookmarks/storage.py', 'bookmarks/util.py', 'tests/test_search.py']"
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "ALL",
+      "check": "verify_keys: TASK-0001 every feature is ADD (base is empty)",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "ALL",
+      "check": "verify_keys: TASK-0001 host test re-run agrees with recorded state",
+      "ok": true,
+      "detail": "re-run=PASSED 1 passed in 0.01s"
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "ALL",
+      "check": "verify_keys: TASK-0001 re-run summary reports passing tests",
+      "ok": true,
+      "detail": "1 passed in 0.01s"
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "ALL",
+      "check": "verify_keys: TASK-0002 changed files equal git's view",
+      "ok": true,
+      "detail": "git=['bookmarks/cli.py', 'bookmarks/models.py', 'bookmarks/search.py', 'bookmarks/tags.py', 'tests/test_tags.py'] facts=['bookmarks/cli.py', 'bookmarks/models.py', 'bookmarks/search.py', 'bookmarks/tags.py', 'tests/test_tags.py']"
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "ALL",
+      "check": "verify_keys: TASK-0002 ADD set equals git-derived ADD set",
+      "ok": true,
+      "detail": "git=['標籤功能']"
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "ALL",
+      "check": "verify_keys: TASK-0002 MODIFY set equals git-derived MODIFY set",
+      "ok": true,
+      "detail": "git=['列出書籤', '搜尋書籤', '新增書籤']"
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "ALL",
+      "check": "verify_keys: TASK-0002 host test re-run agrees with recorded state",
+      "ok": true,
+      "detail": "re-run=PASSED 2 passed in 0.01s"
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "ALL",
+      "check": "verify_keys: TASK-0002 re-run summary reports passing tests",
+      "ok": true,
+      "detail": "2 passed in 0.01s"
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "ALL",
+      "check": "verify_keys: TASK-0003 changed files equal git's view",
+      "ok": true,
+      "detail": "git=['bookmarks/cli.py', 'bookmarks/migrate.py', 'bookmarks/models.py', 'bookmarks/schema.sql', 'bookmarks/sqlite_store.py', 'bookmarks/storage.py', 'tests/test_migrate.py'] facts=['bookmarks/cli.py', 'bookmarks/migrate.py', 'bookmarks/models.py', 'bookmarks/schema.sql', 'bookmarks/sqlite_store.py', 'bookmarks/storage.py', 'tests/test_migrate.py']"
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "ALL",
+      "check": "verify_keys: TASK-0003 ADD set equals git-derived ADD set",
+      "ok": true,
+      "detail": "git=['匯入舊 JSON']"
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "ALL",
+      "check": "verify_keys: TASK-0003 MODIFY set equals git-derived MODIFY set",
+      "ok": true,
+      "detail": "git=['列出書籤', '搜尋書籤', '新增書籤', '本機儲存（SQLite）', '標籤功能']"
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "ALL",
+      "check": "verify_keys: TASK-0003 out-of-plan files equal git minus plan",
+      "ok": true,
+      "detail": "git=['bookmarks/models.py', 'bookmarks/schema.sql']"
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "ALL",
+      "check": "verify_keys: G2 implementation file defines the search function",
+      "ok": true,
+      "detail": "bookmarks/search.py"
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "ALL",
+      "check": "verify_keys: I1 dependents equal import evidence in the worktree",
+      "ok": true,
+      "detail": "import evidence=['bookmarks/cli.py', 'tests/test_search.py']"
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "ALL",
+      "check": "verify_keys: TASK-0003 host test re-run agrees with recorded state",
+      "ok": true,
+      "detail": "re-run=PASSED 4 passed in 0.03s"
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "ALL",
+      "check": "verify_keys: TASK-0003 re-run summary reports passing tests",
+      "ok": true,
+      "detail": "4 passed in 0.03s"
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "ALL",
+      "check": "verify_keys: E1 blocking reasons match the gate blockers",
+      "ok": true,
+      "detail": "['OUT_OF_PLAN', 'PENDING_IDENTITY']"
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "ALL",
+      "check": "verify_keys: E1 answer is NO because the gate is BLOCKED",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case2_bookmarks",
+      "task": "ALL",
+      "check": "verify_keys: E1 pending action is the commit, and it is not a blocker",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0001",
+      "check": "A gate status equals recomputed approval gate",
+      "ok": true,
+      "detail": "header=BLOCKED recomputed=BLOCKED"
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0001",
+      "check": "A gate blocker codes equal recomputed blockers",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0001",
+      "check": "A commit state equals delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0001",
+      "check": "A structure state equals delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0001",
+      "check": "A host test equals delta host-test state",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0001",
+      "check": "A out-of-plan list equals delta",
+      "ok": true,
+      "detail": "header=['todos/util.py'] delta=['todos/util.py']"
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0001",
+      "check": "A pending count equals delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0001",
+      "check": "A pending pairs in alerts equal delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0001",
+      "check": "A excluded count equals delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0001",
+      "check": "A unattributed out-of-plan files are a subset of out-of-plan files",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0001",
+      "check": "B planned tab nodes equal the approved plan files",
+      "ok": true,
+      "detail": "tab-only=[] plan-only=[]"
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0001",
+      "check": "C engineer file states equal delta file states",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0001",
+      "check": "C engineer out-of-plan list equals delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0001",
+      "check": "C engineer excluded paths equal delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0001",
+      "check": "C engineer identity events equal delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0001",
+      "check": "C engineer task id equals the Task",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0001",
+      "check": "novice view task equals the Task",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0001",
+      "check": "novice provisional flag equals delta current.provisional",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0001",
+      "check": "novice feature nodes equal novice.json features",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0001",
+      "check": "novice feature markers equal novice.json",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0001",
+      "check": "novice unattributed node exists exactly when files are unattributed",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0001",
+      "check": "novice feature files equal the plan's members",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0001",
+      "check": "novice edges connect existing feature nodes",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0001",
+      "check": "feature arrows: direct only with single-feature file evidence, else inferred",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0001",
+      "check": "no unconfirmed field mixes Git, scope and identity in the novice view",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0001",
+      "check": "every pending pair is reachable from the novice view",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0001",
+      "check": "history ends with the reported step",
+      "ok": true,
+      "detail": "history=commit:b2b81f1776b1be56e5060d13494c7ebdf9761642 expected=commit:b2b81f1776b1be56e5060d13494c7ebdf9761642"
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0001",
+      "check": "history base step equals delta base commit",
+      "ok": true,
+      "detail": "history=empty delta=empty"
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0001",
+      "check": "prior_tasks in view A are the earlier Tasks, in order",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0001",
+      "check": "HTML shows the gate status",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0001",
+      "check": "HTML names every out-of-plan file",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0001",
+      "check": "HTML names the Task",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0001",
+      "check": "host test state agrees with exit code",
+      "ok": true,
+      "detail": "state=PASSED exit=0"
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0002",
+      "check": "A gate status equals recomputed approval gate",
+      "ok": true,
+      "detail": "header=READY recomputed=READY"
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0002",
+      "check": "A gate blocker codes equal recomputed blockers",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0002",
+      "check": "A commit state equals delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0002",
+      "check": "A structure state equals delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0002",
+      "check": "A host test equals delta host-test state",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0002",
+      "check": "A out-of-plan list equals delta",
+      "ok": true,
+      "detail": "header=[] delta=[]"
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0002",
+      "check": "A pending count equals delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0002",
+      "check": "A pending pairs in alerts equal delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0002",
+      "check": "A excluded count equals delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0002",
+      "check": "A unattributed out-of-plan files are a subset of out-of-plan files",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0002",
+      "check": "B planned tab nodes equal the approved plan files",
+      "ok": true,
+      "detail": "tab-only=[] plan-only=[]"
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0002",
+      "check": "C engineer file states equal delta file states",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0002",
+      "check": "C engineer out-of-plan list equals delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0002",
+      "check": "C engineer excluded paths equal delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0002",
+      "check": "C engineer identity events equal delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0002",
+      "check": "C engineer task id equals the Task",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0002",
+      "check": "novice view task equals the Task",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0002",
+      "check": "novice provisional flag equals delta current.provisional",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0002",
+      "check": "novice feature nodes equal novice.json features",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0002",
+      "check": "novice feature markers equal novice.json",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0002",
+      "check": "novice unattributed node exists exactly when files are unattributed",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0002",
+      "check": "novice feature files equal the plan's members",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0002",
+      "check": "novice edges connect existing feature nodes",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0002",
+      "check": "feature arrows: direct only with single-feature file evidence, else inferred",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0002",
+      "check": "no unconfirmed field mixes Git, scope and identity in the novice view",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0002",
+      "check": "every pending pair is reachable from the novice view",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0002",
+      "check": "history ends with the reported step",
+      "ok": true,
+      "detail": "history=commit:135e43e95790e4e81cf777c805677aebfd0f5184 expected=commit:135e43e95790e4e81cf777c805677aebfd0f5184"
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0002",
+      "check": "history base step equals delta base commit",
+      "ok": true,
+      "detail": "history=commit:b2b81f1776b1be56e5060d13494c7ebdf9761642 delta=commit:b2b81f1776b1be56e5060d13494c7ebdf9761642"
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0002",
+      "check": "prior_tasks in view A are the earlier Tasks, in order",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0002",
+      "check": "HTML shows the gate status",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0002",
+      "check": "HTML names every out-of-plan file",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0002",
+      "check": "HTML names the Task",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0002",
+      "check": "host test state agrees with exit code",
+      "ok": true,
+      "detail": "state=PASSED exit=0"
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0003",
+      "check": "A gate status equals recomputed approval gate",
+      "ok": true,
+      "detail": "header=BLOCKED recomputed=BLOCKED"
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0003",
+      "check": "A gate blocker codes equal recomputed blockers",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0003",
+      "check": "A commit state equals delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0003",
+      "check": "A structure state equals delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0003",
+      "check": "A host test equals delta host-test state",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0003",
+      "check": "A out-of-plan list equals delta",
+      "ok": true,
+      "detail": "header=['todos/models.py', 'todos/schema.sql'] delta=['todos/models.py', 'todos/schema.sql']"
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0003",
+      "check": "A pending count equals delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0003",
+      "check": "A pending pairs in alerts equal delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0003",
+      "check": "A excluded count equals delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0003",
+      "check": "A unattributed out-of-plan files are a subset of out-of-plan files",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0003",
+      "check": "B planned tab nodes equal the approved plan files",
+      "ok": true,
+      "detail": "tab-only=[] plan-only=[]"
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0003",
+      "check": "C engineer file states equal delta file states",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0003",
+      "check": "C engineer out-of-plan list equals delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0003",
+      "check": "C engineer excluded paths equal delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0003",
+      "check": "C engineer identity events equal delta",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0003",
+      "check": "C engineer task id equals the Task",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0003",
+      "check": "novice view task equals the Task",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0003",
+      "check": "novice provisional flag equals delta current.provisional",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0003",
+      "check": "novice feature nodes equal novice.json features",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0003",
+      "check": "novice feature markers equal novice.json",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0003",
+      "check": "novice unattributed node exists exactly when files are unattributed",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0003",
+      "check": "novice feature files equal the plan's members",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0003",
+      "check": "novice edges connect existing feature nodes",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0003",
+      "check": "feature arrows: direct only with single-feature file evidence, else inferred",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0003",
+      "check": "no unconfirmed field mixes Git, scope and identity in the novice view",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0003",
+      "check": "every pending pair is reachable from the novice view",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0003",
+      "check": "history ends with the reported step",
+      "ok": true,
+      "detail": "history=worktree expected=worktree"
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0003",
+      "check": "history base step equals delta base commit",
+      "ok": true,
+      "detail": "history=commit:135e43e95790e4e81cf777c805677aebfd0f5184 delta=commit:135e43e95790e4e81cf777c805677aebfd0f5184"
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0003",
+      "check": "prior_tasks in view A are the earlier Tasks, in order",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0003",
+      "check": "HTML shows the gate status",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0003",
+      "check": "HTML names every out-of-plan file",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0003",
+      "check": "HTML names the Task",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "TASK-0003",
+      "check": "host test state agrees with exit code",
+      "ok": true,
+      "detail": "state=PASSED exit=0"
+    },
+    {
+      "case": "case3_todos",
+      "task": "ALL",
+      "check": "verify_keys: TASK-0001 changed files equal git's view",
+      "ok": true,
+      "detail": "git=['.gitignore', 'tests/test_search.py', 'todos/__init__.py', 'todos/cli.py', 'todos/models.py', 'todos/search.py', 'todos/storage.py', 'todos/util.py'] facts=['.gitignore', 'tests/test_search.py', 'todos/__init__.py', 'todos/cli.py', 'todos/models.py', 'todos/search.py', 'todos/storage.py', 'todos/util.py']"
+    },
+    {
+      "case": "case3_todos",
+      "task": "ALL",
+      "check": "verify_keys: TASK-0001 every feature is ADD (base is empty)",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "ALL",
+      "check": "verify_keys: TASK-0001 host test re-run agrees with recorded state",
+      "ok": true,
+      "detail": "re-run=PASSED 1 passed in 0.01s"
+    },
+    {
+      "case": "case3_todos",
+      "task": "ALL",
+      "check": "verify_keys: TASK-0001 re-run summary reports passing tests",
+      "ok": true,
+      "detail": "1 passed in 0.01s"
+    },
+    {
+      "case": "case3_todos",
+      "task": "ALL",
+      "check": "verify_keys: TASK-0002 changed files equal git's view",
+      "ok": true,
+      "detail": "git=['tests/test_tags.py', 'todos/cli.py', 'todos/models.py', 'todos/search.py', 'todos/tags.py'] facts=['tests/test_tags.py', 'todos/cli.py', 'todos/models.py', 'todos/search.py', 'todos/tags.py']"
+    },
+    {
+      "case": "case3_todos",
+      "task": "ALL",
+      "check": "verify_keys: TASK-0002 ADD set equals git-derived ADD set",
+      "ok": true,
+      "detail": "git=['標籤功能']"
+    },
+    {
+      "case": "case3_todos",
+      "task": "ALL",
+      "check": "verify_keys: TASK-0002 MODIFY set equals git-derived MODIFY set",
+      "ok": true,
+      "detail": "git=['列出待辦', '搜尋待辦', '新增待辦']"
+    },
+    {
+      "case": "case3_todos",
+      "task": "ALL",
+      "check": "verify_keys: TASK-0002 host test re-run agrees with recorded state",
+      "ok": true,
+      "detail": "re-run=PASSED 2 passed in 0.01s"
+    },
+    {
+      "case": "case3_todos",
+      "task": "ALL",
+      "check": "verify_keys: TASK-0002 re-run summary reports passing tests",
+      "ok": true,
+      "detail": "2 passed in 0.01s"
+    },
+    {
+      "case": "case3_todos",
+      "task": "ALL",
+      "check": "verify_keys: TASK-0003 changed files equal git's view",
+      "ok": true,
+      "detail": "git=['tests/test_migrate.py', 'todos/cli.py', 'todos/migrate.py', 'todos/models.py', 'todos/schema.sql', 'todos/sqlite_store.py', 'todos/storage.py'] facts=['tests/test_migrate.py', 'todos/cli.py', 'todos/migrate.py', 'todos/models.py', 'todos/schema.sql', 'todos/sqlite_store.py', 'todos/storage.py']"
+    },
+    {
+      "case": "case3_todos",
+      "task": "ALL",
+      "check": "verify_keys: TASK-0003 ADD set equals git-derived ADD set",
+      "ok": true,
+      "detail": "git=['匯入舊 JSON']"
+    },
+    {
+      "case": "case3_todos",
+      "task": "ALL",
+      "check": "verify_keys: TASK-0003 MODIFY set equals git-derived MODIFY set",
+      "ok": true,
+      "detail": "git=['列出待辦', '搜尋待辦', '新增待辦', '本機儲存（SQLite）', '標籤功能']"
+    },
+    {
+      "case": "case3_todos",
+      "task": "ALL",
+      "check": "verify_keys: TASK-0003 out-of-plan files equal git minus plan",
+      "ok": true,
+      "detail": "git=['todos/models.py', 'todos/schema.sql']"
+    },
+    {
+      "case": "case3_todos",
+      "task": "ALL",
+      "check": "verify_keys: G2 implementation file defines the search function",
+      "ok": true,
+      "detail": "todos/search.py"
+    },
+    {
+      "case": "case3_todos",
+      "task": "ALL",
+      "check": "verify_keys: I1 dependents equal import evidence in the worktree",
+      "ok": true,
+      "detail": "import evidence=['tests/test_search.py', 'todos/cli.py']"
+    },
+    {
+      "case": "case3_todos",
+      "task": "ALL",
+      "check": "verify_keys: TASK-0003 host test re-run agrees with recorded state",
+      "ok": true,
+      "detail": "re-run=PASSED 4 passed in 0.03s"
+    },
+    {
+      "case": "case3_todos",
+      "task": "ALL",
+      "check": "verify_keys: TASK-0003 re-run summary reports passing tests",
+      "ok": true,
+      "detail": "4 passed in 0.03s"
+    },
+    {
+      "case": "case3_todos",
+      "task": "ALL",
+      "check": "verify_keys: E1 blocking reasons match the gate blockers",
+      "ok": true,
+      "detail": "['OUT_OF_PLAN', 'PENDING_IDENTITY']"
+    },
+    {
+      "case": "case3_todos",
+      "task": "ALL",
+      "check": "verify_keys: E1 answer is NO because the gate is BLOCKED",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "case": "case3_todos",
+      "task": "ALL",
+      "check": "verify_keys: E1 pending action is the commit, and it is not a blocker",
+      "ok": true,
+      "detail": ""
+    }
+  ]
+}

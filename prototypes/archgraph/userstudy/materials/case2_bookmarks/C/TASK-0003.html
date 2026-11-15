@@ -1,0 +1,16 @@
+<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>TASK-0003 靜態架構圖</title>
+<style>
+body{font-family:-apple-system,"PingFang TC",sans-serif;margin:16px;color:#111;background:#fff}
+.cols{display:flex;gap:16px;flex-wrap:wrap}
+.col{min-width:200px;border:1px solid #999;padding:8px;border-radius:6px}
+.col h3{margin:0 0 6px;font-size:15px}
+.box{border:1px solid #555;border-radius:4px;padding:4px 6px;margin:4px 0;font-family:ui-monospace,monospace;font-size:13px;background:#f7f7f7}
+ul{font-family:ui-monospace,monospace;font-size:13px}
+</style></head><body>
+<h1>TASK-0003 靜態架構圖</h1>
+<p>此圖顯示此 Task 結束時的檔案與依賴，不標示變更、提交或測試狀態。</p>
+<div class="cols"><section class="col"><h3>(根目錄)</h3><div class="box">.gitignore</div></section><section class="col"><h3>bookmarks</h3><div class="box">bookmarks/__init__.py</div><div class="box">bookmarks/cli.py</div><div class="box">bookmarks/migrate.py</div><div class="box">bookmarks/models.py</div><div class="box">bookmarks/schema.sql</div><div class="box">bookmarks/search.py</div><div class="box">bookmarks/sqlite_store.py</div><div class="box">bookmarks/tags.py</div><div class="box">bookmarks/util.py</div></section><section class="col"><h3>tests</h3><div class="box">tests/test_migrate.py</div><div class="box">tests/test_search.py</div><div class="box">tests/test_tags.py</div></section></div>
+<h2>依賴（來源 → 目標）</h2><ul><li>bookmarks/cli.py → bookmarks/search.py</li><li>bookmarks/cli.py → bookmarks/sqlite_store.py</li><li>bookmarks/cli.py → bookmarks/tags.py</li><li>bookmarks/cli.py → bookmarks/util.py</li><li>bookmarks/migrate.py → bookmarks/sqlite_store.py</li><li>tests/test_migrate.py → bookmarks/migrate.py</li><li>tests/test_migrate.py → bookmarks/sqlite_store.py</li><li>tests/test_search.py → bookmarks/search.py</li><li>tests/test_tags.py → bookmarks/tags.py</li></ul>
+<section class='facts'><h2>事實表（本 Task）</h2><table><tbody><tr><th>提交狀態</th><td>尚未 commit（UNCOMMITTED）</td></tr><tr><th>主機測試</th><td>PASSED，範圍 worktree-copy</td></tr><tr><th>計畫比對結構</th><td>BLOCKED_BY_SCOPE</td></tr><tr><th>變更檔案（Git 層級）</th><td>bookmarks/cli.py（MODIFIED）；bookmarks/migrate.py（ADDED）；bookmarks/models.py（MODIFIED）；bookmarks/schema.sql（ADDED）；bookmarks/sqlite_store.py（ADDED）；bookmarks/storage.py（REMOVED）；tests/test_migrate.py（ADDED）</td></tr><tr><th>不在已核准計畫內的變更檔案</th><td>bookmarks/models.py、bookmarks/schema.sql</td></tr><tr><th>待確認的新舊對應</th><td>bookmarks/storage.py::BookmarkStore.__init__ ↔ bookmarks/migrate.py::JsonImporter.__init__</td></tr><tr><th>排除的檔案（未讀內容）</th><td>.env（SENSITIVE_FILENAME）；bookmarks/local_settings.py（CONTENT_SECRET_SUSPECT:ASSIGNED_SECRET）</td></tr></tbody></table><h3>已核准計畫的功能與檔案</h3><ul><li>F-01 新增書籤：bookmarks/cli.py</li><li>F-02 列出書籤：bookmarks/cli.py</li><li>F-03 搜尋書籤：bookmarks/cli.py、bookmarks/search.py</li><li>F-04 本機儲存（SQLite）：bookmarks/sqlite_store.py、bookmarks/storage.py</li><li>F-05 標籤功能：bookmarks/models.py、bookmarks/tags.py</li><li>F-06 匯入舊 JSON：bookmarks/migrate.py</li></ul></section>
+</body></html>

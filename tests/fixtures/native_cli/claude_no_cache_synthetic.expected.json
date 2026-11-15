@@ -1,0 +1,20 @@
+{
+  "provenance": {"kind": "synthetic", "note": "requested sonnet, CLI reports only opus"},
+  "provider": "claude",
+  "requested": "sonnet",
+  "usage": {
+    "available": true,
+    "tokens": {"input_tokens": 12, "output_tokens": 4, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0},
+    "turns": 1,
+    "reported_models": ["claude-opus-test"]
+  },
+  "canonical": {
+    "status": "COMPLETE",
+    "fields": {"input_uncached": 12, "cache_read": 0, "cache_write": 0, "output_visible": 4, "reasoning": null},
+    "total_assumed": 16,
+    "total_range": [16, 16],
+    "total_status": "DETERMINED",
+    "components_sum": 16
+  },
+  "identity": {"status": "MISMATCH", "reason": "ALIAS_FAMILY_ABSENT", "matched_as": null, "auxiliary": []}
+}

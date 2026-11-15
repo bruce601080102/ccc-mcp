@@ -1,0 +1,13 @@
+ M src/ccc_mcp/core/tasks.py
+ M src/ccc_mcp/infra/telemetry.py
+?? docs/development/T08-SOLO-OPERATION.md
+?? docs/development/VNEXT-TASK-STATUS.md
+?? docs/development/evidence/
+?? prototypes/
+?? tests/fixtures/
+?? tests/test_measurement_fake_cli.py
+?? tests/test_model_identity.py
+?? tests/test_resume_orphan_grace.py
+?? tests/test_usage_evidence.py
+?? tests/test_usage_normalization.py
+?? tests/test_usage_raw_verification.py

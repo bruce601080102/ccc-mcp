@@ -1,0 +1,2 @@
+FREEZE CHECK PASSED
+exit 0

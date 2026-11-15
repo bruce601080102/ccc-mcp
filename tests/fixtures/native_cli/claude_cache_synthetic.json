@@ -1,0 +1,1 @@
+{"type":"result","is_error":false,"result":"ok","usage":{"input_tokens":5,"output_tokens":3,"cache_read_input_tokens":9,"cache_creation_input_tokens":2},"modelUsage":{"claude-sonnet-test":{},"claude-haiku-test":{}},"total_cost_usd":0.02}

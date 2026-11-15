@@ -37,6 +37,22 @@ from .roles import (
     writes_files,
 )
 
+# Seconds a QUEUED execution may go without a visible lock after its worker was spawned
+# before it counts as an orphan. Measured on macOS (30 warm spawns, spawn -> RUNNING):
+# median 0.29 s, max 0.39 s. Re-measure on each platform before changing it.
+ORPHAN_GRACE_SECONDS = 5
+
+
+def _utc_now():
+    """Clock seam: tests replace this; production always reads the real UTC time."""
+    return datetime.now(UTC)
+
+
+def _worker_start_base(options, created):
+    """When the worker of a QUEUED execution was last spawned. Executions spawned before
+    spawn_worker recorded this fall back to their creation time, the previous behaviour."""
+    return datetime.fromisoformat(options.get("worker_spawned_at") or created)
+
 
 def attribution(language, agent, role=None):
     """One readable line so a human opening a saved .md knows who produced it."""
@@ -1879,6 +1895,13 @@ class TaskHub:
 
     def spawn_worker(self, execution_id):
         flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+        # Record the spawn time before starting the process, so status and recovery can
+        # tell a worker that is still starting from a true orphan. json_set only touches
+        # this key; the rest of options is unchanged.
+        self.store.execute(
+            "UPDATE agent_executions SET options=json_set(options,'$.worker_spawned_at',?) WHERE id=?",
+            (_utc_now().isoformat(), execution_id),
+        )
         subprocess.Popen(
             [
                 sys.executable,
@@ -1920,22 +1943,26 @@ class TaskHub:
             if latest and latest["status"] in {"QUEUED", "RUNNING"}:
                 options = json.loads(latest["options"]) if latest["options"] else {}
                 timeout = options.get("timeout")
-                elapsed = (
-                    datetime.now(UTC) - datetime.fromisoformat(latest["created"])
-                ).total_seconds()
+                elapsed = (_utc_now() - datetime.fromisoformat(latest["created"])).total_seconds()
                 # A worker that never even reached run_execution (e.g. the subprocess
                 # failed to start or crashed before acquiring its lock) leaves the row
-                # QUEUED forever with no error — invisible unless something checks the
-                # lock directly. Give new dispatches a few seconds' grace so this isn't
-                # a false positive against a worker that just hasn't started yet.
+                # QUEUED forever with no error. Judge it by time since the worker was
+                # spawned, not since the execution was created: a resumed task's execution
+                # may be hours old while its worker has only just started.
                 orphaned = False
-                if latest["status"] == "QUEUED" and not options.get("interactive") and elapsed > 5:
-                    lockfile = self.home / "locks" / f"{latest['id']}.lock"
-                    try:
-                        with portalocker.Lock(lockfile, timeout=0):
-                            orphaned = True
-                    except portalocker.exceptions.LockException:
-                        orphaned = False
+                if latest["status"] == "QUEUED" and not options.get("interactive"):
+                    since_spawn = (
+                        _utc_now() - _worker_start_base(options, latest["created"])
+                    ).total_seconds()
+                    # Inside the grace window do not probe the lock: the probe briefly holds
+                    # it and could stop a worker that is just starting.
+                    if since_spawn > ORPHAN_GRACE_SECONDS:
+                        lockfile = self.home / "locks" / f"{latest['id']}.lock"
+                        try:
+                            with portalocker.Lock(lockfile, timeout=0):
+                                orphaned = True
+                        except portalocker.exceptions.LockException:
+                            orphaned = False
                 if orphaned:
                     note = (
                         "No live worker process holds this execution's lock even though "
@@ -3410,6 +3437,14 @@ class TaskHub:
                 continue
             if row["status"] == "QUEUED" and self.task_control(project_id, row["task_id"])["paused"]:
                 # A pause deliberately leaves this execution queued for resume.
+                continue
+            spawned_at = decode(row, "options")["options"].get("worker_spawned_at")
+            if row["status"] == "QUEUED" and spawned_at and (
+                _utc_now() - datetime.fromisoformat(spawned_at)
+            ).total_seconds() <= ORPHAN_GRACE_SECONDS:
+                # A worker spawned moments ago may not have taken its lock yet. Finishing
+                # it now would make the worker exit at once and cancel a healthy run.
+                # Rows without a recorded spawn keep the previous behaviour.
                 continue
             lockfile = self.home / "locks" / f"{row['id']}.lock"
             try:

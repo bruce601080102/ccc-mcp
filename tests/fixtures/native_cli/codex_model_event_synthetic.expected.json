@@ -1,0 +1,20 @@
+{
+  "provenance": {"kind": "synthetic", "note": "a session event carries a model field"},
+  "provider": "codex",
+  "requested": "gpt-test-model",
+  "usage": {
+    "available": true,
+    "tokens": {"input_tokens": 10, "cached_input_tokens": 0, "cache_write_input_tokens": 0, "output_tokens": 5, "reasoning_output_tokens": 0},
+    "turns": 1,
+    "reported_models": ["gpt-test-model"]
+  },
+  "canonical": {
+    "status": "COMPLETE",
+    "fields": {"input_uncached": 10, "cache_read": 0, "cache_write": 0, "output_visible": 5, "reasoning": 0},
+    "total_assumed": 15,
+    "total_range": [15, 15],
+    "total_status": "DETERMINED",
+    "components_sum": 15
+  },
+  "identity": {"status": "MATCH", "reason": "EXACT", "matched_as": "exact", "auxiliary": []}
+}

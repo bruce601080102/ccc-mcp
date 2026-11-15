@@ -1,0 +1,25 @@
+{
+  "provenance": {
+    "copied_from": "benchmarks/toy-agents/smoke-test-evidence/2026-11-10-clamp-raw-codex-stream.jsonl",
+    "copied_by": "P0A first batch; original evidence left untouched",
+    "sha256": "0f74324c46ffe1b288cec2c32c95e86aaff616b2b4892a80e20b59b442cb8e71",
+    "kind": "real capture"
+  },
+  "provider": "codex",
+  "requested": null,
+  "usage": {
+    "available": true,
+    "tokens": {"input_tokens": 66628, "cached_input_tokens": 61696, "cache_write_input_tokens": 0, "output_tokens": 357, "reasoning_output_tokens": 0},
+    "turns": 1,
+    "reported_models": []
+  },
+  "canonical": {
+    "status": "COMPLETE",
+    "fields": {"input_uncached": 4932, "cache_read": 61696, "cache_write": 0, "output_visible": 357, "reasoning": 0},
+    "total_assumed": 66985,
+    "total_range": [66985, 66985],
+    "total_status": "OBSERVED_ONLY",
+    "components_sum": 66985
+  },
+  "identity": {"status": "UNKNOWN", "reason": "REQUEST_UNSPECIFIED"}
+}

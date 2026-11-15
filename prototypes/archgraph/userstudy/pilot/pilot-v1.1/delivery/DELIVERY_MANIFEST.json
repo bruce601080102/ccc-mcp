@@ -1,0 +1,23 @@
+{
+  "version": "pilot-v1.1",
+  "bundles": {
+    "tester_P1.zip": {
+      "sha256": "33c3fc0ec2c6fdd8a8a9c23c5963ae9d8a2c9b04955e49426499b92146721d1a",
+      "files": 16,
+      "leaked_tokens": [],
+      "audience": "non-author tester"
+    },
+    "tester_P2.zip": {
+      "sha256": "76924f5f7b2854b3fe31d0e4047f46e36c692ba2cb871fa914e19fe8f3d01476",
+      "files": 16,
+      "leaked_tokens": [],
+      "audience": "non-author tester"
+    },
+    "rater_only.zip": {
+      "sha256": "76785993ba93b179a7a9a9aa82d917dac62437f702e053093697d6ae14a797f7",
+      "files": 6,
+      "leaked_tokens": "not applicable (rater bundle)",
+      "audience": "independent rater only, never a tester"
+    }
+  }
+}

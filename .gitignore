@@ -1,17 +1,88 @@
+# ==========================================
+# Python Virtual Environments
+# ==========================================
 .venv/
+venv/
+env/
+
+# ==========================================
+# Python Cache
+# ==========================================
 __pycache__/
 *.py[cod]
+*.pyo
+*.pyd
+
+# ==========================================
+# Python Testing / Lint / Type Checking
+# ==========================================
 .pytest_cache/
 .ruff_cache/
+.mypy_cache/
+.pyright/
+.hypothesis/
+.tox/
+.nox/
+
+# ==========================================
+# Coverage Reports
+# ==========================================
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# ==========================================
+# Python Build / Distribution
+# ==========================================
+build/
 dist/
 *.egg-info/
+.eggs/
+
+# ==========================================
+# Environment Variables / Local Secrets
+# ==========================================
 .env
+.env.*
+!.env.example
+!.env.sample
+
+# ==========================================
+# ccc-mcp / Agent Local Runtime
+# ==========================================
 .ccc-mcp/
 .agentbridge/
 .demo/
 .tools/
 .tunnel/
-npm
+
+# ==========================================
+# Node.js
+# ==========================================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ==========================================
+# Local Recordings / Assets
+# ==========================================
 /Recording_*.mp4
 /docs/assets/source/
+
+# ==========================================
+# Architecture Graph Pilot Deliveries
+# ==========================================
+# Generated delivery ZIPs; retain source code
+# and reproducible manifests separately.
+prototypes/archgraph/userstudy/pilot/pilot-v*/delivery/*.zip
+
+# ==========================================
+# OS / Editor Temporary Files
+# ==========================================
 .DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~

@@ -1,0 +1,95 @@
+{
+  "G1_current_features": [
+    "列出筆記",
+    "匯入舊 JSON",
+    "搜尋筆記",
+    "新增筆記",
+    "本機儲存（SQLite）",
+    "標籤功能"
+  ],
+  "G2_search_implementation_file": "notes/search.py",
+  "T1_added": [
+    "列出筆記",
+    "搜尋筆記",
+    "新增筆記",
+    "本機儲存（JSON 檔）"
+  ],
+  "T1_modified": [],
+  "T2_added": [
+    "標籤功能"
+  ],
+  "T2_modified": [
+    "列出筆記",
+    "搜尋筆記",
+    "新增筆記"
+  ],
+  "T3_added": [
+    "匯入舊 JSON"
+  ],
+  "T3_modified": [
+    "列出筆記",
+    "搜尋筆記",
+    "新增筆記",
+    "本機儲存（SQLite）",
+    "標籤功能"
+  ],
+  "O1_out_of_plan_files": [
+    "notes/models.py",
+    "notes/schema.sql"
+  ],
+  "S_grid_T3": {
+    "新增筆記": {
+      "a_uncommitted_change": true,
+      "b_host_test_passed": true,
+      "d_pending_mapping": false
+    },
+    "列出筆記": {
+      "a_uncommitted_change": true,
+      "b_host_test_passed": true,
+      "d_pending_mapping": false
+    },
+    "搜尋筆記": {
+      "a_uncommitted_change": true,
+      "b_host_test_passed": true,
+      "d_pending_mapping": false
+    },
+    "本機儲存（SQLite）": {
+      "a_uncommitted_change": true,
+      "b_host_test_passed": true,
+      "d_pending_mapping": true
+    },
+    "標籤功能": {
+      "a_uncommitted_change": true,
+      "b_host_test_passed": true,
+      "d_pending_mapping": false
+    },
+    "匯入舊 JSON": {
+      "a_uncommitted_change": true,
+      "b_host_test_passed": true,
+      "d_pending_mapping": true
+    },
+    "匯出 CSV": {
+      "a_uncommitted_change": false,
+      "b_host_test_passed": false,
+      "d_pending_mapping": false
+    }
+  },
+  "E1_ready_to_merge": {
+    "answer": "NO",
+    "blocking_reasons": [
+      "待確認",
+      "超出計畫"
+    ],
+    "pending_actions": [
+      "需先 commit"
+    ],
+    "not_a_reason": [
+      "主機測試通過（它只代表工作區副本通過，不代表已 commit 或已驗收）",
+      "尚未 commit（它是待執行的動作，不是阻擋項）"
+    ]
+  },
+  "I1_dependents_of_search": [
+    "notes/cli.py",
+    "tests/test_search.py"
+  ]
+}

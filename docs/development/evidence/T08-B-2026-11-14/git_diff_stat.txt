@@ -1,0 +1,3 @@
+ src/ccc_mcp/core/tasks.py      |  61 ++++-
+ src/ccc_mcp/infra/telemetry.py | 533 ++++++++++++++++++++++++++++++++++++++---
+ 2 files changed, 547 insertions(+), 47 deletions(-)

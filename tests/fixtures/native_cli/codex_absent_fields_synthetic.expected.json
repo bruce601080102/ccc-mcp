@@ -1,0 +1,20 @@
+{
+  "provenance": {"kind": "synthetic", "note": "cache and reasoning fields absent from the CLI output"},
+  "provider": "codex",
+  "requested": null,
+  "usage": {
+    "available": true,
+    "tokens": {"input_tokens": 40, "output_tokens": 10},
+    "turns": 1,
+    "reported_models": []
+  },
+  "canonical": {
+    "status": "PARTIAL",
+    "fields": {"input_uncached": null, "cache_read": null, "cache_write": null, "output_visible": null, "reasoning": null},
+    "total_assumed": 50,
+    "total_range": [50, null],
+    "total_status": "UNVERIFIED",
+    "components_sum": null
+  },
+  "identity": {"status": "UNKNOWN", "reason": "REQUEST_UNSPECIFIED"}
+}

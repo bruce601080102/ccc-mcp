@@ -1,0 +1,20 @@
+{
+  "provenance": {"kind": "synthetic", "note": "values computed by hand from the input numbers"},
+  "provider": "codex",
+  "requested": null,
+  "usage": {
+    "available": true,
+    "tokens": {"input_tokens": 1000, "cached_input_tokens": 600, "cache_write_input_tokens": 100, "output_tokens": 300, "reasoning_output_tokens": 120},
+    "turns": 1,
+    "reported_models": []
+  },
+  "canonical": {
+    "status": "COMPLETE",
+    "fields": {"input_uncached": 300, "cache_read": 600, "cache_write": 100, "output_visible": 180, "reasoning": 120},
+    "total_assumed": 1300,
+    "total_range": [1300, 1520],
+    "total_status": "UNVERIFIED",
+    "components_sum": 1300
+  },
+  "identity": {"status": "UNKNOWN", "reason": "REQUEST_UNSPECIFIED"}
+}
