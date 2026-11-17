@@ -1,0 +1,4 @@
+ M prototypes/archgraph/archgraph/diagram.py
+ M prototypes/archgraph/tests/test_novice_feature_view.py
+ M prototypes/archgraph/userstudy/verify_diagrams.py
+?? docs/development/evidence/T08-semantic-final-2026-11-14/

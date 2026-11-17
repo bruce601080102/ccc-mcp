@@ -1,0 +1,2 @@
+375/375 checks passed
+verify_diagrams exit 0

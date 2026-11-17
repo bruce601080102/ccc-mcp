@@ -111,16 +111,22 @@ def check_task(scratch, case, task, results):
     check("novice edges connect existing feature nodes",
           all(e["src"] in tab["nodes"] and e["dst"] in tab["nodes"] for e in tab["edges"]))
     owners = tab["feature_of_file"]
-    edge_ok = True
-    for e in tab["edges"]:
-        pairs = [tuple(x.strip() for x in ev.split("→")) for ev in e["evidence"]]
-        if e["status"] in ("DIRECT", "DIRECT_UNPLANNED"):
-            edge_ok &= any(len(owners[a]) == 1 and len(owners[b]) == 1
-                           and "UNATTRIBUTED" not in owners[a] + owners[b] for a, b in pairs)
+    check("novice main view draws no feature arrows (no symbol-level evidence exists)", tab["edges"] == [])
+    relation_ok = True
+    relation_real = True
+    real_pairs = set(arch["edges_summary"]["matched"]) | set(arch["edges_summary"]["unplanned"]) | set(
+        arch["edges_summary"]["neutral"])
+    for rel in tab["relations"]:
+        pairs = [tuple(x.strip() for x in ev.split("→")) for ev in rel["evidence"]]
+        if rel["status"] == "FILE_IMPORT":
+            relation_ok &= any(len(owners[a]) == 1 and len(owners[b]) == 1
+                               and "UNATTRIBUTED" not in owners[a] + owners[b] for a, b in pairs)
         else:
-            edge_ok &= e["status"] == "INFERRED" and all(len(owners[a]) > 1 or len(owners[b]) > 1
-                                                       for a, b in pairs)
-    check("feature arrows: direct only with single-feature file evidence, else inferred", edge_ok)
+            relation_ok &= rel["status"] == "FILE_IMPORT_SHARED" and all(
+                len(owners[a]) > 1 or len(owners[b]) > 1 for a, b in pairs)
+        relation_real &= all(f"{a} → {b}" in real_pairs for a, b in pairs)
+    check("feature relations are file-import evidence, classified by file ownership", relation_ok)
+    check("every relation's evidence is a real file import in the engineer view", relation_real)
     check("no unconfirmed field mixes Git, scope and identity in the novice view",
           all("unconfirmed" not in f for f in novice["features"]) and all(
               isinstance(f.get("identity_pending"), int) for f in novice["features"]))

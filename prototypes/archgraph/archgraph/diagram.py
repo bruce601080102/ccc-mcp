@@ -349,7 +349,6 @@ NOVICE_STYLE = {
     "UNCHANGED": {"label": "未變動", "symbol": "·", "fill": "#f9fafb", "stroke": "#6b7280", "border": "solid"},
     "UNATTRIBUTED": {"label": "超出計畫", "symbol": "⚠", "fill": "#fff1f2", "stroke": "#9f1239", "border": "dashed"},
 }
-EDGE_RANK = {"MATCHED": 1, "NEUTRAL": 2, "UNPLANNED": 3}
 GATE_NATURAL = {
     "READY": "可合併（本 Task）",
     "NEEDS_COMMIT": "待 commit（本 Task）",
@@ -384,9 +383,9 @@ def _feature_tab(plan, delta, states, actual_status, unattributed):
         feature_files[UNATTRIBUTED_ID] = list(unattributed)
         for path in unattributed:
             file_features.setdefault(path, []).append(UNATTRIBUTED_ID)
-    # Evidence rule. A file import is DIRECT evidence for a feature pair only when both files belong
-    # to exactly one feature each (and neither is unattributed). Otherwise, the file belongs to several
-    # features and the import only suggests a relation, so the arrow is INFERRED and drawn dashed.
+    # File imports are kept as evidence only. A feature dependency is confirmed only by symbol-level
+    # evidence (a call or reference between named features), which this prototype does not produce, so
+    # the novice main view draws no feature arrow. The file relations stay in `relations` and the details.
     pair_evidence = {}
     for (src, dst), status in actual_status.items():
         src_owners = file_features.get(src, [])
@@ -406,11 +405,14 @@ def _feature_tab(plan, delta, states, actual_status, unattributed):
                 entry["files"].append(f"{src} → {dst}")
     feature_edges = {}
     for pair, entry in pair_evidence.items():
-        if entry["direct"]:
-            status = "DIRECT_UNPLANNED" if entry["unplanned"] else "DIRECT"
-        else:
-            status = "INFERRED"
-        feature_edges[pair] = {"status": status, "evidence": sorted(set(entry["files"]))}
+        # FILE_IMPORT: both files belong to one feature each. FILE_IMPORT_SHARED: a file is shared.
+        # Both are file-level evidence only; neither is a confirmed feature dependency.
+        status = "FILE_IMPORT" if entry["direct"] else "FILE_IMPORT_SHARED"
+        feature_edges[pair] = {
+            "status": status,
+            "unplanned": entry["unplanned"],
+            "evidence": sorted(set(entry["files"])),
+        }
     placement, columns, rows = _layout(nodes, list(feature_edges))
     coords, width, height = _canvas(placement, columns, rows)
     features = {}
@@ -453,8 +455,10 @@ def _feature_tab(plan, delta, states, actual_status, unattributed):
         "coords": coords,
         "width": width,
         "height": height,
-        "edges": [
-            {"src": a, "dst": b, "status": e["status"], "evidence": e["evidence"]}
+        # No confirmed feature edge is drawn: there is no symbol-level evidence to justify one.
+        "edges": [],
+        "relations": [
+            {"src": a, "dst": b, "status": e["status"], "unplanned": e["unplanned"], "evidence": e["evidence"]}
             for (a, b), e in sorted(feature_edges.items())
         ],
         "features": features,
@@ -678,13 +682,8 @@ def _arrow(src_xy, dst_xy, status):
         "MISSING": "#9ca3af",
         "EXISTS": "#374151",
         "NOT_YET": "#9ca3af",
-        "DIRECT": "#374151",
-        "DIRECT_UNPLANNED": "#b91c1c",
-        "INFERRED": "#6b7280",
     }[status]
     dash = ' stroke-dasharray="6 5"' if status in ("UNPLANNED", "MISSING", "NOT_YET") else ""
-    if status == "INFERRED":
-        dash = ' stroke-dasharray="3 4"'
     return (
         f'<path d="M{sx},{sy} C{sx},{sy + 30} {dx},{dy - 30} {dx},{dy}" fill="none" stroke="{colour}" '
         f'stroke-width="1.8"{dash} marker-end="url(#arrow)"/>'
@@ -880,9 +879,6 @@ button.link { background: none; border: none; padding: 0; color: #1d4ed8; text-d
 .status-detail summary { cursor: pointer; font-weight: 600; }
 .unresolved { border: 2px solid #b45309; border-radius: 10px; padding: 8px 12px; margin: 8px 0; }
 .unresolved ul { margin: 4px 0; padding-left: 18px; }
-.arrowlegend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: .84rem; margin: 6px 0 2px; }
-.arrowlegend span { display: inline-flex; align-items: center; gap: 6px; }
-.arrowlegend svg { flex: none; }
 .novice-attention { margin: 10px 0; display: grid; gap: 8px; }
 @media (max-width: 1099px) {
   main { display: flex; flex-direction: column; }
@@ -971,14 +967,13 @@ _SCRIPT = """
     line('驗證（主機測試）為整個 Task 的結果，見頁首。');
     line('涉及檔案：' + (f.files.length ? f.files.length + ' 個' : '無'));
     f.files.forEach(function (x) { line('· ' + x.path + '（' + stateLabel(x.state) + '）'); });
-    data.edges.forEach(function (e) {
-      if (e.src !== id && e.dst !== id) { return; }
-      var other = data.features[e.src === id ? e.dst : e.src];
-      var arrow = e.src === id ? '→ ' + other.title : '← ' + other.title;
-      var kind = e.status === 'INFERRED' ? '推測性功能關係（非確認的功能依賴）'
-        : (e.status === 'DIRECT_UNPLANNED' ? '直接證據，計畫外' : '直接證據');
-      line('依賴 ' + arrow + '：' + kind);
-      e.evidence.forEach(function (ev) { line('   檔案 import：' + ev); });
+    line('檔案依賴（只有檔案 import 證據，不是已確認的功能依賴）：');
+    data.relations.forEach(function (r) {
+      if (r.src !== id && r.dst !== id) { return; }
+      var other = data.features[r.src === id ? r.dst : r.src];
+      var direction = r.src === id ? '→ ' : '← ';
+      line(direction + other.title + (r.unplanned ? '（計畫外）' : ''));
+      r.evidence.forEach(function (ev) { line('   檔案 import：' + ev); });
     });
     if (id === 'UNATTRIBUTED') { line('超出計畫，且無法歸屬任何功能；不會隱藏，需人工判斷是否接受或撤回。'); }
     var det = document.createElement('details');
@@ -1188,13 +1183,8 @@ def _novice_section_html(data):
     )
     svg = _svg(tab, lambda n, xy: _feature_node(n, xy, tab["features"][n]), "功能架構圖")
     arrows = (
-        '<div class="arrowlegend"><span><svg width="34" height="10"><line x1="0" y1="5" x2="34" y2="5" '
-        'stroke="#374151" stroke-width="2"/></svg> 直接證據：兩端檔案各只屬於一個功能</span>'
-        '<span><svg width="34" height="10"><line x1="0" y1="5" x2="34" y2="5" stroke="#6b7280" '
-        'stroke-width="2" stroke-dasharray="3 4"/></svg> 推測性功能關係：至少一端檔案屬於多個功能，'
-        "僅由檔案 import 推導，不代表已確認的功能依賴</span>"
-        '<span><svg width="34" height="10"><line x1="0" y1="5" x2="34" y2="5" stroke="#b91c1c" '
-        'stroke-width="2"/></svg> 計畫外的直接依賴</span></div>'
+        '<p class="hint">本圖不畫功能之間的依賴箭頭。目前只有檔案 import 證據，沒有符號級的功能呼叫或引用證據，'
+        "不能當作已確認的功能依賴。檔案依賴的證據見各功能的詳情面板，以及工程視圖的依賴對帳。</p>"
     )
     return (
         f'<div class="novice-head"><p class="task-line"><b>{html.escape(header["task"])}</b>：'
@@ -1207,7 +1197,7 @@ def _novice_section_html(data):
         f"{_status_details_html(data)}"
         '<details class="status-detail"><summary>說明：這裡是實際程式狀態</summary>'
         '<p class="hint">這裡是實際程式狀態；已核准計畫與實際的對照請看「計畫（Planned）」分頁。'
-        "點擊功能可看 Git 狀態、超出計畫、待確認對應、推測性與直接依賴的證據，以及程式細節。"
+        "點擊功能可看 Git 狀態、超出計畫、待確認對應、檔案 import 證據，以及程式細節。"
         "驗證（主機測試）是整個 Task 的結果，見頁首，不屬於單一功能。</p></details>"
     )
 
@@ -1248,7 +1238,7 @@ def render_html(data):
         "default_node": default_node,
         "features": tab["features"],
         "feature_of_file": tab["feature_of_file"],
-        "edges": tab["edges"],
+        "relations": tab["relations"],
         "pending": data["alerts"]["pending_pairs"],
     }
     payload_json = (

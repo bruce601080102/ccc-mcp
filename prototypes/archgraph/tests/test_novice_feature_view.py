@@ -128,30 +128,40 @@ def test_the_novice_view_never_mixes_git_state_into_unconfirmed(demo):
         assert "未確認" not in section, task
 
 
-def test_arrows_keep_direct_evidence_and_mark_inferred_relations(demo):
+def test_the_main_view_draws_no_confirmed_feature_arrows(demo):
+    # Only file imports exist as evidence, so the novice main view must not show a feature dependency.
+    for task in ("TASK-0001", "TASK-0002", "TASK-0003"):
+        arch = json.loads((demo / task / "architecture.json").read_text(encoding="utf-8"))
+        assert arch["tabs"]["novice"]["edges"] == [], task
+        section = _novice_section(demo, task)
+        assert "marker-end" not in section, task  # no arrow is drawn in the feature graph
+    section = _novice_section(demo, "TASK-0003")
+    assert "不畫功能之間的依賴箭頭" in section
+    assert "不能當作已確認的功能依賴" in section
+    assert "推測性功能關係" not in section and "直接證據" not in section
+
+
+def test_file_import_relations_are_kept_as_evidence_with_their_owners(demo):
     payload = _payload(demo, "TASK-0003")
     owners = payload["feature_of_file"]
-    assert payload["edges"]
-    for edge in payload["edges"]:
-        pairs = [tuple(part.strip() for part in ev.split("→")) for ev in edge["evidence"]]
-        if edge["status"] in ("DIRECT", "DIRECT_UNPLANNED"):
-            # direct evidence exists: one import whose two files each belong to exactly one feature
+    assert payload["relations"]
+    for rel in payload["relations"]:
+        pairs = [tuple(part.strip() for part in ev.split("→")) for ev in rel["evidence"]]
+        if rel["status"] == "FILE_IMPORT":
             assert any(
                 len(owners[a]) == 1 and len(owners[b]) == 1 and "UNATTRIBUTED" not in owners[a] + owners[b]
                 for a, b in pairs
-            ), edge
+            ), rel
         else:
-            assert edge["status"] == "INFERRED", edge
-            # no direct evidence: every import involves a file that belongs to several features
-            assert all(len(owners[a]) > 1 or len(owners[b]) > 1 for a, b in pairs), edge
+            assert rel["status"] == "FILE_IMPORT_SHARED", rel
+            assert all(len(owners[a]) > 1 or len(owners[b]) > 1 for a, b in pairs), rel
 
 
-def test_the_inferred_relation_is_drawn_dashed_and_explained(demo):
-    section = _novice_section(demo, "TASK-0003")
-    assert "推測性功能關係" in section
-    assert "不代表已確認的功能依賴" in section
-    if any(e["status"] == "INFERRED" for e in _payload(demo, "TASK-0003")["edges"]):
-        assert 'stroke-dasharray="3 4"' in section
+def test_the_engineer_view_still_lists_the_raw_file_dependencies(demo):
+    page = _page(demo, "TASK-0003")
+    engineer = page[page.index('<section id="tab-engineer"'):]
+    assert "依賴對帳" in engineer
+    assert "notes/cli.py → notes/tags.py" in engineer
 
 
 def test_narrow_screens_put_the_graph_before_the_attention_blocks_and_details(demo):

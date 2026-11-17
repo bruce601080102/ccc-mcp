@@ -1,0 +1,54 @@
+{
+  "case1_notes": {
+    "TASK-0001": {
+      "commit_state": "COMMITTED",
+      "structure_state": "FLAGGED_OUT_OF_SCOPE",
+      "host_test_state": "PASSED"
+    },
+    "TASK-0002": {
+      "commit_state": "COMMITTED",
+      "structure_state": "MATCHED",
+      "host_test_state": "PASSED"
+    },
+    "TASK-0003": {
+      "commit_state": "UNCOMMITTED",
+      "structure_state": "BLOCKED_BY_SCOPE",
+      "host_test_state": "PASSED"
+    }
+  },
+  "case2_bookmarks": {
+    "TASK-0001": {
+      "commit_state": "COMMITTED",
+      "structure_state": "FLAGGED_OUT_OF_SCOPE",
+      "host_test_state": "PASSED"
+    },
+    "TASK-0002": {
+      "commit_state": "COMMITTED",
+      "structure_state": "MATCHED",
+      "host_test_state": "PASSED"
+    },
+    "TASK-0003": {
+      "commit_state": "UNCOMMITTED",
+      "structure_state": "BLOCKED_BY_SCOPE",
+      "host_test_state": "PASSED"
+    }
+  },
+  "case3_todos": {
+    "TASK-0001": {
+      "commit_state": "COMMITTED",
+      "structure_state": "FLAGGED_OUT_OF_SCOPE",
+      "host_test_state": "PASSED"
+    },
+    "TASK-0002": {
+      "commit_state": "COMMITTED",
+      "structure_state": "MATCHED",
+      "host_test_state": "PASSED"
+    },
+    "TASK-0003": {
+      "commit_state": "UNCOMMITTED",
+      "structure_state": "BLOCKED_BY_SCOPE",
+      "host_test_state": "PASSED"
+    }
+  }
+}
+build_cases exit 0

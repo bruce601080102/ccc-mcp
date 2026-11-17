@@ -16,9 +16,9 @@
 | T05 | BUG-RESUME-001 | 修復驗收通過 | 相關測試通過（見 T05） |
 | T06 | P0B A/B/C 比較材料 | 完成 | 凍結檢查與材料檢查通過（見 T06） |
 | T07 | 評分規格與材料凍結 | 完成（已核准結案） | 測試與凍結檢查通過（見 T07） |
-| T08 | 內部驗證（已由使用者調整為單人驗證） | T08-A 單人實際操作：首次操作已完成；T08-UI-001、T08-UI-002 修正已完成，**待使用者最後驗收**。T08-B：**完成** | T08-UI-002 後一致性檢查 357/357 通過（含既有 285 項）；archgraph pytest 175 passed；ruff 通過；freeze v1.2 PASSED |
+| T08 | 內部驗證 | 技術驗證（T08-B）已可進入結案審查；T08-UI-002 語意修正完成（檔案 import 不再畫成功能依賴）。作者單人使用體驗：**待作者本人操作，不由 AI 代填或宣稱完成** | 375/375 一致性檢查通過；archgraph pytest 176 passed；ruff 通過；freeze v1.2 PASSED |
 | T09 | 正式新手比較研究 | 暫緩（非 P1 技術研發的必要前置） | 不適用 |
-| T10 | Adaptive Workflow 效率實驗 | 未開始（允許離線實驗設計；不執行真實模型 Benchmark，不開發正式 Router） | 不適用 |
+| T10 | Adaptive Workflow 效率實驗 | 下一階段方向：離線實驗設計（不執行真實模型 Benchmark，不開發正式 Router） | 不適用 |
 | T11 | P1 正式產品整合 | NO-GO | 不適用 |
 
 ## Git 與工作區狀態【本次查證】
@@ -169,6 +169,32 @@
   - 這些是結構與一致性檢查，不等於真人新手研究結論。
 - 證據：`docs/development/evidence/T08-UI-002-2026-11-14/`，包含修改前（UI-001）與修改後截圖（1440、1024、768 px）、archgraph diff、驗證報告與輸出、pytest、ruff、freeze 檢查與 git 狀態。
 
+**Git 狀態追加查證（2026-11-15）**
+
+- 本次工作階段**沒有執行任何 commit、push、reset 或 release**。
+- 查證時 HEAD 已為 `f7f25c5 feat(archgraph): add versioned task architecture graph prototype`（作者 bruce，reflog 記錄為 commit），其上一個提交為 `fd73f98`。
+- 該提交包含：`prototypes/archgraph/` 整個原型、`docs/development/` 文件與證據、`.gitignore` 的修改，**以及先前未提交的 P0A（`src/ccc_mcp/infra/telemetry.py`）與 BUG-RESUME-001（`src/ccc_mcp/core/tasks.py`）修改**（相對 `fd73f98` 為 +547 / −47）。
+- 因此目前工作區只剩本次未提交的 3 個檔案：`prototypes/archgraph/archgraph/diagram.py`、`prototypes/archgraph/tests/test_novice_feature_view.py`、`prototypes/archgraph/userstudy/verify_diagrams.py`。
+- P0A 與 BUG-RESUME-001 的內容未被本次工作改動；但它們已不再是「未提交的修改」。是否保留此提交、或需要拆分，需由你決定。
+
+**T08 最終收斂：檔案 import 不等於已確認的功能依賴（2026-11-15）**
+
+- 規則：新手主圖**不畫任何功能之間的依賴箭頭**。本原型沒有符號級（呼叫或引用）的功能依賴證據，因此無法畫為已確認的功能實線。未開發 AST 呼叫分析或推論引擎。
+- 證據保留：檔案 import 關係仍保存於功能詳情面板（標示「只有檔案 import 證據，不是已確認的功能依賴」）與工程視圖的依賴對帳（既有 matched、unplanned、neutral 清單）。
+- 既有呈現未退步：新增、修改、移除、受影響、待確認對應、超出計畫仍由 357 項中的既有檢查覆蓋並通過；Planned、Actual、Git、Host Test、Task Gate 仍分開顯示。
+- 驗證（本次查證）：
+  - `verify_diagrams.py`：375/375 通過（exit 0）。357 項中原有的「箭頭直接或推測」一項被改寫為三項新規則（無主圖功能箭頭、關係依檔案歸屬分類、關係證據為真實檔案 import），其餘項目不變。
+  - archgraph pytest：176 passed（先前 175，exit 0）。
+  - ruff：通過（exit 0）。
+  - freeze v1.2：PASSED（exit 0）。`pilot-v1.2` 研究材料未重新產生。
+  - 截圖：TASK-0001～0003 於 1440px 與 768px，位於 `docs/development/evidence/T08-semantic-final-2026-11-14/screenshots/`。
+  - TASK-0001～0003 重新生成成功。
+- 限制：
+  - 功能節點的位置仍依檔案 import 的依賴深度排序，因此沒有箭頭的圖可能看起來節點之間缺乏關聯。
+  - 功能詳情中的檔案依賴只是證據，不應被理解為功能呼叫。
+  - 單人使用體驗仍需作者本人操作並回報；本文件不代填、不宣稱完成。
+- 證據目錄：`docs/development/evidence/T08-semantic-final-2026-11-14/`，包含 build、verifier、freeze、pytest、ruff 的輸出與 exit code、`archgraph-semantic-final.diff`（相對於修改前快照的 diff）、git status。`git_diff_stat_tracked.txt` 已為空，因為 tracked 的 P0A 與 BUG 修改已在 `f7f25c5` 中。
+
 **證據（本次查證）**
 - `docs/development/evidence/T08-B-2026-11-14/`：驗證報告、archgraph pytest 輸出（164 passed，exit 0）、ruff 輸出（通過）、git status、git diff stat、tracked 檔案的 diff 副本（僅作留存，未 commit）。
 
@@ -190,6 +216,13 @@
 
 - 2026-11-14 前段：T08 原為「兩位非作者內部預試，待交付（阻擋）」，阻擋原因為沒有 P1、P2 與獨立評分者的收件對象。依使用者最新指示，已改為單人驗證（T08-A、T08-B），此阻擋不再適用。
 - `pilot/pilot-v1.2/`（測試者套件與交付包）保留為歷史材料，未交付。
+
+## SEC-GIT-001 Git 歷史安全整理（規劃與操作預演，2026-11-15）
+
+- 狀態：**規劃完成，未執行任何歷史改寫**。方案、檔案分類、驗收條件與需授權的操作見 `docs/development/SEC-GIT-001-PLAN.md`。
+- 預演（不改變原倉庫）：bundle 建立與驗證（exit 0）、基底樹解開（不含答案鍵或 rater-only 檔案）、從 bundle 還原為 `f7f25c5`（工作樹乾淨）。
+- 主要風險：`f7f25c5` 包含研究答案鍵與 rater-only 檔案（21 個）、`npm/bin/codex` 符號連結，以及一個需作者確認的 `sk-live-` 字串（未判定真偽，未外部驗證）。
+- 需要授權的操作：建立私有保存區、乾淨重建、建立備份分支、選擇答案鍵處理方式（環境變數或私有供應）、處理原始擷取夾具、修改 P0A 測試檔中的佔位字串、回寫 `main`、任何推送。
 
 ## 約束（持續有效）
 
