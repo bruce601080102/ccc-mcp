@@ -21,8 +21,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
@@ -41,7 +39,8 @@ jobs:
         env:
           RELEASE_VERSION: ${{ inputs.version }}
         run: |
-          if git rev-parse -q --verify "refs/tags/v${RELEASE_VERSION}" >/dev/null; then
+          found=$(git ls-remote --tags origin "refs/tags/v${RELEASE_VERSION}")
+          if [ -n "$found" ]; then
             echo "Tag v${RELEASE_VERSION} already exists" >&2
             exit 1
           fi
@@ -61,8 +60,6 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
@@ -78,7 +75,8 @@ jobs:
         run: |
           test "$RELEASE_VERSION" = "$REQUESTED_VERSION"
           python scripts/release_artifacts.py --expected "$RELEASE_VERSION"
-          if git rev-parse -q --verify "refs/tags/v${RELEASE_VERSION}" >/dev/null; then
+          found=$(git ls-remote --tags origin "refs/tags/v${RELEASE_VERSION}")
+          if [ -n "$found" ]; then
             echo "Tag v${RELEASE_VERSION} already exists" >&2
             exit 1
           fi
