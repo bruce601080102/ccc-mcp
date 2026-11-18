@@ -1,12 +1,11 @@
 [build-system]
-requires = ["hatchling>=1.27"]
+requires = ["hatchling>=1.27", "hatch-fancy-pypi-readme>=24.1"]
 build-backend = "hatchling.build"
 
 [project]
 name = "ccc-mcp"
-dynamic = ["version"]
+dynamic = ["version", "readme"]
 description = "Persistent context and governed agent orchestration over MCP"
-readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.11"
@@ -43,7 +42,7 @@ Repository = "https://github.com/bruce601080102/ccc-mcp"
 Issues = "https://github.com/bruce601080102/ccc-mcp/issues"
 
 [project.optional-dependencies]
-dev = ["pytest>=8,<10", "pytest-asyncio>=1,<2", "httpx>=0.28,<1", "ruff>=0.13,<1", "packaging>=24", "PyYAML>=6"]
+dev = ["pytest>=8,<10", "pytest-asyncio>=1,<2", "pytest-xdist>=3.6,<4", "httpx>=0.28,<1", "ruff>=0.13,<1", "packaging>=24", "PyYAML>=6"]
 
 [project.scripts]
 ccc-mcp = "ccc_mcp.interfaces.cli:main"
@@ -66,6 +65,26 @@ select = ["E4", "E7", "E9", "F", "I", "UP", "PLW1510"]
 
 [tool.hatch.version]
 path = "src/ccc_mcp/__init__.py"
+
+# PyPI cannot resolve repository-relative paths, so README.md (which stays relative for GitHub)
+# is rewritten to absolute repository URLs only in the published package description.
+[tool.hatch.metadata.hooks.fancy-pypi-readme]
+content-type = "text/markdown"
+
+[[tool.hatch.metadata.hooks.fancy-pypi-readme.fragments]]
+path = "README.md"
+
+[[tool.hatch.metadata.hooks.fancy-pypi-readme.substitutions]]
+pattern = '''src="(docs/assets/[^"]+)"'''
+replacement = 'src="https://raw.githubusercontent.com/bruce601080102/ccc-mcp/main/\1"'
+
+[[tool.hatch.metadata.hooks.fancy-pypi-readme.substitutions]]
+pattern = '''(!\[[^\]]*\]\()(docs/assets/[^)\s]+)\)'''
+replacement = '\1https://raw.githubusercontent.com/bruce601080102/ccc-mcp/main/\2)'
+
+[[tool.hatch.metadata.hooks.fancy-pypi-readme.substitutions]]
+pattern = '''(\]\()(?!https?://|#|mailto:)([^)\s]+)\)'''
+replacement = '\1https://github.com/bruce601080102/ccc-mcp/blob/main/\2)'
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/ccc_mcp"]

@@ -78,7 +78,8 @@ jobs:
           RELEASE_VERSION: ${{ inputs.release_version }}
         run: python scripts/release_version.py "$RELEASE_VERSION"
       - run: python -m pip install -e ".[dev]"
-      - run: python -m pytest -q
+      # Tests spawn many subprocesses, so run them across the runner's cores.
+      - run: python -m pytest -q -n auto
 
   build:
     name: build sdist + wheel
