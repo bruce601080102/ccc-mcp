@@ -1,0 +1,3 @@
+# Test fixtures are compared byte for byte (for example by SHA-256), so Git must never rewrite
+# their line endings. Windows runners enable core.autocrlf, which would turn LF into CRLF.
+tests/fixtures/** -text

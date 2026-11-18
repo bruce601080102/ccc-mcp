@@ -47,8 +47,9 @@ def test_private_fixture_loader_rejects_repo_and_symlink_paths(run_module, tmp_p
     alias.symlink_to(target)
     with pytest.raises(RuntimeError, match="must not be a symlink"):
         run_module.load_private_fixture(alias)
-    with pytest.raises(RuntimeError, match="readable by group or others"):
-        run_module.load_private_fixture(target)
+    if os.name != "nt":  # Owner and group/other permission bits only exist on POSIX.
+        with pytest.raises(RuntimeError, match="readable by group or others"):
+            run_module.load_private_fixture(target)
     nested_repo = tmp_path / "other-repo"
     nested_repo.mkdir()
     subprocess.run(["git", "init", "-q", str(nested_repo)], check=True)
@@ -66,7 +67,8 @@ def test_clone_preserves_symlinks_instead_of_copying_host_targets(run_module, tm
     (source / "external-link").symlink_to(host_only)
     cloned = run_module._clone_repo(source, tmp_path / "clone")
     assert (cloned / "external-link").is_symlink()
-    assert (cloned / "external-link").readlink() == host_only
+    # Windows reports the target with a "\\?\" long-path prefix; resolve() compares the same path.
+    assert (cloned / "external-link").readlink().resolve() == host_only.resolve()
 
 
 def test_case_wall_timer_interrupts_and_restores_alarm(run_module):
@@ -108,7 +110,8 @@ def test_scoped_auth_file_strips_refresh_token_and_self_deletes(run_module, tmp_
 
     with isolation._scoped_auth_file() as scoped_path:
         assert scoped_path.parent == tmp_path / "scoped-auth"
-        assert oct(scoped_path.stat().st_mode & 0o777) == "0o600"
+        if os.name != "nt":  # chmod 0o600 has no effect on Windows.
+            assert oct(scoped_path.stat().st_mode & 0o777) == "0o600"
         written = json.loads(scoped_path.read_text())
         assert written["tokens"]["refresh_token"] == docker_module._REVOKED_REFRESH_SENTINEL
         # The access token (what Codex needs to call the model) is preserved...

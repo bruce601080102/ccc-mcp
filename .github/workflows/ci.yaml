@@ -2,6 +2,12 @@ name: CI
 
 on:
   workflow_dispatch:
+    inputs:
+      full_checks:
+        description: Run the full Linux, macOS and Windows matrix and wheel checks, as Release does. Run this before you start a release.
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -9,3 +15,5 @@ permissions:
 jobs:
   checks:
     uses: ./.github/workflows/checks.yaml
+    with:
+      full_checks: ${{ inputs.full_checks }}

@@ -23,7 +23,14 @@ def test_all_workflows_are_manual_or_reusable_only():
 
     assert set(ci["on"]) == {"workflow_dispatch"}
     assert ci["permissions"] == {"contents": "read"}
-    assert ci["jobs"] == {"checks": {"uses": "./.github/workflows/checks.yaml"}}
+    # Manual only, and the same full matrix Release uses can be run ahead of a release.
+    assert ci["on"]["workflow_dispatch"]["inputs"]["full_checks"]["default"] == "false"
+    assert ci["jobs"] == {
+        "checks": {
+            "uses": "./.github/workflows/checks.yaml",
+            "with": {"full_checks": "${{ inputs.full_checks }}"},
+        }
+    }
 
     assert set(checks["on"]) == {"workflow_call"}
     assert checks["on"]["workflow_call"]["inputs"]["full_checks"]["default"] == "false"
