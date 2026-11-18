@@ -49,7 +49,6 @@ jobs:
     needs: require-main
     uses: ./.github/workflows/checks.yaml
     with:
-      full_checks: true
       release_version: ${{ inputs.version }}
 
   github-release:

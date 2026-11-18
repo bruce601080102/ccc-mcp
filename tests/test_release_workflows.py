@@ -13,7 +13,6 @@ def _workflow(name):
 
 
 def test_all_workflows_are_manual_or_reusable_only():
-    ci = _workflow("ci.yaml")
     checks = _workflow("checks.yaml")
     release = _workflow("release.yaml")
 
@@ -21,27 +20,20 @@ def test_all_workflows_are_manual_or_reusable_only():
         if path.suffix in {".yaml", ".yml"}:
             assert set(_workflow(path.name)["on"]) <= {"workflow_dispatch", "workflow_call"}
 
-    assert set(ci["on"]) == {"workflow_dispatch"}
-    assert ci["permissions"] == {"contents": "read"}
-    # Manual only, and the same full matrix Release uses can be run ahead of a release.
-    assert ci["on"]["workflow_dispatch"]["inputs"]["full_checks"]["default"] == "false"
-    assert ci["jobs"] == {
-        "checks": {
-            "uses": "./.github/workflows/checks.yaml",
-            "with": {"full_checks": "${{ inputs.full_checks }}"},
-        }
-    }
+    # Release is the only workflow a person starts; checks.yaml is reusable only.
+    assert {path.name for path in WORKFLOWS.iterdir()} == {"checks.yaml", "release.yaml"}
 
     assert set(checks["on"]) == {"workflow_call"}
-    assert checks["on"]["workflow_call"]["inputs"]["full_checks"]["default"] == "false"
+    # Release always runs the whole suite; there is no reduced mode to select.
+    assert set(checks["on"]["workflow_call"]["inputs"]) == {"release_version"}
     assert checks["on"]["workflow_call"]["inputs"]["release_version"]["default"] == ""
     assert checks["permissions"] == {"contents": "read"}
-    assert set(checks["jobs"]) == {"lint", "quick-test", "test", "build", "smoke-install"}
-    for name in ("quick-test", "test", "build"):
+    assert set(checks["jobs"]) == {"lint", "test", "build", "smoke-install"}
+    for name in ("test", "build"):
         assert checks["jobs"][name]["needs"] == "lint"
-    assert checks["jobs"]["quick-test"]["if"] == "inputs.full_checks == false"
-    for name in ("test", "build", "smoke-install"):
-        assert checks["jobs"][name]["if"] == "inputs.full_checks"
+    assert checks["jobs"]["smoke-install"]["needs"] == "build"
+    for job in checks["jobs"].values():
+        assert "if" not in job
     version_step = next(
         step
         for step in checks["jobs"]["test"]["steps"]
@@ -52,6 +44,6 @@ def test_all_workflows_are_manual_or_reusable_only():
     assert set(release["on"]) == {"workflow_dispatch"}
     assert release["on"]["workflow_dispatch"]["inputs"]["version"]["required"] == "true"
     assert release["jobs"]["verify"]["uses"] == "./.github/workflows/checks.yaml"
-    assert release["jobs"]["verify"]["with"]["full_checks"] == "true"
+    assert release["jobs"]["verify"]["with"] == {"release_version": "${{ inputs.version }}"}
     assert release["jobs"]["verify"]["with"]["release_version"] == "${{ inputs.version }}"
     assert {"github-release", "publish"} <= set(release["jobs"])
