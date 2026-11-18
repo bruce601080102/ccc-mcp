@@ -175,9 +175,12 @@ def assert_fixture_not_in_committed_head(name):
 
 
 def git(repo, *args, capture=False):
+    # Auto maintenance would detach after a commit and briefly hold .git/objects/maintenance.lock,
+    # which breaks any copy of the repo made while it runs.
     done = subprocess.run(
         ["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid",
-         "-c", "core.hooksPath=/dev/null", "-C", str(repo), *args],
+         "-c", "core.hooksPath=/dev/null", "-c", "maintenance.auto=false", "-c", "gc.auto=0",
+         "-C", str(repo), *args],
         check=True, capture_output=True, text=True,
     )
     return done.stdout if capture else None

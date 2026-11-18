@@ -35,6 +35,14 @@ def run_module():
     return _load_run_module()
 
 
+@pytest.fixture(autouse=True)
+def _pin_codex_cli_version(run_module, monkeypatch):
+    # `codex --version` is cached per process. Left alone, a test that counts codex calls sees
+    # one extra call only when it is the first to need the version, so the result would depend
+    # on which tests ran before it in the same worker.
+    monkeypatch.setitem(run_module._CODEX_VERSION_CACHE, "v", "codex-cli test")
+
+
 def _fake_codex(write_source_by_round, real_run):
     """Builds a stand-in for `subprocess.run` that intercepts only the codex exec
     invocation — writing `write_source_by_round[call_index]` (or the last entry, if

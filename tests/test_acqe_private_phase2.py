@@ -67,8 +67,8 @@ def test_clone_preserves_symlinks_instead_of_copying_host_targets(run_module, tm
     (source / "external-link").symlink_to(host_only)
     cloned = run_module._clone_repo(source, tmp_path / "clone")
     assert (cloned / "external-link").is_symlink()
-    # Windows reports the target with a "\\?\" long-path prefix; resolve() compares the same path.
-    assert (cloned / "external-link").readlink().resolve() == host_only.resolve()
+    # Windows reports the target with a "\\?\" long-path prefix, so compare the files, not the strings.
+    assert os.path.samefile((cloned / "external-link").readlink(), host_only)
 
 
 def test_case_wall_timer_interrupts_and_restores_alarm(run_module):
