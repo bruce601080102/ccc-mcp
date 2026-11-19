@@ -18,6 +18,7 @@ from ..infra.security import (
 from .configuration import directory
 from .evidence import implementation_evidence
 from .models import AgentReport
+from .roles import REVIEWER_ROLES, writes_files
 
 DENIED = {
     ".git",
@@ -136,9 +137,12 @@ class WorkspaceHub:
                 options = json.loads(row["options"])
                 # Meeting Mode's SD/RD clarification check keeps role SD/RD but must be
                 # as read-only as SA/REVIEW: no worktree, no project-workspace claim.
-                readonly = row["role"] in {"SA", "REVIEW"} or options.get(
-                    "report_schema", "agent_report"
-                ) != "agent_report"
+                # One definition of "may write", shared with the CLI worker: READ_ONLY_ROLES, a
+                # design-only dispatch, or a non-report schema. (Only SA and REVIEW used to count
+                # here, which let a ChatGPT conversation playing any other read-only role write.)
+                readonly = not writes_files(
+                    row["role"], options, options.get("report_schema", "agent_report")
+                )
                 if not readonly:
                     self.approved_plan(project_id, row["task_id"])
                     if options.get("workspace_mode", "worktree") == "project":
@@ -153,7 +157,8 @@ class WorkspaceHub:
                             row["task_id"],
                             self.get_project_settings(project_id)["worktree_dir"],
                         )
-                elif row["role"] == "REVIEW":
+                elif row["role"] in REVIEWER_ROLES:
+                    # Reviewers read the builder's changes, where the CLI worker points them too.
                     candidate = self.task_worktree(project_id, row["task_id"])
                     if candidate.is_dir():
                         cwd = candidate
@@ -167,7 +172,7 @@ class WorkspaceHub:
                     ),
                 )
                 package = json.loads(row["package"])
-                return {
+                offered = {
                     "execution_id": execution_id,
                     "task_id": row["task_id"],
                     "status": "AWAITING_CHATGPT",
@@ -178,9 +183,33 @@ class WorkspaceHub:
                     "implementation roles may use write_task_file. Finish with submit_agent_report. "
                     "Do not launch another agent. Usage and model are not independently observable for ChatGPT web.",
                 }
+                if row["role_ref"]:
+                    self._record_chatgpt_offer(row, package, offered)
+                return offered
         except BridgeError as exc:
             self.finish_execution(execution_id, error=str(exc), state="FAILED")
             raise
+
+    def _record_chatgpt_offer(self, row, package, offered):
+        """Keep what ccc-mcp offered the ChatGPT conversation for a custom role: the handoff
+        text and the prepared execution (its instruction and context package). ccc-mcp cannot
+        see the conversation itself, so this is the record of what was handed over, not proof
+        of what the model read."""
+        from .role_prompt import describe_offer
+        from .tasks import chatgpt_handoff_prompt
+
+        language = self.get_project_settings(row["project_id"])["language"]
+        handoff = chatgpt_handoff_prompt(
+            row["project_id"],
+            {"id": row["id"], "role": row["role"], "task_id": row["task_id"],
+             "options": json.loads(row["options"]), "package": package},
+            language,
+        )
+        text, segments = describe_offer(handoff, offered)
+        with self.store.transaction() as conn:
+            self.record_execution_prompt(
+                conn, row["project_id"], row["id"], "chatgpt", "chatgpt_handoff", text, segments
+            )
 
     def _read_root(self, project_id, root_id, execution_id=None):
         project = self.project(project_id)
@@ -259,10 +288,10 @@ class WorkspaceHub:
         reject_secrets(content)
         with self.lock(project_id):
             row = self._interactive_execution(project_id, execution_id)
-            if row["role"] in {"SA", "REVIEW"} or row["options"].get(
-                "report_schema", "agent_report"
-            ) != "agent_report":
-                raise PermissionDenied("SA/Review is read-only regardless of provider")
+            if not writes_files(
+                row["role"], row["options"], row["options"].get("report_schema", "agent_report")
+            ):
+                raise PermissionDenied("This role is read-only regardless of provider")
             root = self.execution_workspace(row)
             if str(root) != row["worktree"]:
                 raise PermissionDenied("Unexpected worktree")
@@ -329,7 +358,7 @@ class WorkspaceHub:
             # when PM advances the SD/RD handoff, not while this report is saved.
             # Do not replace an earlier host TEST-RESULT with a placeholder here.
             state = None
-            if row["role"] not in {"SA", "REVIEW"}:
+            if writes_files(row["role"], row["options"]):
                 evidence, state = implementation_evidence(self, row, Path(row["worktree"]))
                 extras.update(evidence)
             self.finish_execution(

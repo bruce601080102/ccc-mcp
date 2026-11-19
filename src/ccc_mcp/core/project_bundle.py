@@ -10,14 +10,28 @@ import tempfile
 import uuid
 from pathlib import Path
 
-from ..adapters.storage import now
+from ..adapters.storage import ADDED_COLUMNS, now
 from ..infra.config import metadata_name
 from ..infra.errors import BridgeError
 from ..infra.security import canonical, digest, safe_path
 from .context import identifier
+from .role_bundle import (
+    OMITTED_TABLES,
+    ROLE_TABLES,
+    export_role_tables,
+    history_names_snapshots,
+    insert_role_records,
+    restore_identity_check,
+    validate_role_records,
+)
 
 FORMAT = "ccc-mcp-project"
+# Version 1 is what every earlier ccc-mcp writes and reads. A bundle is written as version 2 only
+# when it carries custom-role records (roles, snapshots, roster pins); an older ccc-mcp refuses
+# those by version instead of importing half of a project. Both versions are read here.
 VERSION = 1
+ROLES_VERSION = 2
+SUPPORTED_VERSIONS = (VERSION, ROLES_VERSION)
 MAX_BYTES = 100 * 1024 * 1024
 
 # Parent rows precede their dependants. Keep this explicit: a new project-scoped table
@@ -73,7 +87,10 @@ def _columns(conn, table):
 
 
 def _check_schema(conn, project_id=None):
-    known = set(TABLES) | {"projects", "project_deletions", "operator_settings"}
+    known = (
+        set(TABLES) | set(ROLE_TABLES) | set(OMITTED_TABLES)
+        | {"projects", "project_deletions", "operator_settings"}
+    )
     for (table,) in conn.execute("SELECT name FROM sqlite_master WHERE type='table'"):
         if table.startswith("sqlite_"):
             continue
@@ -130,6 +147,14 @@ class ProjectBundleHub:
                     else:
                         query = f"SELECT * FROM {table} WHERE project_id=? ORDER BY rowid"
                     rows = [dict(row) for row in conn.execute(query, (project_id,))]
+                    # Columns added in later versions stay out of a row that never used them,
+                    # so a bundle with no custom roles still imports on an older ccc-mcp.
+                    added = ADDED_COLUMNS.get(table, ())
+                    rows = [
+                        {key: value for key, value in row.items()
+                         if not (key in added and value is None)}
+                        for row in rows
+                    ]
                     if table == "project_settings":
                         for row in rows:
                             settings = json.loads(row["content"])
@@ -144,13 +169,21 @@ class ProjectBundleHub:
                                 settings.pop(key, None)
                             row["content"] = canonical(settings)
                     tables[table] = rows
+                role_tables, omitted = export_role_tables(conn, project_id)
+        # Role tables are written only when they hold something, so a project that never used
+        # them produces exactly the bundle earlier versions did.
+        with_roles = any(role_tables.values())
+        if with_roles:
+            tables.update({table: rows for table, rows in role_tables.items() if rows})
         payload = {
             "format": FORMAT,
-            "version": VERSION,
+            "version": ROLES_VERSION if with_roles else VERSION,
             "exported_at": now(),
             "project": {key: project[key] for key in ("id", "name", "created")},
             "tables": tables,
         }
+        if omitted:
+            payload["omitted"] = omitted
         bundle = canonical({"payload": payload, "sha256": digest(canonical(payload).encode())})
         if len(bundle.encode("utf-8")) > MAX_BYTES:
             raise BridgeError("Project bundle exceeds 100 MB")
@@ -178,17 +211,23 @@ class ProjectBundleHub:
             or digest(canonical(payload).encode()) != envelope["sha256"]
         ):
             raise BridgeError("Project bundle checksum mismatch")
-        if payload.get("format") != FORMAT or payload.get("version") != VERSION:
+        version = payload.get("version")
+        if (
+            payload.get("format") != FORMAT
+            or isinstance(version, bool)
+            or version not in SUPPORTED_VERSIONS
+        ):
             raise BridgeError("Unsupported project bundle version")
         source = payload.get("project")
         tables = payload.get("tables")
+        known = set(TABLES) | (set(ROLE_TABLES) if version >= ROLES_VERSION else set())
         if (
             not isinstance(source, dict)
             or not isinstance(tables, dict)
-            or not set(tables) <= set(TABLES)
+            or not set(tables) <= known
         ):
             raise BridgeError("Project bundle is missing project records")
-        tables = {table: tables.get(table, []) for table in TABLES}
+        tables = {table: tables.get(table, []) for table in (*TABLES, *ROLE_TABLES)}
         if not all(isinstance(rows, list) for rows in tables.values()):
             raise BridgeError("Invalid project bundle tables")
         if tables["pending_dispatch"] or any(
@@ -204,6 +243,15 @@ class ProjectBundleHub:
         if not isinstance(source.get("id"), str):
             raise BridgeError("Project bundle has an invalid ID")
         project_id = identifier(source["id"])
+        # Every role record is checked before anything is written. Imported roles arrive
+        # unconfirmed whatever the file says; see core/role_bundle.py.
+        roles = validate_role_records(self, project_id, version, tables)
+        exported_at = payload.get("exported_at")
+        provenance = {
+            "bundle_sha256": envelope["sha256"],
+            "exported_at": exported_at if isinstance(exported_at, str) else None,
+            "source_project_id": project_id,
+        }
         candidate = Path(path).expanduser().absolute()
         if candidate.is_symlink() or (
             hasattr(candidate, "is_junction") and candidate.is_junction()
@@ -236,7 +284,7 @@ class ProjectBundleHub:
         with self.lock(project_id):
             try:
                 with self.store.transaction() as conn:
-                    self._insert_bundle(conn, project_id, root, source, tables)
+                    self._insert_bundle(conn, project_id, root, source, tables, roles, provenance)
             except sqlite3.DatabaseError as exc:
                 raise BridgeError(f"Invalid project bundle records: {exc}") from exc
             self.sync_documents(project_id)
@@ -246,9 +294,12 @@ class ProjectBundleHub:
             "read_only": True,
             "tasks": len(tables["tasks"]),
             "context_versions": len(tables["context_versions"]),
+            "custom_roles": len(roles.roles),
+            # Imported roles cannot run until a person confirms each one in the local console.
+            "custom_roles_pending": len(roles.roles),
         }
 
-    def _insert_bundle(self, conn, project_id, root, source, tables):
+    def _insert_bundle(self, conn, project_id, root, source, tables, roles, provenance):
         _check_schema(conn)
         if conn.execute(
             "SELECT 1 FROM projects WHERE id=? OR root=?", (project_id, str(root))
@@ -267,6 +318,13 @@ class ProjectBundleHub:
                 source.get("created") or now(),
             ),
         )
+        insert_role_records(conn, project_id, tables, roles, provenance)
+        # Finished runs that name a role snapshot are history. The dispatch-time check that
+        # refuses an untrusted snapshot is paused for this transaction only (the DDL rolls back
+        # with it) and put back, then verified, before anything is committed.
+        paused = history_names_snapshots(tables)
+        if paused:
+            conn.execute("DROP TRIGGER IF EXISTS agent_executions_role_identity")
         for table in TABLES:
             rows = tables[table]
             if table in OPTIONAL_TABLES and not _columns(conn, table):
@@ -308,6 +366,8 @@ class ProjectBundleHub:
                 ]
                 sql = f"INSERT INTO {table} ({','.join(insert_columns)}) VALUES ({','.join('?' for _ in insert_columns)})"
                 conn.execute(sql, tuple(values[column] for column in insert_columns))
+        if paused:
+            restore_identity_check(conn)
         if len(tables["project_settings"]) != 1 or not tables["context_versions"]:
             raise BridgeError("Project bundle lacks settings or Context history")
         # Preserve the old access audit, then explicitly revoke it on this

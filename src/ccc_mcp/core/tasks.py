@@ -400,7 +400,7 @@ def _chatgpt_handoff_prompt_base(project_id, pending, language):
     schema = (pending.get("options") or {}).get("report_schema", "agent_report")
     if schema != "agent_report":
         return _meeting_mode_handoff_prompt(project_id, pending, language, schema)
-    readonly = role in {"SA", "REVIEW"}
+    readonly = not writes_files(role, pending.get("options") or {}, schema)
     if language in {"zh-TW", "ch"}:
         write_step = (
             ""
@@ -920,17 +920,18 @@ class TaskHub:
     def _dispatch_or_adopt(
         self, project_id, task_id, role, instruction, adapter, fake_scenario,
         report_schema="agent_report", clarification_text=None, flow_step=None, read_only=False,
-        fake_script=None,
+        fake_script=None, role_ref=None, role_snapshot=None, step_id=None,
     ):
         """Dispatch `role`, unless a resume attempt already dispatched it and only
         crashed before the pointer could be cleared — then adopt that live execution
-        instead of dispatching (and losing track of) a second one."""
+        instead of dispatching (and losing track of) a second one. A custom role is adopted
+        only for the very step it was dispatched for."""
         live = self.store.one(
-            "SELECT id,role FROM agent_executions WHERE project_id=? AND task_id=? "
+            "SELECT id,role,step_id FROM agent_executions WHERE project_id=? AND task_id=? "
             "AND status IN ('QUEUED','RUNNING') ORDER BY created DESC LIMIT 1",
             (project_id, task_id),
         )
-        if live and live["role"] == role:
+        if live and live["role"] == role and live["step_id"] == step_id:
             return {"task_id": task_id, "execution_id": live["id"], "status": "QUEUED", "adopted": True}
         return self.dispatch_agent(
             project_id,
@@ -946,6 +947,9 @@ class TaskHub:
             flow_step=flow_step,
             read_only=read_only,
             fake_script=fake_script,
+            role_ref=role_ref,
+            role_snapshot=role_snapshot,
+            step_id=step_id,
         )
 
     def _meeting_gate_due(self, project_id, task_id):
@@ -986,8 +990,54 @@ class TaskHub:
         )
         return due, rounds_used, min_rounds
 
+    def _preflight_roles(self, project_id, task_id):
+        """(role, provider) for each distinct role the task will use. A custom role's provider is
+        the one frozen in its snapshot, not the project's setting for its base role."""
+        flow = self._task_flow(project_id, task_id)
+        if flow is None:
+            return [
+                (role, self.resolve_agent_settings(project_id, role)["provider"])
+                for role in ("SA", "SD", "RD", "SD/RD", "REVIEW")
+            ]
+        pairs = []
+        for step in flow["steps"]:
+            if step.get("snapshot_id"):
+                provider = self.role_snapshot(project_id, step["snapshot_id"])["content"][
+                    "runtime"]["provider"]
+            else:
+                provider = self.resolve_agent_settings(project_id, step["role"])["provider"]
+            if (step["role"], provider) not in pairs:
+                pairs.append((step["role"], provider))
+        return pairs
+
+    def _meeting_identity(self, project_id, task_id):
+        """The role identity of whoever asks Meeting Mode's clarification questions on this
+        task, so the next round and the implementation that follows stay with the same custom
+        role (empty for a built-in role). Derived from the saved executions only."""
+        row = self.store.one(
+            "SELECT role, role_ref, role_snapshot, step_id FROM agent_executions WHERE id=COALESCE("
+            "(SELECT question_execution_id FROM meeting_clarifications WHERE project_id=? "
+            "AND task_id=? ORDER BY round DESC LIMIT 1), "
+            "(SELECT id FROM agent_executions WHERE project_id=? AND task_id=? AND "
+            "json_extract(options,'$.report_schema')='clarification_request' "
+            "ORDER BY created DESC LIMIT 1))",
+            (project_id, task_id, project_id, task_id),
+        )
+        if not row or not row["role_ref"]:
+            return None
+        return dict(row)
+
+    def _flow_step_identity(self, project_id, task_id, base_role):
+        """The identity of the first step of the pinned workflow that uses `base_role`, when
+        that step is a custom role (Meeting Mode's answerer is the workflow's analyst)."""
+        flow = self._task_flow(project_id, task_id)
+        step = next((s for s in (flow or {}).get("steps", []) if s["role"] == base_role), None)
+        if not step or not step.get("role_ref"):
+            return None
+        return {"role": base_role, **self._step_identity(step)}
+
     def _start_implementation_or_clarification(
-        self, project_id, task_id, adapter, fake_scenario, clarification_text=None
+        self, project_id, task_id, adapter, fake_scenario, clarification_text=None, identity=None
     ):
         """The one place a task's SD/RD dispatch is decided, before AND between Meeting
         Mode rounds: a read-only clarification-ask when enabled and the task has never
@@ -998,6 +1048,9 @@ class TaskHub:
         to call again after any crash or resume without re-deriving the decision by
         hand."""
         plan_content = self.approved_plan(project_id, task_id)["content"]
+        identity = identity or self._meeting_identity(project_id, task_id) or {}
+        role = identity.get("role", "SD/RD")
+        who = {key: value for key, value in identity.items() if key != "role"}
         due, rounds_used, min_rounds = self._meeting_gate_due(project_id, task_id)
         if due:
             if rounds_used < min_rounds:
@@ -1017,11 +1070,17 @@ class TaskHub:
                     "the real implementation dispatch follows automatically."
                 )
             return self._dispatch_or_adopt(
-                project_id, task_id, "SD/RD", ask + "\n\n" + plan_content,
+                project_id, task_id, role, ask + "\n\n" + plan_content,
                 adapter, fake_scenario, report_schema="clarification_request",
-                clarification_text=clarification_text,
+                clarification_text=clarification_text, **who,
             )
-        return self._dispatch_or_adopt(project_id, task_id, "SD/RD", plan_content, adapter, fake_scenario)
+        instruction = (
+            self.compose_pinned_instruction(project_id, who["role_snapshot"], plan_content)
+            if who else plan_content
+        )
+        return self._dispatch_or_adopt(
+            project_id, task_id, role, instruction, adapter, fake_scenario, **who
+        )
 
     def _review_outcome(self, project_id, task_id):
         """Whether a just-committed REVIEW round is actually done, from durable facts only
@@ -1394,6 +1453,9 @@ class TaskHub:
                             now(),
                         ),
                     )
+                    roster_hash = self.bind_approval_to_roster(
+                        conn, project_id, approval_id, task_id
+                    )
                     conn.execute(
                         "INSERT INTO decisions VALUES(?,?,?,?,?,?,?,?,?)",
                         (
@@ -1424,6 +1486,7 @@ class TaskHub:
                                 "content": content,
                                 "hash": plan_hash,
                                 "authorization_id": access["authorization_id"],
+                                **({"roster_hash": roster_hash} if roster_hash else {}),
                             }
                         )
                         + "\n",
@@ -1488,6 +1551,7 @@ class TaskHub:
                         None,
                     ),
                 )
+                self.bind_approval_to_roster(conn, project_id, request_id, task_id)
             self.sync_documents(project_id)
             return {
                 "approval_id": request_id,
@@ -1577,6 +1641,32 @@ class TaskHub:
         return {"status": "APPROVED", "identity": identity, "plan_hash": plan["hash"]}
 
     def approved_plan(self, project_id, task_id, require_current_context=True):
+        plan = self._approved_plan(project_id, task_id, require_current_context)
+        self._require_approval_matches_roster(project_id, task_id)
+        return plan
+
+    def _require_approval_matches_roster(self, project_id, task_id):
+        """A task that runs pinned custom roles may only go on under an approval that was given
+        for exactly the team it is running. Nothing in normal use breaks this (a new work round
+        invalidates the old approval as it pins a new team); it is the check that makes the
+        binding mean something if a roster were ever replaced without a fresh approval."""
+        pin = self.current_roster_pin(project_id, task_id)
+        if not pin:
+            return
+        approval = self.store.one(
+            "SELECT id FROM approvals WHERE project_id=? AND task_id=? AND status='APPROVED' "
+            "ORDER BY created DESC LIMIT 1", (project_id, task_id),
+        )
+        if not approval:
+            return
+        bound = self.approval_roster(project_id, approval["id"])
+        if bound is None or bound["roster_hash"] != pin["roster_hash"]:
+            raise PermissionDenied(
+                "The roles this task runs changed after its plan was approved; approve the plan "
+                "again for the current team before continuing"
+            )
+
+    def _approved_plan(self, project_id, task_id, require_current_context=True):
         if self.get_project_access(project_id)["mode"] == "read-write":
             plan = self.store.one(
                 "SELECT * FROM plans WHERE project_id=? AND task_id=? ORDER BY created DESC LIMIT 1",
@@ -1719,8 +1809,27 @@ class TaskHub:
         flow_step=None,
         read_only=False,
         fake_script=None,
+        role_ref=None,
+        role_snapshot=None,
+        step_id=None,
     ):
-        settings = self.resolve_agent_settings(project_id, role, agent, model, effort)
+        identity = {}
+        contract = None
+        if role_ref is not None or role_snapshot is not None or step_id is not None:
+            # A custom role runs only as a pinned, trusted snapshot at a named step. The
+            # database enforces the same rules on every insert; checking here gives the caller
+            # a readable reason, and checks the fixed contract before anything is dispatched.
+            if not (role_ref and role_snapshot and step_id):
+                raise BridgeError("A custom role dispatch needs role_ref, role_snapshot and step_id")
+            snapshot = self.role_snapshot(project_id, role_snapshot)
+            self.require_role_snapshot_trusted(project_id, role_snapshot)
+            if snapshot["role_ref"] != role_ref or snapshot["base_role"] != role:
+                raise BridgeError("The role snapshot does not belong to this role")
+            settings = self.snapshot_agent_settings(snapshot, agent, model, effort)
+            contract = self.check_snapshot_contract(project_id, task_id, snapshot, step_id)
+            identity = {"role_ref": role_ref, "role_snapshot": role_snapshot, "step_id": step_id}
+        else:
+            settings = self.resolve_agent_settings(project_id, role, agent, model, effort)
         agent = settings["provider"]
         if adapter not in {"real", "fake"}:
             raise BridgeError("Unsupported adapter")
@@ -1747,6 +1856,7 @@ class TaskHub:
                     fake_scenario
                     if fake_scenario in REPORT_SCHEMAS["clarification_request"]
                     else "ask_question",
+                    identity={**identity, "role": role} if identity else None,
                 )
                 return {
                     **redirected,
@@ -1847,7 +1957,8 @@ class TaskHub:
                 self._transition(conn, project_id, task_id, state, f"PM dispatched {agent}/{role}")
                 conn.execute(
                     "INSERT INTO agent_executions(id,project_id,task_id,agent,role,context_version,"
-                    "instruction,adapter,options,status,package,created) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "instruction,adapter,options,status,package,created,role_ref,role_snapshot,"
+                    "step_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         execution_id,
                         project_id,
@@ -1871,11 +1982,15 @@ class TaskHub:
                                 "flow_step": flow_step,
                                 "read_only": bool(read_only),
                                 "fake_script": fake_script,
+                                **({"contract": contract} if contract else {}),
                             }
                         ),
                         "QUEUED",
                         canonical(package),
                         now(),
+                        identity.get("role_ref"),
+                        identity.get("role_snapshot"),
+                        identity.get("step_id"),
                     ),
                 )
                 conn.execute(
@@ -1924,10 +2039,18 @@ class TaskHub:
         with self._status_read_scope(project_id):
             task = self.task(project_id, task_id)
             task["executions"] = self.store.all(
-                "SELECT id,status,role,error,worktree FROM agent_executions "
-                "WHERE project_id=? AND task_id=? ORDER BY created",
+                "SELECT id,status,role,role_ref,role_snapshot,step_id,error,worktree "
+                "FROM agent_executions WHERE project_id=? AND task_id=? ORDER BY created",
                 (project_id, task_id),
             )
+            labels = self.role_labels(
+                project_id, [row["role_snapshot"] for row in task["executions"]]
+            )
+            for row in task["executions"]:
+                label = labels.get(row["role_snapshot"])
+                if label:
+                    row.update(role_name=label["name"], role_avatar=label["avatar"],
+                               role_version=label["version"])
             task["events"] = self.store.all(
                 "SELECT * FROM task_events WHERE project_id=? AND task_id=? ORDER BY seq",
                 (project_id, task_id),
@@ -2118,12 +2241,18 @@ class TaskHub:
                     "name": flow_info["name"] if flow_info else "Classic",
                     "selected_by": flow_info.get("selected_by") if flow_info else None,
                     "reason": flow_info.get("reason") if flow_info else None,
-                    "steps": [step["role"] for step in flow_info["steps"]] if flow_info else None,
+                    # A step is its role's name, or for a custom role its id (the page looks the
+                    # name up); steps_detail says which is which.
+                    "steps": [step.get("role_ref") or step["role"] for step in flow_info["steps"]]
+                    if flow_info else None,
+                    "steps_detail": self.flow_step_details(project_id, flow_info)
+                    if flow_info else None,
                     "pending_decision": flow_decision,
                     "stats": team_stats(
-                        [step["role"] for step in flow_info["steps"]]
+                        [step.get("role_ref") or step["role"] for step in flow_info["steps"]]
                         if flow_info
-                        else ["SA", "SD/RD", "REVIEW"]
+                        else ["SA", "SD/RD", "REVIEW"],
+                        self.flow_declared_stats(project_id, flow_info) if flow_info else None,
                     ),
                     # Index of the step the latest execution belongs to, and whether it finished.
                     "current_step": step_row["step"] if step_row else None,
@@ -2596,12 +2725,9 @@ class TaskHub:
         # nothing left to check here at all.
         chatgpt_next = False
         chatgpt_other_roles = []
-        for role in (
-            (self._flow_roles(project_id, task_id) or ("SA", "SD", "RD", "SD/RD", "REVIEW"))
-            if next_role is not None
-            else ()
+        for role, provider in (
+            self._preflight_roles(project_id, task_id) if next_role is not None else ()
         ):
-            provider = self.resolve_agent_settings(project_id, role)["provider"]
             is_next = role == next_role
             if provider == "chatgpt":
                 if is_next:
@@ -3120,6 +3246,8 @@ class TaskHub:
                     "execution_id": row["id"],
                     "agent": row["agent"],
                     "role": row["role"],
+                    **({"role_ref": row["role_ref"], "step_id": row["step_id"]}
+                       if row["role_ref"] else {}),
                     "status": row["status"],
                     "interactive": interactive,
                     "invocation": invocation,
@@ -3147,13 +3275,20 @@ class TaskHub:
                            "summary": task["requirement"] if kind == "task_created" else row["reason"],
                            "detail": None, "evidence_refs": [], "context_version": None})
         executions = self.store.all(
-            "SELECT id,agent,role,status,result,error,context_version,created,finished "
-            "FROM agent_executions WHERE project_id=? AND task_id=? ORDER BY created,id",
+            "SELECT id,agent,role,role_ref,role_snapshot,step_id,status,result,error,"
+            "context_version,created,finished FROM agent_executions WHERE project_id=? "
+            "AND task_id=? ORDER BY created,id",
             (project_id, task_id),
         )
+        labels = self.role_labels(project_id, [row["role_snapshot"] for row in executions])
         for row in executions:
+            label = labels.get(row["role_snapshot"]) or {}
             common = {"actor": row["agent"], "role": row["role"],
-                      "execution_id": row["id"], "context_version": row["context_version"]}
+                      "execution_id": row["id"], "context_version": row["context_version"],
+                      **({"role_ref": row["role_ref"], "step_id": row["step_id"],
+                          "role_name": label.get("name"), "role_avatar": label.get("avatar"),
+                          "role_version": label.get("version")}
+                         if row["role_ref"] else {})}
             events.append({**common, "event_id": f"agent-start-{row['id']}",
                            "event_type": "agent_started", "timestamp": row["created"],
                            "status": "QUEUED", "summary": None, "detail": None,
@@ -3202,6 +3337,8 @@ class TaskHub:
                 events.append({"event_id": f"intervention-{row['seq']}",
                                "event_type": "role_returned", "actor": "agent",
                                "role": spoken["role"], "execution_id": row["execution_id"],
+                               **({"role_ref": spoken["role_ref"], "step_id": spoken["step_id"]}
+                                  if spoken.get("role_ref") else {}),
                                "timestamp": row["created"], "status": "RECORDED",
                                "summary": spoken["text"], "detail": None,
                                "evidence_refs": [], "context_version": row["context_version"]})
@@ -3609,9 +3746,13 @@ class TaskHub:
                     name = REPORT_FILES.get(
                         row["role"], "SD-REPORT.md" if design_only else "IMPLEMENTATION.md"
                     )
+                    who = (
+                        f"{row['role']} · {row['role_ref']} · {row['step_id']}"
+                        if row["role_ref"] else row["role"]
+                    )
                     report_content = (
                         f"# {name}\n\n"
-                        + attribution(language, row["agent"], row["role"])
+                        + attribution(language, row["agent"], who)
                         + f"{canonical(report)}\n"
                     )
                     report_path = self.save_artifact(
@@ -3622,6 +3763,16 @@ class TaskHub:
                         execution_id,
                         report_content,
                     )
+                    if row["role_ref"]:
+                        # The task-level file above is "the latest report of this base role",
+                        # which the rest of the system reads. A custom role also gets a file of
+                        # its own per step, so two steps (or two roles on one base) never
+                        # replace each other's report.
+                        own = f"{name[:-3]}--{row['role_ref']}--{row['step_id']}.md"
+                        self.save_artifact(
+                            conn, project_id, task_id, own, execution_id,
+                            report_content.replace(f"# {name}", f"# {own}", 1),
+                        )
                     self.record_agent_context_result(
                         conn, row, report, report_path, digest(report_content.encode())
                     )
@@ -3707,12 +3858,14 @@ class TaskHub:
             )
             if not open_row:
                 return None
+            answerer = self._flow_step_identity(project_id, task_id, "SA") or {}
             return self._dispatch_or_adopt(
                 project_id, task_id, "SA",
                 "SD/RD asked a blocking question before implementing. Answer with "
                 "response_type confirmed, recommendation, or pm_decision_required.\n\n"
                 f"Question: {open_row['question']}",
                 "real", "success", report_schema="clarification_response",
+                **{key: value for key, value in answerer.items() if key != "role"},
             )
         if task["state"] == "IMPLEMENTING":
             return self._start_implementation_or_clarification(project_id, task_id, "real", "success")

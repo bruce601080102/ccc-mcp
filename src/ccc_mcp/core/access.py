@@ -9,7 +9,7 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
-from ..adapters.storage import now
+from ..adapters.storage import ROLE_NO_DELETE_TRIGGERS, ROLE_PROJECT_TABLES, now
 from ..adapters.ui_groups import forget_project_group
 from ..infra.config import metadata_name
 from ..infra.errors import BridgeError, PermissionDenied, VersionConflict
@@ -222,7 +222,7 @@ class ProjectAccessHub:
                         "project_access_no_delete", "project_receipt_no_delete",
                         "workspace_edits_no_delete", "workspace_batches_no_delete",
                         "context_no_delete", "decisions_no_delete",
-                        "meeting_clarifications_no_delete",
+                        "meeting_clarifications_no_delete", *ROLE_NO_DELETE_TRIGGERS,
                     )
                     trigger_sql = [
                         row[0] for row in conn.execute(
@@ -243,6 +243,7 @@ class ProjectAccessHub:
                         "agent_executions", "artifacts", "decisions",
                         "context_patches", "context_versions", "tasks", "workspace_batches",
                         "workspace_edits", "project_access_events", "project_settings",
+                        *ROLE_PROJECT_TABLES,
                     ):
                         conn.execute(f"DELETE FROM {table} WHERE project_id=?", (project_id,))
                     conn.execute("DELETE FROM projects WHERE id=?", (project_id,))

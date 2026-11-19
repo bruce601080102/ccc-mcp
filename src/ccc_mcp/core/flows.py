@@ -130,25 +130,48 @@ def validated_workflow_name(name):
     return cleaned
 
 
-def validated_steps(steps):
-    """A workflow's steps as [{"role": ...}]. The first step must make something (a gate
-    needs an earlier producer to send work back to) and later steps may be anything."""
-    if isinstance(steps, list):
-        steps = [step.get("role") if isinstance(step, dict) else step for step in steps]
+def validated_steps(steps, custom_roles=None):
+    """A workflow's steps as [{"role": ...}], or [{"role": ..., "role_ref": ...}] for a step
+    that runs one of the project's own roles.
+
+    `custom_roles` maps the ids of the project's *active* custom roles to their base role. A
+    step may name a custom role only when the caller supplies that map, so the paths that must
+    not create custom steps (a settings.json edited in the repository) simply don't pass one.
+    The first step must make something (a gate needs an earlier producer to send work back to)
+    and later steps may be anything. Whether a step is a producer or a gate is decided by its
+    base role."""
     if not isinstance(steps, list) or not 1 <= len(steps) <= MAX_FLOW_STEPS:
         raise BridgeError(f"A workflow needs 1 to {MAX_FLOW_STEPS} steps")
-    for role in steps:
+    validated = []
+    for step in steps:
+        role_ref = step.get("role_ref") if isinstance(step, dict) else None
+        role = step.get("role") if isinstance(step, dict) else step
+        if role_ref is not None:
+            if custom_roles is None:
+                raise BridgeError("Custom roles cannot be used in a workflow defined here")
+            if not isinstance(role_ref, str) or role_ref not in custom_roles:
+                raise BridgeError(f"Unknown or inactive custom role in workflow: {role_ref!r}")
+            if role not in (None, custom_roles[role_ref]):
+                raise BridgeError(f"{role_ref} is based on {custom_roles[role_ref]}, not {role}")
+            role = custom_roles[role_ref]
         if role not in AGENT_ROLES:
             raise BridgeError(f"Unknown role in workflow: {role!r}")
-    if steps[0] not in PRODUCER_ROLES:
+        validated.append(
+            {"role": role, "role_ref": role_ref} if role_ref is not None else {"role": role}
+        )
+    if validated[0]["role"] not in PRODUCER_ROLES:
         raise BridgeError(
             "A workflow must start with SA, SD, RD or SD/RD: a reviewer needs something to review"
         )
-    return [{"role": role} for role in steps]
+    return validated
 
 
-def validated_custom_workflows(value):
-    """{id: {"name": str, "steps": [{"role": ...}]}}: the project's own workflows."""
+def validated_custom_workflows(value, custom_roles=None):
+    """{id: {"name": str, "steps": [{"role": ...}]}}: the project's own workflows.
+
+    Workflows already saved may name custom roles; `custom_roles` (ids to base roles, including
+    roles that are now disabled) lets them be read back. Workflows arriving from a file in the
+    repository pass none, so they cannot."""
     if not isinstance(value, dict) or len(value) > MAX_CUSTOM_WORKFLOWS:
         raise BridgeError(f"workflows must be an object of at most {MAX_CUSTOM_WORKFLOWS} entries")
     flows = {}
@@ -162,7 +185,7 @@ def validated_custom_workflows(value):
             raise BridgeError("workflows contains an invalid entry")
         flows[flow_id] = {
             "name": validated_workflow_name(flow.get("name")),
-            "steps": validated_steps(flow.get("steps")),
+            "steps": validated_steps(flow.get("steps"), custom_roles),
         }
     return flows
 
@@ -473,24 +496,47 @@ ROLE_BRIEFS = {
 }
 
 
-def step_instruction(role, requirement, *, strictness="normal", max_rounds=None, feedback=None):
-    """The text a flow step sends its agent."""
-    parts = [ROLE_BRIEFS[role]]
+def step_instruction_parts(
+    role, requirement, *, strictness="normal", max_rounds=None, feedback=None, brief=None
+):
+    """The pieces a flow step's instruction is made of, as (name, text) pairs in order.
+
+    `brief` replaces the built-in role brief; a custom role passes its own so that everything
+    else (strictness, gate format, round limit, feedback, language rule, requirement) is the
+    same code for every role."""
+    parts = [("role_brief", ROLE_BRIEFS[role] if brief is None else brief)]
     if role == "AR":
-        parts.append(_AR_BRIEF[strictness])
+        parts.append(("ar_strictness", _AR_BRIEF[strictness]))
     if role in GATE_ROLES:
         if role != "AR":
-            parts.append("Block only on problems you can point to.")
-        parts.append(_FORMAT)
+            parts.append(("gate_block_rule", "Block only on problems you can point to."))
+        parts.append(("gate_report_format", _FORMAT))
         if max_rounds:
-            parts.append(f"This gate can send work back at most {max_rounds} time(s).")
+            parts.append(
+                ("gate_round_limit", f"This gate can send work back at most {max_rounds} time(s).")
+            )
     if feedback:
-        parts.append("The previous round was sent back. Address these points:\n" + feedback)
+        parts.append(
+            ("feedback", "The previous round was sent back. Address these points:\n" + feedback)
+        )
     if role in GENERAL_ROLES:
-        parts.append("Answer in the same language as the request, in plain words a non-specialist can follow.")
+        parts.append((
+            "general_language",
+            "Answer in the same language as the request, in plain words a non-specialist can follow.",
+        ))
     if requirement:
-        parts.append("Requirement:\n" + requirement)
-    return "\n\n".join(parts)
+        parts.append(("requirement", "Requirement:\n" + requirement))
+    return parts
+
+
+def step_instruction(role, requirement, *, strictness="normal", max_rounds=None, feedback=None):
+    """The text a flow step sends its agent."""
+    return "\n\n".join(
+        text
+        for _, text in step_instruction_parts(
+            role, requirement, strictness=strictness, max_rounds=max_rounds, feedback=feedback
+        )
+    )
 
 
 def feedback_text(gate):

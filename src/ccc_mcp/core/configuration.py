@@ -237,7 +237,7 @@ class ConfigurationHub:
         reject_secrets(command)
         return command
 
-    def _editable_file_settings(self, settings, defaults, root):
+    def _editable_file_settings(self, settings, defaults, root, project_id=None):
         """Import operator-editable settings; never trust file-based authorization."""
         path = safe_path(root, metadata_name(root) + "/settings.json")
         if not path.exists():
@@ -287,7 +287,15 @@ class ConfigurationHub:
         if "role_avatars" in document:
             updated["role_avatars"] = validated_role_avatars(document["role_avatars"])
         if "workflows" in document:
-            updated["workflows"] = validated_custom_workflows(document["workflows"])
+            # The file mirrors what was saved, so steps that use the project's own roles must
+            # read back. Only roles that already exist here and were made here qualify: the
+            # file can never introduce a role, and an imported one that is still awaiting
+            # confirmation is not accepted.
+            updated["workflows"] = validated_custom_workflows(
+                document["workflows"],
+                self._readable_custom_roles(project_id, settings.get("workflows"))
+                if project_id else None,
+            )
         if "workflow" in document:
             updated["workflow"] = validated_workflow(
                 document["workflow"], updated.get("workflows", settings.get("workflows"))
@@ -306,6 +314,13 @@ class ConfigurationHub:
         if role not in ROLES:
             raise BridgeError("Unsupported role")
         configured = self.get_project_settings(project_id)["roles"][role]
+        return self._resolve_settings(configured, agent, model, effort)
+
+    @staticmethod
+    def _resolve_settings(configured, agent, model, effort):
+        """Settings for one dispatch from a role's configured provider, model and effort, with
+        a caller's explicit provider, model or effort laid over them. Shared by built-in roles
+        (their project setting) and custom roles (the settings pinned in their snapshot)."""
         provider = configured["provider"] if agent == "auto" else agent
         if provider not in PROVIDERS:
             raise BridgeError("Unsupported agent")
@@ -356,7 +371,9 @@ class ConfigurationHub:
             # imports a newly edited file before another dispatch can begin.
             if self.store.in_transaction or not import_file:
                 break
-            updated = self._editable_file_settings(settings, defaults, Path(project["root"]))
+            updated = self._editable_file_settings(
+                settings, defaults, Path(project["root"]), project_id
+            )
             if updated == settings:
                 break
             with self.store.transaction() as conn:
@@ -500,11 +517,27 @@ class ConfigurationHub:
             settings["workflow_selection"] = validated_selection(selection)
             return self._save_settings(project_id, settings)
 
+    def _readable_custom_roles(self, project_id, stored_workflows):
+        """Custom roles a saved workflow may be read back with: the active and disabled ones,
+        plus an imported role that is still awaiting confirmation but is already named by the
+        workflows stored here (an import carries them). A role like that is never accepted as a
+        new step: only the stored settings, never a file, can introduce the name."""
+        roles = self.custom_role_bases(project_id, ("active", "disabled"))
+        named = {
+            step.get("role_ref")
+            for flow in (stored_workflows or {}).values()
+            for step in flow.get("steps", [])
+            if isinstance(step, dict)
+        }
+        pending = self.custom_role_bases(project_id, ("imported_pending",))
+        roles.update({ref: base for ref, base in pending.items() if ref in named})
+        return roles
+
     def save_workflow(self, project_id, steps, name=None, workflow_id=None):
         """Create a workflow of your own, or change one. A new one is named "工作流 2",
         "工作流 3", ... unless a name is given; built-in workflows cannot be changed (save a
         copy instead)."""
-        validated = validated_steps(steps)
+        validated = validated_steps(steps, self.custom_role_bases(project_id))
         with self.lock(project_id):
             settings = self.get_project_settings(project_id)
             custom = dict(settings["workflows"])
@@ -524,7 +557,9 @@ class ConfigurationHub:
             else:
                 label = validated_workflow_name(name) if name is not None else custom[workflow_id]["name"]
             custom[workflow_id] = {"name": label, "steps": validated}
-            settings["workflows"] = validated_custom_workflows(custom)
+            settings["workflows"] = validated_custom_workflows(
+                custom, self._readable_custom_roles(project_id, settings["workflows"])
+            )
             self._save_settings(project_id, settings)
             return {"id": workflow_id, **settings["workflows"][workflow_id]}
 

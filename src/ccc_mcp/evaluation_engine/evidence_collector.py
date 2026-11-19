@@ -191,6 +191,12 @@ def collect(bridge, project_id, task_id, role, execution_id):
                     "needs_revision": review_report.get("needs_revision"),
                     "findings": review_report.get("findings", []),
                     "risks": review_report.get("risks", []),
+                    # Which reviewer gave this verdict, so a custom reviewer is never mistaken
+                    # for the built-in one (or for another custom reviewer on the same base).
+                    "reviewer": {
+                        "role_ref": review_execution.get("role_ref"),
+                        "step_id": review_execution.get("step_id"),
+                    },
                 },
                 notes="REVIEW's own self-report; verification status is in disagreements, not here.",
             )

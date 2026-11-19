@@ -43,7 +43,7 @@
     if (value === null || value === undefined) return "";
     return String(value)
       .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;");
+      .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   }
 
   // Timestamps read as "5 minutes ago" with the exact local time on hover, instead of raw ISO text.
@@ -244,6 +244,7 @@
     back: `<svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M13 8H3m3.5-3.5L3 8l3.5 3.5"/></svg>`,
     sun: `<svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="3"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.5 3.5l1.4 1.4M11.1 11.1l1.4 1.4M3.5 12.5l1.4-1.4M11.1 4.9l1.4-1.4"/></svg>`,
     moon: `<svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M13.5 9.5A5.8 5.8 0 0 1 6.5 2.5 5.8 5.8 0 1 0 13.5 9.5Z"/></svg>`,
+    studio: `<svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="5" r="2.6"/><path d="M2.8 13.5c.4-2.6 2.4-4 5.2-4s4.8 1.4 5.2 4"/><path d="M12.6 1.8v2.4M11.4 3h2.4"/></svg>`,
     start: `<svg class="icon" viewBox="0 0 16 16"><path d="M8 1.5c2 2 3 4.3 3 6.5a3 3 0 1 1-6 0c0-2.2 1-4.5 3-6.5Z"/><path d="M5.3 11.3 4 14.5l3-1 1 1 1-1 3 1-1.3-3.2"/></svg>`,
   };
 
@@ -319,6 +320,7 @@
       <a class="nav-item ${currentRoute.view === "overview" ? "active" : ""}" href="#/p/${p}/overview">${ICON.overview}Overview</a>
       <a class="nav-item ${currentRoute.view === "tasks" ? "active" : ""}" href="#/p/${p}/tasks">${ICON.tasks}Tasks</a>
       <a class="nav-item ${currentRoute.view === "settings" ? "active" : ""}" href="#/p/${p}/settings">${ICON.settings}Settings</a>
+      <a class="nav-item ${currentRoute.view === "roles" ? "active" : ""}" href="#/p/${p}/roles">${ICON.studio}Role Studio</a>
       <a class="nav-item ${currentRoute.view === "context" ? "active" : ""}" href="#/p/${p}/context">${ICON.context}Context</a>
       <a class="nav-item ${currentRoute.view === "skills" ? "active" : ""}" href="#/p/${p}/skills">${ICON.skills}Skills &amp; MCP</a>
     ` : "";
@@ -1030,8 +1032,13 @@
         const result = await response.json();
         if (!response.ok) throw new Error(result.error || "Import failed");
         closeModal();
-        toast("Project backup imported. Write access is off.");
-        navTo(`/p/${encodeURIComponent(result.project_id)}/overview`);
+        if (result.custom_roles_pending) {
+          toast("Project backup imported. Write access is off. Imported roles wait for your review in Role Studio.");
+          navTo(`/p/${encodeURIComponent(result.project_id)}/roles`);
+        } else {
+          toast("Project backup imported. Write access is off.");
+          navTo(`/p/${encodeURIComponent(result.project_id)}/overview`);
+        }
       } catch (error) { toast(error.message, true); }
       finally { button.disabled = false; }
     });
@@ -1093,8 +1100,13 @@
   const ROLE_FRIENDLY = { PA: "Personal assistant", RS: "Researcher", AN: "Analyst", PL: "Planner", CS: "Consultant", WR: "Writer", ED: "Editor", VC: "Fact checker", RV: "Reviewer", AR: "Strict reviewer" };
   const EVERYDAY_ROLES = ["PA", "RS", "AN", "PL", "CS", "WR", "ED", "VC", "RV"];
   let activeRoleNames = {};
-  const roleName = (role) => activeRoleNames[role] || (ROLE_FRIENDLY[role] ? UI.translate(ROLE_FRIENDLY[role]) : ROLE_ABBREVIATIONS[role] || role);
-  const roleAvatarTone = (role) => (ROLE_AVATARS[role] || ROLE_AVATARS.SA)[0];
+  // The project's own roles, by id (u-…). A step of a workflow, a chat speaker or an evaluation is
+  // named by this id when it is one of them; everything below falls back to the built-in role.
+  let customRoleMap = {};
+  const isCustomRole = (role) => typeof role === "string" && /^u-[a-z0-9]/.test(role);
+  const baseOfRole = (role) => (customRoleMap[role] ? customRoleMap[role].base_role : role);
+  const roleName = (role) => customRoleMap[role]?.name || activeRoleNames[role] || (ROLE_FRIENDLY[role] ? UI.translate(ROLE_FRIENDLY[role]) : ROLE_ABBREVIATIONS[role] || role);
+  const roleAvatarTone = (role) => (ROLE_AVATARS[baseOfRole(role)] || ROLE_AVATARS.SA)[0];
   // Ability charts. Every role scores 0-5 on six abilities (the backend owns the numbers, see
   // core/roles.py); a workflow's chart combines its roles the same way team_stats() does there:
   // the strongest member sets an ability and each other strong member adds a little.
@@ -1112,6 +1124,18 @@
       team[axis] = Math.min(STAT_MAX, round1((scores[0] || 0) + STAT_BACKUP * backups));
     }
     return { team, power: round1(STAT_ORDER.reduce((sum, axis) => sum + team[axis], 0)), gaps: STAT_ORDER.filter((axis) => team[axis] <= STAT_GAP) };
+  }
+  // Replace the registry of the project's custom roles; their declared abilities join the chart maths.
+  function setCustomRoles(list) {
+    for (const key of Object.keys(customRoleMap)) delete roleStatsMap[key];
+    customRoleMap = {};
+    for (const role of list || []) { customRoleMap[role.id] = role; if (role.stats) roleStatsMap[role.id] = role.stats; }
+  }
+  // A history entry carries the role's name as it was then; remember it if the role is gone.
+  function rememberEventRole(event) {
+    if (event.role_ref && !customRoleMap[event.role_ref]) {
+      customRoleMap[event.role_ref] = { id: event.role_ref, name: event.role_name || event.role_ref, base_role: event.role, avatar: event.role_avatar || null, status: "unknown" };
+    }
   }
   const statSummary = (values) => STAT_ORDER.map((axis) => `${UI.translate(STAT_NAMES[axis])} ${values[axis]}`).join(", ");
   // A hexagon radar. `ghost` is a second, dashed outline (the whole team while only part of it
@@ -1216,7 +1240,7 @@
   let activeRoleAvatars = {};
   let activeTouchesCode = true;
   const spriteCache = {};
-  const roleAvatarIcon = (role) => spriteFor(activeRoleAvatars[role] || DEFAULT_AVATAR[role] || "person");
+  const roleAvatarIcon = (role) => spriteFor(customRoleMap[role]?.avatar || (isCustomRole(role) ? DEFAULT_AVATAR[baseOfRole(role)] : activeRoleAvatars[role] || DEFAULT_AVATAR[role]) || "person");
   const spriteFor = (id) => {
     if (spriteCache[id]) return spriteCache[id];
     const sprite = SPRITES[id] || SPRITES.person;
@@ -1570,7 +1594,7 @@
     const coverage = Math.round((row.evidence_coverage || 0) * 100);
     const sub = row.scoring_details?.sub_scores || {};
     const dims = Object.entries(row.scoring_details?.weights || {}).map(([name]) => `<span>${esc(UI.translate(name))}: <strong>${sub[name] === null || sub[name] === undefined ? "—" : Math.round(sub[name])}</strong></span>`).join("");
-    return `<article class="evaluation-report"><div class="evaluation-report-top"><div><strong>${esc(row.role)} · ${esc(row.agent)}</strong><small>${esc(row.evaluation_timestamp)} · v${esc(row.version)} · ${esc(row.trigger)}</small></div><span class="pill ${row.task_status === "PASSED" ? "positive" : row.task_status === "FAILED" ? "negative" : "warning"}">${esc(UI.translate(row.task_status))}</span></div><div class="evaluation-measures"><span><strong class="num">${esc(score)}</strong>${esc(UI.translate("Quality from available signals"))}</span><span><strong class="num">${coverage}%</strong>${esc(UI.translate("Evidence coverage"))}</span></div><div class="evaluation-dimensions">${dims}</div><details><summary>${esc(UI.translate("Evidence and disagreements"))} · ${esc((row.evidence || []).length)} / ${esc((row.disagreements || []).length)}</summary><pre class="mono">${esc(JSON.stringify({ evidence: row.evidence, disagreements: row.disagreements, features: row.scoring_details?.features }, null, 2))}</pre></details><button class="btn small" data-reevaluate="${esc(row.source_execution_id)}">${esc(UI.translate("Re-evaluate execution"))}</button></article>`;
+    return `<article class="evaluation-report"><div class="evaluation-report-top"><div><strong>${esc(row.role_name || row.role)} · ${esc(row.agent)}</strong><small>${row.role_ref ? `${esc(UI.translate("Custom role"))} · ${esc(row.role)} · v${esc(row.role_version ?? "")} · ` : ""}${esc(row.evaluation_timestamp)} · v${esc(row.version)} · ${esc(row.trigger)}</small></div><span class="pill ${row.task_status === "PASSED" ? "positive" : row.task_status === "FAILED" ? "negative" : "warning"}">${esc(UI.translate(row.task_status))}</span></div><div class="evaluation-measures"><span><strong class="num">${esc(score)}</strong>${esc(UI.translate("Quality from available signals"))}</span><span><strong class="num">${coverage}%</strong>${esc(UI.translate("Evidence coverage"))}</span></div><div class="evaluation-dimensions">${dims}</div><details><summary>${esc(UI.translate("Evidence and disagreements"))} · ${esc((row.evidence || []).length)} / ${esc((row.disagreements || []).length)}</summary><pre class="mono">${esc(JSON.stringify({ evidence: row.evidence, disagreements: row.disagreements, features: row.scoring_details?.features }, null, 2))}</pre></details><button class="btn small" data-reevaluate="${esc(row.source_execution_id)}">${esc(UI.translate("Re-evaluate execution"))}</button></article>`;
   }
 
   let taskDetailPane = "conversation";
@@ -1726,9 +1750,10 @@
     if (!isUser && !isAgent && !isPm) {
       return `<div class="chat-system-entry ${type === "task_cancelled" || event.detail?.passed === false ? "is-negative" : ""}" data-event-id="${esc(event.event_id)}"><div class="chat-notice"><span class="chat-notice-dot" aria-hidden="true"></span><span><strong>${esc(UI.translate(label))}</strong> · ${esc(UI.translate(summary || "System update"))}</span><time datetime="${esc(event.timestamp || "")}">${esc(date)}</time></div>${details}</div>`;
     }
-    const speaker = isUser ? "USER" : role;
+    if (!isUser && !isPm) rememberEventRole(event);
+    const speaker = isUser ? "USER" : (!isPm && event.role_ref) || role;
     const avatar = `<div class="chat-avatar av-${roleAvatarTone(speaker)}" aria-hidden="true">${roleAvatarIcon(speaker)}</div>`;
-    const speakerName = isUser ? UI.translate("You") : roleName(role);
+    const speakerName = isUser ? UI.translate("You") : (!isPm && event.role_name) || roleName(speaker);
     if (type === "agent_started" && typingIds && typingIds.has(event.execution_id)) {
       return `<article class="chat-post is-typing" data-event-id="${esc(event.event_id)}">
         ${avatar}
@@ -1773,7 +1798,10 @@
     const failed = responses.find((result) => result.status === "rejected");
     if (failed) return { error: new Error(`${failed.reason.path || "Task request"}: ${failed.reason.message}`) };
     const [status, timeline, evaluations, artifacts, settings, handoff] = responses.map((result) => result.value);
-    return { data: { status, timeline, evaluations, artifacts, settings, handoff } };
+    // Only tasks that run pinned custom roles have anything to report; an older server has no route.
+    let contract = null;
+    try { contract = await api(`${taskBase}/contract`); } catch (_) { contract = null; }
+    return { data: { status, timeline, evaluations, artifacts, settings, handoff, contract } };
   }
 
   // What counts as "something changed" for the live conversation. Fields that tick every
@@ -1955,6 +1983,10 @@
     const { status, timeline, evaluations, artifacts, settings, handoff } = data;
     activeRoleNames = settings?.role_names || settings?.editable?.role_names || {};
     activeRoleAvatars = settings?.role_avatars || settings?.editable?.role_avatars || {};
+    setCustomRoles(settings?.custom_roles || []);
+    for (const detail of status.brief?.workflow?.steps_detail || []) {
+      if (detail.role_ref) rememberEventRole({ role_ref: detail.role_ref, role_name: detail.name, role: detail.role, role_avatar: detail.avatar });
+    }
     const brief = status.brief || {};
     const control = brief.control || { status: "ACTIVE" };
     const terminal = ["COMPLETED", "CANCELLED", "REJECTED"].includes(status.state);
@@ -1974,9 +2006,13 @@
       ["Host tests", events.some((e) => e.event_type === "host_test_completed" && e.detail?.executed_by_host)],
       ["Review", doneRoles.has("REVIEW")],
     ];
+    const driftSteps = (data.contract?.steps || []).filter((step) => step.status === "incompatible" && !step.accepted);
+    const driftCard = driftSteps.length && !terminal ? `<div class="task-next drift-card" role="alert"><strong>${esc(UI.translate("A fixed rule changed for this task"))}</strong>
+      <p>${esc(UI.translate("Work stopped before the next step because ccc-mcp's own fixed rules changed in a way that may change what a custom role means. Nothing was run. Review the change, then accept it for this task or stop the task."))}</p>
+      <ul class="drift-steps">${driftSteps.map((step) => `<li><span class="pill warning" data-no-i18n>${esc(step.name)}</span> <small class="mono">${esc(step.step_id)}</small> <button class="btn small primary" type="button" data-drift-review="${esc(step.step_id)}">${esc(UI.translate("Review the change"))}</button></li>`).join("")}</ul></div>` : "";
     const gateDecision = workflow.pending_decision && !terminal ? workflow.pending_decision : null;
     const gateCard = gateDecision ? `<div class="task-next gate-decision"><strong>${esc(UI.translate("Gate decision needed"))}</strong>
-      <p>${esc(roleName(gateDecision.role))} · ${esc(gateDecision.reason)}</p>
+      <p>${esc(roleName(gateDecision.role_ref || gateDecision.role))} · ${esc(gateDecision.reason)}</p>
       ${gateDecision.findings.length ? `<ul class="gate-findings">${gateDecision.findings.map((f) => `<li><span class="pill ${f.severity === "blocker" ? "negative" : "warning"}">${esc(f.severity)}</span> ${esc(f.claim)}${f.evidence ? ` <small>${esc(f.evidence)}</small>` : ""}</li>`).join("")}</ul>` : ""}
       <div class="gate-decision-actions">
         <button class="btn small primary" type="button" data-gate-decision="proceed">${esc(UI.translate("Accept and continue"))}</button>
@@ -1996,7 +2032,7 @@
     // draft...), newest first; the code cards below only matter when something changes code.
     const docRole = (path) => { const m = path.match(/\/(SPEC|([A-Z]{2})-DOCUMENT)\.md$/); return m ? (m[1] === "SPEC" ? "SW" : m[2]) : null; };
     const deliverables = artifacts.filter((a) => docRole(a.path)).sort((a, b) => String(b.created).localeCompare(String(a.created)));
-    const touchesCode = !flowSteps || flowSteps.some((role) => role === "RD" || role === "SD/RD");
+    const touchesCode = !flowSteps || flowSteps.some((role) => ["RD", "SD/RD"].includes(baseOfRole(role)));
     activeTouchesCode = touchesCode;
     const deliverableCard = deliverables.length ? `<section class="task-result-card spec-card"><h2>${esc(UI.translate(touchesCode ? "Documents from each step" : "Results"))}</h2><p class="muted">${esc(UI.translate("Newest first. Each step hands its document to the next."))}</p>${deliverables.map((a, index) => `<details ${index === 0 ? "open" : ""}><summary><strong data-no-i18n>${esc(roleName(docRole(a.path)))}</strong> · ${esc(UI.translate(TASK_ROLE_LABELS[docRole(a.path)] || "Result"))}</summary><pre class="mono task-spec">${esc(a.content || "")}</pre></details>`).join("")}</section>` : "";
     const teamCard = (() => {
@@ -2016,20 +2052,20 @@
       pill: { text: UI.translate(displayState), tone: stateTone },
       actions: `${pauseButton}${stopButton}${deleteButton}`,
       steps: steps.map(([, done]) => done),
-      nextText: handoff.next_action && !terminal ? handoff.next_action + (gateDecision ? `|${gateDecision.escalation_id}` : "") : "",
-      hasGateDecision: Boolean(gateDecision),
+      nextText: handoff.next_action && !terminal ? handoff.next_action + (gateDecision ? `|${gateDecision.escalation_id}` : "") + (driftSteps.length ? `|drift:${driftSteps.map((step) => step.step_id).join(",")}` : "") : "",
+      hasGateDecision: Boolean(gateDecision) || driftSteps.length > 0,
       workflowRoles: flowSteps ? [...new Set(flowSteps)] : null,
       head: `<div><a class="task-back" href="#/p/${encodeURIComponent(id)}/tasks">← ${esc(UI.translate("Back to tasks"))}</a><h1>${esc(UI.translate("Task discussion"))}</h1><div class="task-identifiers"><span>${esc(id)}</span><span class="mono">${esc(taskId)}</span><span class="pill ${stateTone}">${esc(UI.translate(displayState))}</span></div></div><div class="task-head-actions">${pauseButton}${stopButton}${deleteButton}</div>`,
       progress: steps.map(([name, done]) => `<span class="conversation-step ${done ? "done" : ""}"><i aria-hidden="true"></i>${esc(UI.translate(name))}</span>`).join(""),
       feed: taskConversation(events, typingIds),
       paused: Boolean(control.paused && canMessage),
       restartPicker: flowSteps ? `<fieldset class="restart-picker" ${canCompose ? "" : "disabled"}><legend>${esc(UI.translate("Who should redo it?"))}</legend><div class="restart-chips">${flowSteps.map((role, index) => `<label class="restart-chip"><input type="radio" name="restart-step" value="${index}" data-role="${esc(role)}" ${index === restartDefault ? "checked" : ""}><span class="restart-chip-body"><span class="chat-avatar av-${roleAvatarTone(role)}" aria-hidden="true">${roleAvatarIcon(role).replace('width="18" height="18"', 'width="16" height="16"')}</span><span class="restart-chip-name"><i>${index + 1}</i><span data-no-i18n>${esc(roleName(role))}</span></span></span></label>`).join("")}</div></fieldset>` : "",
-      next: gateCard || (handoff.next_action && !terminal ? `<div class="task-next ${control.paused ? "paused" : ""}"><strong>${esc(UI.translate(control.paused ? "Paused: waiting for you" : "Next step"))}</strong><p>${esc(handoff.next_action)}</p>${control.paused && canMessage ? `<button class="btn small primary" type="button" id="task-resume-inline">${esc(UI.translate("Continue work"))}</button>` : ""}</div>` : ""),
+      next: driftCard + (gateCard || (handoff.next_action && !terminal ? `<div class="task-next ${control.paused ? "paused" : ""}"><strong>${esc(UI.translate(control.paused ? "Paused: waiting for you" : "Next step"))}</strong><p>${esc(handoff.next_action)}</p>${control.paused && canMessage ? `<button class="btn small primary" type="button" id="task-resume-inline">${esc(UI.translate("Continue work"))}</button>` : ""}</div>` : "")),
       results: `${teamCard}${deliverableCard}${touchesCode ? `<section class="task-result-grid">
       <div class="task-result-card"><h2>${esc(UI.translate("Changed files and diff"))}</h2>${latestDiff ? `<pre class="mono task-diff">${esc(latestDiff.content || "")}</pre>` : `<p class="muted">${esc(UI.translate("No saved diff yet."))}</p>`}</div>
       <div class="task-result-card"><h2>${esc(UI.translate("Host test evidence"))}</h2><p class="muted">${esc(UI.translate("Run by the host on this machine — never taken from the agent's own word."))}</p>${verificationLine(brief.tests)}${latestTest ? `<details><summary>${esc(UI.translate("View saved test result"))}</summary><pre class="mono">${esc(latestTest.content)}</pre></details>` : `<p class="muted">${esc(UI.translate("No host test evidence yet."))}</p>`}</div>
     </section><section class="task-result-card evaluation-section"><div class="evaluation-section-head"><div><h2>${esc(UI.translate("Evaluation and evidence"))}</h2><p>${esc(UI.translate("Scores are separate from task completion."))}</p></div>${settings.editable?.evaluation_engine?.enabled ? `<button class="btn small" id="task-evaluate">${esc(UI.translate("Evaluate latest executions"))}</button>` : `<button class="btn small" id="task-enable-evaluation">${esc(UI.translate("Enable evaluation"))}</button>`}</div>${evaluations.length ? `<div class="evaluation-list">${evaluations.slice().reverse().map(evaluationReport).join("")}</div>` : `<p class="muted">${esc(UI.translate("No evaluations for this task yet."))}</p>`}</section>` : ""}`,
-      technical: `<div class="task-technical">${providerSwitchCard(events, status)}<section class="task-result-card"><h2>${esc(UI.translate("Execution history"))}</h2>${(status.executions || []).length ? `<ul class="run-list">${(status.executions || []).map((e) => `<li><span>${esc(roleName(e.role))}</span><span class="run-status">${esc(UI.translate(e.status))}</span>${e.error ? `<span class="run-error">${esc(e.error)}</span>` : ""}</li>`).join("")}</ul>` : `<p class="muted">${esc(UI.translate("No executions yet."))}</p>`}</section><section class="task-result-card"><h2>${esc(UI.translate("Hand off to another AI"))}</h2>${handoffPanelHtml(`${id}/${taskId}`, taskSignature(data.status, data.timeline))}</section></div>`,
+      technical: `<div class="task-technical">${providerSwitchCard(events, status)}<section class="task-result-card"><h2>${esc(UI.translate("Execution history"))}</h2>${(status.executions || []).length ? `<ul class="run-list">${(status.executions || []).map((e) => `<li><span>${esc(e.role_name || roleName(e.role_ref || e.role))}</span><span class="run-status">${esc(UI.translate(e.status))}</span>${e.error ? `<span class="run-error">${esc(e.error)}</span>` : ""}</li>`).join("")}</ul>` : `<p class="muted">${esc(UI.translate("No executions yet."))}</p>`}</section><section class="task-result-card"><h2>${esc(UI.translate("Hand off to another AI"))}</h2>${handoffPanelHtml(`${id}/${taskId}`, taskSignature(data.status, data.timeline))}</section></div>`,
     };
   }
 
@@ -2212,6 +2248,10 @@
         fields: [{ label: "Reason (optional)", placeholder: "Why are you stopping this task?" }], danger: true,
         confirmLabel: "Stop task", onSubmit: async ([reason]) => { await api(`${taskBase}/stop`, { method: "POST", body: { reason } }); toast("Stop requested."); refresh(); },
       });
+      document.querySelectorAll("[data-drift-review]").forEach((button) => { button.onclick = () => {
+        const step = (data.contract?.steps || []).find((item) => item.step_id === button.dataset.driftReview);
+        if (step) reviewContractDrift(taskBase, step, refresh);
+      }; });
       document.querySelectorAll("[data-gate-decision]").forEach((button) => { button.onclick = () => {
         const decision = button.dataset.gateDecision;
         const copy = {
@@ -2344,6 +2384,7 @@
     }
     catch (err) { if (!stale(gen)) errorView(err); return; }
     if (stale(gen)) return;
+    setCustomRoles(catalog.custom_roles);
     const roles = overview.editable.roles || {};
     const providers = Object.keys(overview.available_providers || {});
     const effortOptions = (provider, current) => {
@@ -2637,10 +2678,11 @@
     let editing = null;
     const refreshCatalog = async () => {
       catalog = await api(`/projects/${encodeURIComponent(id)}/workflows`);
+      setCustomRoles(catalog.custom_roles);
       const legacy = document.querySelector("[data-legacy-role]");
       if (legacy) legacy.hidden = !needsCombinedRole();
     };
-    const stepChips = (flow) => flow.steps.map((step, index) => `${index ? '<i class="flow-arrow" aria-hidden="true">›</i>' : ""}<span class="flow-step"><span class="chat-avatar av-${roleAvatarTone(step.role)}" aria-hidden="true">${roleAvatarIcon(step.role).replace('width="18" height="18"', 'width="12" height="12"')}</span><span data-no-i18n>${esc(roleName(step.role))}</span></span>`).join("");
+    const stepChips = (flow) => flow.steps.map((step, index) => { const key = step.role_ref || step.role; return `${index ? '<i class="flow-arrow" aria-hidden="true">›</i>' : ""}<span class="flow-step${step.role_ref ? " is-custom" : ""}"><span class="chat-avatar av-${roleAvatarTone(key)}" aria-hidden="true">${roleAvatarIcon(key).replace('width="18" height="18"', 'width="12" height="12"')}</span><span data-no-i18n>${esc(roleName(key))}</span></span>`; }).join("");
     const workflowItem = (flow) => `<div class="workflow-item">
         <button class="profile-option workflow-option ${catalog.selected === flow.id ? "selected" : ""}" type="button" data-workflow="${esc(flow.id)}" aria-pressed="${catalog.selected === flow.id}">
           <span class="profile-option-name" data-no-i18n>${esc(flow.builtin ? UI.translate(flow.name) : flow.name)}</span>
@@ -2662,8 +2704,12 @@
       if (editing) {
         const roleOption = (current) => (role) => `<option value="${esc(role)}" ${role === current ? "selected" : ""}>${esc(roleName(role))} (${esc(UI.translate(ROLE_HELP[role] || role))})</option>`;
         const roleOptions = (index, current) => {
-          const allowed = (role) => index > 0 || PRODUCER_ROLES.includes(role);
-          return `<optgroup label="${esc(UI.translate("Everyday team roles"))}">${EVERYDAY_ROLES.filter(allowed).map(roleOption(current)).join("")}</optgroup><optgroup label="${esc(UI.translate("Software team roles"))}">${AGENT_ROLE_ORDER.filter(allowed).map(roleOption(current)).join("")}</optgroup>`;
+          const allowed = (role) => index > 0 || PRODUCER_ROLES.includes(isCustomRole(role) ? baseOfRole(role) : role);
+          const mine = Object.values(customRoleMap).filter((role) => role.status === "active" && allowed(role.id));
+          // A role that was switched off, or is not known here, stays visible where a saved workflow uses it.
+          const stale = isCustomRole(current) && !mine.some((role) => role.id === current) ? `<option value="${esc(current)}" selected>${esc(roleName(current))} (${esc(UI.translate("switched off"))})</option>` : "";
+          const customGroup = mine.length || stale ? `<optgroup label="${esc(UI.translate("Your own roles"))}">${stale}${mine.map((role) => `<option value="${esc(role.id)}" ${role.id === current ? "selected" : ""}>${esc(role.name)} (${esc(UI.translate(ROLE_HELP[role.base_role] || role.base_role))})</option>`).join("")}</optgroup>` : "";
+          return customGroup + `<optgroup label="${esc(UI.translate("Everyday team roles"))}">${EVERYDAY_ROLES.filter(allowed).map(roleOption(current)).join("")}</optgroup><optgroup label="${esc(UI.translate("Software team roles"))}">${AGENT_ROLE_ORDER.filter(allowed).map(roleOption(current)).join("")}</optgroup>`;
         };
         panel.innerHTML = `<div class="wf-editor">
           <div class="field narrow-field"><label for="wf-name">${esc(UI.translate("Workflow name"))}</label><input type="text" id="wf-name" maxlength="40" value="${esc(editing.name)}" placeholder="${esc(UI.translate("Named automatically if left empty"))}" /></div>
@@ -2678,6 +2724,7 @@
           </li>`).join("")}</ol>
           <div class="wf-add-row"><button class="btn small" type="button" id="wf-add" ${editing.steps.length >= 12 ? "disabled" : ""}>${esc(UI.translate("Add step"))}</button></div>
           <div class="hint">${esc(UI.translate("The first step must make something (SA, SD, RD or SD/RD). A reviewer that finds a problem sends work back to the nearest step before it that makes something; everything after that step then runs again. Up to 12 steps."))}</div>
+          <div class="hint"><a href="#/p/${encodeURIComponent(id)}/roles">${esc(UI.translate("Make your own role in Role Studio"))}</a> ${esc(UI.translate("and it will appear in the step lists above."))}</div>
           <div class="wf-actions"><button class="btn small" type="button" id="wf-cancel">${esc(UI.translate("Cancel"))}</button><button class="btn small primary" type="button" id="wf-save">${esc(UI.translate("Save workflow"))}</button></div>
         </div>`;
         UI.localize(panel);
@@ -2690,13 +2737,13 @@
           if (to < 0 || to >= editing.steps.length) return;
           [editing.steps[from], editing.steps[to]] = [editing.steps[to], editing.steps[from]];
           // The first step has to be a producer; keep that true when something else moved up.
-          if (!PRODUCER_ROLES.includes(editing.steps[0])) { [editing.steps[from], editing.steps[to]] = [editing.steps[to], editing.steps[from]]; toast("The first step must be SA, SD, RD or SD/RD.", true); }
+          if (!PRODUCER_ROLES.includes(baseOfRole(editing.steps[0]))) { [editing.steps[from], editing.steps[to]] = [editing.steps[to], editing.steps[from]]; toast("The first step must be SA, SD, RD or SD/RD.", true); }
           paintWorkflow();
         }));
         panel.querySelectorAll("[data-wf-remove]").forEach((button) => button.addEventListener("click", () => {
           keepName();
           const next = editing.steps.filter((_, index) => index !== Number(button.dataset.wfRemove));
-          if (!PRODUCER_ROLES.includes(next[0])) { toast("The first step must be SA, SD, RD or SD/RD.", true); return; }
+          if (!PRODUCER_ROLES.includes(baseOfRole(next[0]))) { toast("The first step must be SA, SD, RD or SD/RD.", true); return; }
           editing.steps = next;
           paintWorkflow();
         }));
@@ -2705,7 +2752,7 @@
         document.getElementById("wf-save").addEventListener("click", async () => {
           keepName();
           try {
-            const saved = await api(`/projects/${encodeURIComponent(id)}/workflows`, { method: "POST", body: { id: editing.id || undefined, name: editing.name.trim() || undefined, steps: editing.steps } });
+            const saved = await api(`/projects/${encodeURIComponent(id)}/workflows`, { method: "POST", body: { id: editing.id || undefined, name: editing.name.trim() || undefined, steps: editing.steps.map((step) => (isCustomRole(step) ? { role_ref: step } : step)) } });
             toast("Workflow saved.");
             editing = null;
             await refreshCatalog();
@@ -2735,7 +2782,7 @@
       }));
       panel.querySelectorAll("[data-wf-edit]").forEach((button) => button.addEventListener("click", () => {
         const flow = catalog.workflows.find((item) => item.id === button.dataset.wfEdit);
-        editing = { id: flow.builtin ? null : flow.id, name: flow.builtin ? "" : flow.name, steps: flow.steps.map((step) => step.role) };
+        editing = { id: flow.builtin ? null : flow.id, name: flow.builtin ? "" : flow.name, steps: flow.steps.map((step) => step.role_ref || step.role) };
         paintWorkflow();
       }));
       panel.querySelectorAll("[data-wf-delete]").forEach((button) => button.addEventListener("click", () => {
@@ -3989,6 +4036,493 @@ tests/test_clamp.py::test_clamp_upper_bound PASSED
     bindChatDetailButtons(events);
   }
 
+  // ---- Role Studio ------------------------------------------------------------------------
+  // Every piece of text a person typed is put into the page with esc(), or with .value /
+  // .textContent after the markup exists. Nothing from a role is ever parsed as HTML.
+
+  const STUDIO_SECTIONS = {
+    goal: ["Goal", "What this role is for, in a sentence or two."],
+    duties: ["Duties", "What it does, step by step if the order matters."],
+    constraints: ["Limits", "What it must not do, or must stay within."],
+    io_format: ["Input and output", "What it reads, and what its findings and summary should contain. The report format itself is fixed by ccc-mcp."],
+    collaboration: ["Working with others", "Who it hands its result to, who checks it, and when to ask the PM."],
+    failure_handling: ["When something goes wrong", "What to do when information is missing or the work cannot be done."],
+  };
+  const STUDIO_LAYERS = {
+    operator_editable: ["You write this", "editable"],
+    fixed_contract: ["Fixed by ccc-mcp", "fixed"],
+    dynamic: ["Filled in when a task runs", "dynamic"],
+    provider_wrapper: ["Added by the provider's wrapper", "dynamic"],
+  };
+  const sectionsAsFreeform = (sections) => Object.keys(STUDIO_SECTIONS)
+    .filter((key) => (sections[key] || "").trim())
+    .map((key) => `## ${{ goal: "Goal", duties: "Duties", constraints: "Constraints", io_format: "Input and output format", collaboration: "Collaboration rules", failure_handling: "If something fails" }[key]}\n${sections[key]}`)
+    .join("\n\n");
+
+  function driftChangeLabel(change) {
+    const part = change.component ? change.component.replace("base_contract:", "") : "";
+    if (change.change === "major") return `${part}: ${UI.translate("meaning changed")} (${change.pinned} → ${change.current})`;
+    if (change.change === "text") return `${part}: ${UI.translate("wording changed")} (${change.pinned} → ${change.current})`;
+    if (change.change === "added") return `${part}: ${UI.translate("a new rule was added")}`;
+    if (change.change === "removed") return `${part}: ${UI.translate("a rule was removed")}`;
+    return UI.translate("The saved rules could not be read");
+  }
+
+  // Accepting a change to ccc-mcp's fixed rules is deliberate: the person reads what changed,
+  // types a phrase naming this task, step and contract, and only that exact change is accepted.
+  function reviewContractDrift(taskBase, step, done) {
+    const changes = (step.changes || []).filter((change) => change.blocking).map((change) => `• ${driftChangeLabel(change)}`).join("\n");
+    confirmTextModal({
+      title: UI.translate("Accept this change to the fixed rules?"),
+      description: `${step.name} · ${step.step_id}\n\n${changes}\n\n${UI.translate("This role was saved under older fixed rules. Accepting lets this task go on with the current rules for this one step. It does not change the role, it covers no other task, and if the rules change again you will be asked again.")}`,
+      challenge: step.confirmation_phrase,
+      confirmLabel: UI.translate("Accept this change"),
+      onConfirm: async () => {
+        await api(`${taskBase}/contract/accept`, { method: "POST", body: { step_id: step.step_id, snapshot_id: step.snapshot_id, contract_hash: step.current_contract_hash, confirmation: step.confirmation_phrase } });
+        toast("Change accepted for this task.");
+        if (done) done();
+      },
+    });
+  }
+
+  async function renderRoleStudio() {
+    const gen = renderGen;
+    const route = parseRoute();
+    const id = route.project;
+    const base = `/projects/${encodeURIComponent(id)}/roles`;
+    layout(loadingView());
+    let data;
+    try { data = await api(base); }
+    catch (err) { if (!stale(gen)) errorView(err); return; }
+    if (stale(gen)) return;
+    const catalog = data.catalog;
+    setCustomRoles(data.roles);
+    const bases = Object.fromEntries(catalog.bases.map((item) => [item.id, item]));
+    const EVERYDAY = ["PA", "RS", "AN", "PL", "CS", "WR", "ED", "VC", "RV"];
+    const state = { ref: route.sub && route.sub !== "new" ? route.sub : null, creating: route.sub === "new", detail: null, review: null, tab: "edit", draft: null, version: null, lint: null, preview: null, diff: null, previewProvider: "", previewRequest: "" };
+
+    const blankDraft = (baseRole) => {
+      return { name: "", description: "", base_role: baseRole, avatar: "", kind: "", mode: "sections", sections: Object.fromEntries(catalog.sections.map((key) => [key, ""])), freeform: "", stats: null, runtime: null };
+    };
+    const draftFromRole = (role) => ({
+      name: role.definition.name, description: role.definition.description, base_role: role.base_role, avatar: role.definition.avatar || "", kind: role.definition.kind,
+      mode: role.definition.prompt.mode, sections: { ...role.definition.prompt.sections }, freeform: role.definition.prompt.freeform,
+      stats: role.definition.stats ? { ...role.definition.stats } : null, runtime: role.definition.runtime ? { ...role.definition.runtime } : null,
+    });
+    const definitionFromDraft = (draft) => ({
+      name: draft.name, description: draft.description, avatar: draft.avatar || null, kind: draft.kind || undefined,
+      prompt: { mode: draft.mode, sections: draft.sections, freeform: draft.freeform },
+      stats: draft.stats, runtime: draft.runtime && draft.runtime.provider ? draft.runtime : null,
+    });
+    const openLoaded = async () => {
+      if (state.ref) {
+        state.detail = await api(`${base}/${encodeURIComponent(state.ref)}`);
+        state.draft = draftFromRole(state.detail.role);
+        state.version = state.detail.role.current_version;
+        // A role that came from an imported file is read, not edited, until a person confirms it.
+        state.review = state.detail.role.status === "imported_pending" ? await api(`${base}/${encodeURIComponent(state.ref)}/import-review`) : null;
+        if (state.review && state.tab === "edit") state.tab = "review";
+        if (!state.review && state.tab === "review") state.tab = "edit";
+      } else if (state.creating) {
+        state.detail = null;
+        state.review = null;
+        state.draft = blankDraft("SA");
+        state.version = null;
+      }
+    };
+    try { await openLoaded(); }
+    catch (err) { if (!stale(gen)) errorView(err); return; }
+    if (stale(gen)) return;
+
+    const statusPill = (role) => `<span class="pill ${role.status === "active" ? "positive" : "neutral"}">${esc(UI.translate(role.status === "active" ? "On" : role.status === "disabled" ? "Off" : "Waiting for confirmation"))}</span>`;
+    const pendingNotice = () => (data.pending_imports || []).length ? `<div class="studio-banner" role="note"><strong>${esc(UI.translate("Imported roles are waiting."))}</strong> ${esc(UI.translate("They cannot run until you review and confirm each one."))}</div>` : "";
+    const listHtml = () => pendingNotice() + (data.roles.length
+      ? data.roles.map((role) => `<a class="studio-item${role.id === state.ref ? " active" : ""}" href="#/p/${encodeURIComponent(id)}/roles/${encodeURIComponent(role.id)}">
+          <span class="chat-avatar av-${roleAvatarTone(role.id)}" aria-hidden="true">${roleAvatarIcon(role.id)}</span>
+          <span class="studio-item-text"><strong data-no-i18n>${esc(role.name)}</strong><small>${esc(UI.translate(bases[role.base_role]?.name || role.base_role))} · v${esc(role.version)}</small></span>${statusPill(role)}</a>`).join("")
+      : `<div class="empty">${esc(UI.translate("No roles of your own yet."))}</div>`);
+
+    layout(`
+      <div class="title-row"><div><h1>${esc(UI.translate("Role Studio"))}</h1><div class="sub">${esc(id)} · ${esc(UI.translate("Create your own AI teammates and put them into a workflow."))}</div></div>
+        <a class="btn primary" href="#/p/${encodeURIComponent(id)}/roles/new">${esc(UI.translate("New role"))}</a></div>
+      <div class="studio-layout">
+        <aside class="studio-list" id="studio-list" aria-label="${esc(UI.translate("Your roles"))}"></aside>
+        <section class="studio-main" id="studio-main" aria-live="polite"></section>
+      </div>`, { contentClass: "settings-wide" });
+    const listEl = document.getElementById("studio-list");
+    const mainEl = document.getElementById("studio-main");
+    const paintList = () => { listEl.innerHTML = listHtml(); UI.localize(listEl); };
+
+    // ---- pieces of the editor
+    const baseOptions = (draft, locked) => {
+      const option = (code) => { const item = bases[code]; return `<option value="${esc(code)}" ${draft.base_role === code ? "selected" : ""}>${esc(UI.translate(item.name))} (${esc(item.abbreviation)})</option>`; };
+      const software = catalog.bases.map((item) => item.id).filter((code) => !EVERYDAY.includes(code));
+      return `<optgroup label="${esc(UI.translate("Software team roles"))}">${software.map(option).join("")}</optgroup><optgroup label="${esc(UI.translate("Everyday team roles"))}">${EVERYDAY.map(option).join("")}</optgroup>`;
+    };
+    const baseHelp = (code) => {
+      const item = bases[code];
+      return `${esc(UI.translate(item.description))} ${esc(UI.translate(item.may_write ? "It can change files in the task's workspace, but only after the plan is approved." : "It is read-only: it cannot change project files."))}${item.is_gate ? ` ${esc(UI.translate("It acts as a reviewer: when it finds a real problem the work goes back."))}` : ""}`;
+    };
+    const statsFor = (draft) => draft.stats || bases[draft.base_role].stats;
+    const avatarGrid = (draft) => `<div class="avatar-picker" role="radiogroup" aria-label="${esc(UI.translate("Avatar"))}">
+        <button type="button" class="avatar-option${!draft.avatar ? " selected" : ""}" role="radio" aria-checked="${!draft.avatar}" data-studio-avatar="" title="${esc(UI.translate("Use the default for this base role"))}"><span class="chat-avatar av-${roleAvatarTone(draft.base_role)}" aria-hidden="true">${spriteFor(DEFAULT_AVATAR[draft.base_role] || "person")}</span></button>
+        ${AVATAR_ORDER.filter((avatar) => catalog.avatars.includes(avatar)).map((avatar) => `<button type="button" class="avatar-option${draft.avatar === avatar ? " selected" : ""}" role="radio" aria-checked="${draft.avatar === avatar}" data-studio-avatar="${esc(avatar)}" title="${esc(UI.translate(avatar))}"><span class="chat-avatar av-${roleAvatarTone(draft.base_role)}" aria-hidden="true">${spriteFor(avatar)}</span></button>`).join("")}</div>`;
+    const abilityRows = (draft) => {
+      const values = statsFor(draft);
+      return `<label class="checkbox-row"><input type="checkbox" id="rs-use-base-stats" ${draft.stats ? "" : "checked"} /> <span>${esc(UI.translate("Use the base role's abilities"))}</span></label>
+        <div class="studio-abilities">${catalog.stat_axes.map((axis) => `<label class="ability"><span>${esc(UI.translate(STAT_NAMES[axis]))}</span><input type="range" min="0" max="${catalog.stat_max}" step="1" value="${esc(values[axis])}" data-studio-stat="${esc(axis)}" ${draft.stats ? "" : "disabled"} /><output>${esc(values[axis])}</output></label>`).join("")}</div>
+        <div class="studio-radar" id="rs-radar">${radarSvg(values, { size: 150, labels: "short" })}</div>
+        <div class="hint">${esc(UI.translate("These describe how the role is set up. They are not measured and do not change any score."))}</div>`;
+    };
+    const runtimeRows = (draft) => {
+      const runtime = draft.runtime || {};
+      const providers = Object.keys(catalog.providers);
+      const efforts = catalog.providers[runtime.provider] || [];
+      return `<div class="field narrow-field"><label for="rs-provider">${esc(UI.translate("Provider"))}</label><select id="rs-provider"><option value="">${esc(UI.translate("Use the project's setting for the base role"))}</option>${providers.map((p) => `<option value="${esc(p)}" ${runtime.provider === p ? "selected" : ""}>${esc(p)}</option>`).join("")}</select></div>
+        <div class="field narrow-field"><label for="rs-model">${esc(UI.translate("Model"))}</label><input type="text" id="rs-model" maxlength="160" ${runtime.provider && runtime.provider !== "chatgpt" ? "" : "disabled"} /></div>
+        <div class="field narrow-field"><label for="rs-effort">${esc(UI.translate("Effort"))}</label><select id="rs-effort" ${runtime.provider ? "" : "disabled"}><option value="">${esc(UI.translate("CLI default"))}</option>${efforts.map((e) => `<option value="${esc(e)}" ${runtime.effort === e ? "selected" : ""}>${esc(e)}</option>`).join("")}</select></div>
+        <div class="field narrow-field"><label for="rs-fallback">${esc(UI.translate("If this provider runs out of quota, try"))}</label><select id="rs-fallback" ${runtime.provider ? "" : "disabled"}><option value="">${esc(UI.translate("Nothing"))}</option>${providers.map((p) => `<option value="${esc(p)}" ${runtime.quota_fallback === p ? "selected" : ""}>${esc(p)}</option>`).join("")}</select></div>
+        <div class="hint">${esc(UI.translate("The provider settings are frozen with the role's version, so a running task keeps the ones it started with."))}</div>`;
+    };
+    const instructionFields = (draft) => `<div class="studio-modes" role="radiogroup" aria-label="${esc(UI.translate("How do you want to write the instructions?"))}">
+        <label class="mode-choice${draft.mode === "sections" ? " selected" : ""}"><input type="radio" name="rs-mode" value="sections" ${draft.mode === "sections" ? "checked" : ""} /> <span><strong>${esc(UI.translate("Guided sections"))}</strong><small>${esc(UI.translate("Six short boxes: goal, duties, limits and so on."))}</small></span></label>
+        <label class="mode-choice${draft.mode === "freeform" ? " selected" : ""}"><input type="radio" name="rs-mode" value="freeform" ${draft.mode === "freeform" ? "checked" : ""} /> <span><strong>${esc(UI.translate("Full text"))}</strong><small>${esc(UI.translate("One free box. Sent exactly as you write it."))}</small></span></label></div>
+      <div id="rs-sections" ${draft.mode === "sections" ? "" : "hidden"}>${catalog.sections.map((key) => `<div class="field"><label for="rs-sec-${esc(key)}">${esc(UI.translate(STUDIO_SECTIONS[key][0]))}</label><textarea id="rs-sec-${esc(key)}" rows="3" maxlength="${catalog.limits.section}"></textarea><div class="hint">${esc(UI.translate(STUDIO_SECTIONS[key][1]))}</div></div>`).join("")}
+        <button class="btn small" type="button" id="rs-to-freeform">${esc(UI.translate("Copy my sections into the Full text box"))}</button></div>
+      <div id="rs-freeform" ${draft.mode === "freeform" ? "" : "hidden"}><div class="field"><label for="rs-free">${esc(UI.translate("Instructions"))}</label><textarea id="rs-free" class="mono studio-free" rows="16" maxlength="${catalog.limits.prompt_total}" spellcheck="false"></textarea><div class="hint">${esc(UI.translate("Nothing is trimmed or rewritten: spaces, blank lines and indentation are kept."))}</div></div></div>
+      <div class="hint" id="rs-other-note"></div>`;
+
+    const editHtml = (draft) => `
+      ${pageCard("roles", esc(UI.translate("Who is this role?")), esc(UI.translate("A name and a job. The base role decides what it is allowed to do.")), `
+        <div class="field narrow-field"><label for="rs-name">${esc(UI.translate("Name"))}</label><input type="text" id="rs-name" maxlength="24" autocomplete="off" /></div>
+        <div class="field"><label for="rs-desc">${esc(UI.translate("Short description"))}</label><input type="text" id="rs-desc" maxlength="${catalog.limits.description}" autocomplete="off" /></div>
+        <div class="field narrow-field"><label for="rs-base">${esc(UI.translate("Based on"))}</label><select id="rs-base" ${state.ref ? "disabled" : ""}>${baseOptions(draft)}</select>
+          <div class="hint" id="rs-base-help">${baseHelp(draft.base_role)}</div>
+          ${state.ref ? `<div class="hint">${esc(UI.translate("The base role cannot be changed afterwards. Copy the role to start from another one."))}</div>` : ""}</div>
+        <div class="field"><span class="field-label">${esc(UI.translate("Avatar"))}</span><div id="rs-avatars">${avatarGrid(draft)}</div></div>`)}
+      ${pageCard("language", esc(UI.translate("Instructions")), esc(UI.translate("Tell the role how to do its work. ccc-mcp adds its own fixed rules around what you write; you can see them in Preview.")), `${instructionFields(draft)}
+        <div class="studio-lint-bar"><button class="btn" type="button" id="rs-lint">${esc(UI.translate("Check my instructions"))}</button><span class="hint">${esc(UI.translate("Free and local: no AI model is called. It looks for gaps and wording that cannot work. It gives no score."))}</span></div>
+        <div id="rs-lint-result" aria-live="polite"></div>`)}
+      ${pageCard("evaluation", esc(UI.translate("Abilities")), esc(UI.translate("Shown on the team chart when the role is in a workflow.")), `<div id="rs-abilities">${abilityRows(draft)}</div>`)}
+      <details class="settings-card studio-advanced"><summary>${esc(UI.translate("Advanced"))}</summary><div class="settings-card-body">
+        <div class="field narrow-field"><label for="rs-kind">${esc(UI.translate("Kind"))}</label><select id="rs-kind">${catalog.kinds.map((kind) => `<option value="${esc(kind)}" ${draft.kind === kind ? "selected" : ""}>${esc(UI.translate(kind))}</option>`).join("")}</select></div>
+        <div id="rs-runtime">${runtimeRows(draft)}</div>
+        ${state.detail ? `<dl class="ctx-fields"><div class="ctx-field"><dt>${esc(UI.translate("Role id"))}</dt><dd class="mono">${esc(state.detail.role.id)}</dd></div><div class="ctx-field"><dt>${esc(UI.translate("Version"))}</dt><dd>${esc(state.detail.role.current_version)}</dd></div><div class="ctx-field"><dt>${esc(UI.translate("Fingerprint"))}</dt><dd class="mono">${esc(state.detail.role.version_sha256)}</dd></div></dl>` : ""}
+      </div></details>
+      <div class="studio-actions">
+        <button class="btn primary" type="button" id="rs-save">${esc(UI.translate(state.ref ? "Save as a new version" : "Create role"))}</button>
+        <button class="btn" type="button" id="rs-goto-preview">${esc(UI.translate("Preview what will be sent"))}</button>
+        ${state.ref ? `<button class="btn" type="button" id="rs-clone">${esc(UI.translate("Make a copy"))}</button><button class="btn ${state.detail.role.status === "active" ? "danger" : ""}" type="button" id="rs-toggle">${esc(UI.translate(state.detail.role.status === "active" ? "Switch off" : "Switch on"))}</button>` : ""}
+      </div>`;
+
+    const fillEditor = (draft) => {
+      document.getElementById("rs-name").value = draft.name;
+      document.getElementById("rs-desc").value = draft.description;
+      catalog.sections.forEach((key) => { document.getElementById(`rs-sec-${key}`).value = draft.sections[key] || ""; });
+      document.getElementById("rs-free").value = draft.freeform;
+      document.getElementById("rs-model").value = (draft.runtime && draft.runtime.model) || "";
+      noteOther();
+    };
+    const noteOther = () => {
+      const draft = state.draft;
+      const hasSections = catalog.sections.some((key) => (draft.sections[key] || "").trim());
+      const other = draft.mode === "sections" ? draft.freeform.trim() : hasSections;
+      const note = document.getElementById("rs-other-note");
+      if (note) note.textContent = other ? UI.translate(draft.mode === "sections" ? "You also have text in the Full text box. It is kept, but only the guided sections are sent." : "You also have text in the guided sections. It is kept, but only the Full text is sent.") : "";
+    };
+    const readEditor = () => {
+      const draft = state.draft;
+      draft.name = document.getElementById("rs-name").value;
+      draft.description = document.getElementById("rs-desc").value;
+      catalog.sections.forEach((key) => { draft.sections[key] = document.getElementById(`rs-sec-${key}`).value; });
+      draft.freeform = document.getElementById("rs-free").value;
+      draft.kind = document.getElementById("rs-kind").value;
+      const provider = document.getElementById("rs-provider").value;
+      draft.runtime = provider ? { provider, model: document.getElementById("rs-model").value.trim() || null, effort: document.getElementById("rs-effort").value || null, quota_fallback: document.getElementById("rs-fallback").value || null } : null;
+      return draft;
+    };
+
+    const lintHtml = (result) => {
+      const order = { error: "negative", warning: "warning", info: "neutral" };
+      const label = { error: "Must fix", warning: "Worth a look", info: "Suggestion" };
+      const findings = result.findings.map((finding) => `<li class="finding is-${esc(finding.severity)}"><span class="pill ${order[finding.severity]}">${esc(UI.translate(label[finding.severity]))}</span> <strong>${esc(finding.message)}</strong>${finding.why ? `<p>${esc(finding.why)}</p>` : ""}${finding.suggestion ? `<p class="muted">${esc(finding.suggestion)}</p>` : ""}${finding.evidence ? `<p class="mono studio-evidence">${esc(finding.evidence)}</p>` : ""}</li>`).join("");
+      const areas = result.areas.map((area) => `<span class="chip ${area.status === "found" ? "ok" : ""}">${esc(UI.translate(area.area.replace("_", " ")))}: ${esc(UI.translate(area.status === "found" ? "covered" : area.status === "thin" ? "brief" : area.how === "keyword" ? "not detected" : "empty"))}</span>`).join("");
+      return `<div class="studio-lint"><p>${result.findings.length ? esc(UI.translate("Here is what the check found.")) : esc(UI.translate("Nothing to point out."))}</p>${findings ? `<ul class="finding-list">${findings}</ul>` : ""}<div class="chip-row">${areas}</div><p class="hint">${esc(result.disclaimer)}</p></div>`;
+    };
+
+    const segmentHtml = (segment) => {
+      const [label, kind] = STUDIO_LAYERS[segment.layer] || ["", "fixed"];
+      return `<article class="seg seg-${kind}"><header><strong>${esc(UI.translate(segment.title))}</strong><span class="pill ${kind === "editable" ? "accent" : "neutral"}">${esc(UI.translate(label))}</span>${segment.placeholder ? `<span class="pill warning">${esc(UI.translate("example only"))}</span>` : ""}</header><pre class="mono seg-text" data-seg="${esc(segment.id)}"></pre>${segment.note ? `<small>${esc(segment.note)}</small>` : ""}</article>`;
+    };
+    const previewHtml = () => {
+      const p = state.preview;
+      const providerOptions = ["claude", "codex", "chatgpt"].map((name) => `<option value="${name}" ${((state.previewProvider || (state.draft.runtime && state.draft.runtime.provider) || bases[state.draft.base_role].default_provider) === name) ? "selected" : ""}>${name}</option>`).join("");
+      const controls = `<div class="studio-preview-controls"><div class="field narrow-field"><label for="rp-provider">${esc(UI.translate("Provider to preview"))}</label><select id="rp-provider">${providerOptions}</select></div>
+        <div class="field"><label for="rp-request">${esc(UI.translate("Example request"))}</label><textarea id="rp-request" rows="2" maxlength="2000" placeholder="${esc(UI.translate("Leave empty to see a placeholder"))}"></textarea></div>
+        <button class="btn primary" type="button" id="rp-run">${esc(UI.translate("Show what will be sent"))}</button></div>`;
+      if (!p) return `<div class="settings-card"><div class="settings-card-body">${controls}<div class="hint">${esc(UI.translate("This previews your current edits, saved or not."))}</div></div></div>`;
+      return `<div class="settings-card"><div class="settings-card-body">${controls}</div></div>
+        <div class="studio-banner" role="note"><strong>${esc(UI.translate("Preview only."))}</strong> ${esc(UI.translate("Nothing was sent to any model, no run was created and nothing was stored. A real run fills in the parts marked as examples, and its exact text is then kept with that run."))}</div>
+        <div class="studio-legend">${Object.values(STUDIO_LAYERS).filter((_, i, all) => all.findIndex((x) => x[1] === _[1]) === i).map(([label, kind]) => `<span class="legend seg-${kind}">${esc(UI.translate(label))}</span>`).join("")}</div>
+        <h3>${esc(UI.translate("The instruction your role is given"))}</h3>${p.instruction_segments.map(segmentHtml).join("")}
+        <h3>${esc(UI.translate("What surrounds it when it is sent"))}</h3>${p.prompt_segments.map(segmentHtml).join("")}
+        <details class="settings-card studio-advanced"><summary>${esc(UI.translate("Everything as one block"))}</summary><div class="settings-card-body"><pre class="mono seg-text" id="rp-all"></pre><div class="hint mono">${esc(p.preview_sha256)}</div></div></details>
+        <div class="settings-card"><div class="settings-card-body"><h3>${esc(UI.translate("What ccc-mcp enforces itself"))}</h3><ul class="plain-list">${p.enforced_by_code.map((line) => `<li>${esc(line)}</li>`).join("")}</ul><h3>${esc(UI.translate("Please note"))}</h3><ul class="plain-list">${p.notes.map((line) => `<li>${esc(line)}</li>`).join("")}</ul></div></div>`;
+    };
+    const fillPreview = () => {
+      const p = state.preview;
+      if (!p) return;
+      mainEl.querySelectorAll("[data-seg]").forEach((pre) => {
+        const segment = [...p.instruction_segments, ...p.prompt_segments].find((item) => item.id === pre.dataset.seg);
+        pre.textContent = segment ? segment.text : "";
+      });
+      const all = document.getElementById("rp-all");
+      if (all) all.textContent = p.prompt_text;
+    };
+
+    const historyHtml = () => {
+      const d = state.detail;
+      if (!d) return "";
+      const versions = d.versions.slice().reverse();
+      const usage = d.usage;
+      const unconfirmed = (d.unconfirmed_snapshots || []).length ? `<div class="studio-banner" role="note"><strong>${esc(UI.translate("Snapshots from the import are not confirmed."))}</strong> ${esc(UI.translate("A paused task pinned to one of them cannot continue until you confirm that exact snapshot."))}
+        <ul class="plain-list">${d.unconfirmed_snapshots.map((snap) => `<li>v${esc(snap.version)} <span class="mono">${esc(snap.snapshot_id.slice(0, 12))}</span> <button class="btn small" type="button" data-confirm-snapshot="${esc(snap.snapshot_id)}">${esc(UI.translate("Confirm this snapshot…"))}</button></li>`).join("")}</ul></div>` : "";
+      return `${unconfirmed}<div class="settings-card"><div class="settings-card-body">
+        <h3>${esc(UI.translate("Versions"))}</h3>
+        <p class="hint">${esc(UI.translate("Every save is a new version. Tasks keep the version they started with."))}</p>
+        <ul class="version-list">${versions.map((v) => `<li><span class="pill ${v.version === d.role.current_version ? "accent" : "neutral"}">v${esc(v.version)}</span> <time datetime="${esc(v.created)}">${esc(new Date(v.created).toLocaleString(UI.getLocale()))}</time> <span class="mono">${esc(v.sha256.slice(0, 10))}</span>
+          <label class="inline"><input type="radio" name="vf" value="${esc(v.version)}" /> ${esc(UI.translate("from"))}</label> <label class="inline"><input type="radio" name="vt" value="${esc(v.version)}" /> ${esc(UI.translate("to"))}</label></li>`).join("")}</ul>
+        <button class="btn" type="button" id="rh-diff">${esc(UI.translate("Show what changed"))}</button><div id="rh-diff-out"></div>
+        <h3>${esc(UI.translate("Where it is used"))}</h3>
+        <p>${usage.workflows.length ? usage.workflows.map((w) => `<span class="chip" data-no-i18n>${esc(w.name)}</span>`).join(" ") : esc(UI.translate("In no workflow yet."))}</p>
+        <p class="hint">${usage.tasks.length ? esc(`${UI.translate("Tasks that ran or are running it")}: ${usage.tasks.join(", ")}`) : esc(UI.translate("No task has used it yet."))}</p>
+        <h3>${esc(UI.translate("Activity"))}</h3>
+        <ul class="plain-list">${d.events.map((e) => `<li>${esc(UI.translate(e.action.replace("_", " ")))} · v${esc(e.version ?? "")} · <span data-no-i18n>${esc(e.actor)}</span> · <time datetime="${esc(e.created)}">${esc(new Date(e.created).toLocaleString(UI.getLocale()))}</time></li>`).join("")}</ul>
+      </div></div>`;
+    };
+
+
+    // ---- an imported role waiting for a person (read only until they confirm)
+    const promptText = (role) => {
+      const prompt = role.definition.prompt;
+      return prompt.mode === "freeform" ? prompt.freeform : catalog.sections.filter((key) => (prompt.sections[key] || "").trim()).map((key) => `${UI.translate(STUDIO_SECTIONS[key][0])}\n${prompt.sections[key]}`).join("\n\n");
+    };
+    const reviewHtml = () => {
+      const r = state.review;
+      const role = r.role;
+      const perms = r.permissions;
+      const when = (value) => value ? esc(new Date(value).toLocaleString(UI.getLocale())) : esc(UI.translate("Unknown"));
+      const runtime = (item) => item && item.provider ? `${esc(item.provider)}${item.model ? ` · ${esc(item.model)}` : ""}${item.effort ? ` · ${esc(item.effort)}` : ""}` : esc(UI.translate("The project's setting for the base role"));
+      const snapshots = r.snapshots.length ? r.snapshots.map((snap) => `<li class="snap-row"><span class="pill ${snap.is_current_version ? "accent" : "neutral"}">v${esc(snap.version)}</span> <span class="mono">${esc(snap.snapshot_id.slice(0, 12))}</span> <small>${runtime(snap.runtime)}</small>
+          ${snap.confirmed_with_role ? `<small class="hint">${esc(UI.translate("Confirmed together with the role."))}</small>` : `<label class="inline"><input type="checkbox" data-review-snapshot="${esc(snap.snapshot_id)}" /> ${esc(UI.translate("Also confirm this older snapshot"))}</label>`}
+          ${snap.source_trust.length ? `<small class="hint">${esc(UI.translate("The device it came from had confirmed this. That does not count here."))}</small>` : ""}</li>`).join("") : `<li class="hint">${esc(UI.translate("The file carries no frozen snapshot. One is made on this device when the role first joins a task."))}</li>`;
+      return `<div class="studio-banner" role="alert"><strong>${esc(UI.translate("This role came from an imported file."))}</strong> ${esc(UI.translate("It cannot be edited, added to a task or run until you read it and confirm it here. Switching on write access for the project does not confirm it."))}</div>
+        ${pageCard("package", esc(UI.translate("Where it came from")), esc(UI.translate("Taken from the file. A file can say anything, so treat it as a claim, not proof.")), `<dl class="ctx-fields">
+          <div class="ctx-field"><dt>${esc(UI.translate("Project in the file"))}</dt><dd class="mono" data-no-i18n></dd></div>
+          <div class="ctx-field"><dt>${esc(UI.translate("Exported"))}</dt><dd>${when(r.source.exported_at)}</dd></div>
+          <div class="ctx-field"><dt>${esc(UI.translate("Imported here"))}</dt><dd>${when(r.source.imported_at)}</dd></div>
+          <div class="ctx-field"><dt>${esc(UI.translate("State it was in"))}</dt><dd class="mono" data-no-i18n></dd></div>
+          <div class="ctx-field"><dt>${esc(UI.translate("File fingerprint"))}</dt><dd class="mono" data-no-i18n></dd></div></dl>`)}
+        ${pageCard("roles", esc(UI.translate("What it is allowed to do")), esc(UI.translate("This comes from ccc-mcp's own code for the base role. Nothing written in the role or the file can widen it.")), `
+          <p><strong>${esc(UI.translate(bases[perms.base_role]?.name || perms.base_role))}</strong> (${esc(perms.base_role)})</p>
+          <p>${esc(UI.translate(perms.may_write_files ? "It can change files in the task's workspace, but only after the plan is approved." : "It is read-only: it cannot change project files."))} ${perms.is_gate ? esc(UI.translate("It acts as a reviewer: when it finds a real problem the work goes back.")) : ""}</p>
+          <p class="hint">${esc(UI.translate("Provider it asks for"))}: ${runtime(r.runtime)}</p>`)}
+        ${pageCard("language", esc(UI.translate("Its instructions")), esc(UI.translate("Read all of it. This is the text you would be putting in front of a model.")), `<pre class="mono seg-text" id="rv-prompt" data-no-i18n></pre>
+          <div class="studio-actions"><button class="btn" type="button" id="rv-preview">${esc(UI.translate("Preview what will be sent"))}</button><button class="btn" type="button" id="rv-history">${esc(UI.translate("See its versions"))}</button></div>`)}
+        ${pageCard("evaluation", esc(UI.translate("Frozen snapshots in the file")), esc(UI.translate("A snapshot is the exact role a past task ran with. Confirming one lets tasks that were pinned to it continue.")), `<ul class="plain-list">${snapshots}</ul>
+          <p class="hint">${r.usage.workflows.length ? esc(`${UI.translate("Used in these workflows")}: `) : esc(UI.translate("In no workflow yet."))}${r.usage.workflows.map((w) => `<span class="chip" data-no-i18n>${esc(w.name)}</span>`).join(" ")}</p>`)}
+        <div class="studio-actions"><button class="btn primary" type="button" id="rv-confirm">${esc(UI.translate("Confirm and switch on…"))}</button></div>
+        <div class="hint">${esc(UI.translate("You will be asked to type a phrase that names this role and version, so you cannot confirm a different one by accident. The confirmation is recorded."))}</div>`;
+    };
+    const fillReview = () => {
+      const r = state.review;
+      const fields = mainEl.querySelectorAll(".ctx-field dd[data-no-i18n]");
+      const values = [r.source.source_project_id, r.source.source_status, r.source.bundle_sha256];
+      fields.forEach((node, index) => { node.textContent = values[index] || "—"; });
+      const prompt = document.getElementById("rv-prompt");
+      if (prompt) prompt.textContent = promptText(r.role);
+    };
+
+    // ---- painting and wiring
+    const paintMain = () => {
+      if (!state.draft) {
+        mainEl.innerHTML = `<div class="empty">${esc(UI.translate("Pick a role on the left, or make a new one."))}<br><a class="btn primary" href="#/p/${encodeURIComponent(id)}/roles/new">${esc(UI.translate("New role"))}</a></div>`;
+        UI.localize(mainEl);
+        return;
+      }
+      const tabs = state.review ? ["review", "preview", "history"] : ["edit", "preview", ...(state.ref ? ["history"] : [])];
+      const names = { review: "Review", edit: "Edit", preview: "Preview", history: "History" };
+      const head = state.ref
+        ? `<div class="studio-head"><span class="chat-avatar av-${roleAvatarTone(state.ref)}" aria-hidden="true">${roleAvatarIcon(state.ref)}</span><div><h2 data-no-i18n>${esc(state.detail.role.definition.name)}</h2><small>${esc(UI.translate(bases[state.detail.role.base_role].name))} · v${esc(state.detail.role.current_version)}</small></div>${statusPill(state.detail.role)}</div>`
+        : `<div class="studio-head"><div><h2>${esc(UI.translate("New role"))}</h2></div></div>`;
+      mainEl.innerHTML = `${head}<nav class="tabs" role="tablist">${tabs.map((tab) => `<button class="tab${state.tab === tab ? " active" : ""}" role="tab" aria-selected="${state.tab === tab}" data-studio-tab="${tab}">${esc(UI.translate(names[tab]))}</button>`).join("")}</nav>
+        <div class="studio-pane">${state.tab === "review" && state.review ? reviewHtml() : state.tab === "edit" ? editHtml(state.draft) : state.tab === "preview" ? previewHtml() : historyHtml()}</div>`;
+      if (state.tab === "review" && state.review) fillReview();
+      if (state.tab === "edit") fillEditor(state.draft);
+      if (state.tab === "preview") {
+        document.getElementById("rp-request").value = state.previewRequest;
+        fillPreview();
+      }
+      UI.localize(mainEl);
+      wire();
+    };
+    const runLint = async () => {
+      readEditor();
+      const out = document.getElementById("rs-lint-result");
+      try {
+        const body = state.ref ? { role_ref: state.ref, draft: definitionFromDraft(state.draft) } : { base_role: state.draft.base_role, draft: definitionFromDraft(state.draft) };
+        state.lint = await api(`${base}/lint`, { method: "POST", body });
+        out.innerHTML = lintHtml(state.lint);
+        UI.localize(out);
+      } catch (err) { toast(err.message, true); }
+    };
+    const runPreview = async () => {
+      // The edit form is not on this tab; its content was saved into state.draft when it was left.
+      state.previewProvider = document.getElementById("rp-provider").value;
+      state.previewRequest = document.getElementById("rp-request").value;
+      try {
+        const draftForPreview = { ...definitionFromDraft(state.draft), name: state.draft.name.trim() || "Untitled role" };
+        const body = { draft: draftForPreview, provider: state.previewProvider, requirement: state.previewRequest.trim() || null, ...(state.ref ? { role_ref: state.ref } : { base_role: state.draft.base_role }) };
+        state.preview = await api(`${base}/preview`, { method: "POST", body });
+        paintMain();
+      } catch (err) { toast(err.message, true); }
+    };
+    const save = async () => {
+      readEditor();
+      const definition = definitionFromDraft(state.draft);
+      try {
+        if (state.ref) {
+          const result = await api(`${base}/${encodeURIComponent(state.ref)}/update`, { method: "POST", body: { expected_version: state.version, changes: definition } });
+          toast(result.changed ? "Saved as a new version." : "Nothing changed.");
+          data = await api(base); setCustomRoles(data.roles);
+          await openLoaded(); paintList(); paintMain();
+        } else {
+          const created = await api(base, { method: "POST", body: { ...definition, base_role: state.draft.base_role } });
+          toast("Role created.");
+          navTo(`/p/${encodeURIComponent(id)}/roles/${encodeURIComponent(created.id)}`);
+        }
+      } catch (err) { toast(err.message, true); }
+    };
+    function wire() {
+      mainEl.querySelectorAll("[data-studio-tab]").forEach((button) => button.addEventListener("click", () => { if (state.tab === "edit") readEditor(); state.tab = button.dataset.studioTab; paintMain(); }));
+      if (state.tab === "review") {
+        document.getElementById("rv-preview")?.addEventListener("click", () => { state.tab = "preview"; paintMain(); });
+        document.getElementById("rv-history")?.addEventListener("click", () => { state.tab = "history"; paintMain(); });
+        document.getElementById("rv-confirm")?.addEventListener("click", () => {
+          const form = state.review.confirmation;
+          const older = [...mainEl.querySelectorAll("[data-review-snapshot]")].filter((box) => box.checked).map((box) => box.dataset.reviewSnapshot);
+          confirmTextModal({
+            title: "Confirm this imported role?",
+            description: "You are confirming the instructions, version and base role you just read. The role will be switched on for this project and can be used in workflows. This is recorded and cannot be taken back, only switched off.",
+            challenge: form.phrase, confirmLabel: "Confirm and switch on",
+            onConfirm: async (typed) => {
+              await api(`${base}/${encodeURIComponent(state.ref)}/confirm-import`, { method: "POST", body: { version: form.version, version_sha256: form.version_sha256, snapshot_ids: older, confirmation: typed } });
+              toast("Role confirmed and switched on.");
+              data = await api(base); setCustomRoles(data.roles);
+              state.tab = "edit"; await openLoaded(); paintList(); paintMain();
+            },
+          });
+        });
+        return;
+      }
+      if (state.tab === "preview") { document.getElementById("rp-run").addEventListener("click", runPreview); return; }
+      if (state.tab === "history") {
+        mainEl.querySelectorAll("[data-confirm-snapshot]").forEach((button) => button.addEventListener("click", () => {
+          const snap = state.detail.unconfirmed_snapshots.find((item) => item.snapshot_id === button.dataset.confirmSnapshot);
+          if (!snap) return;
+          confirmTextModal({
+            title: "Confirm this snapshot?",
+            description: "A snapshot is the exact role a past task ran with. Confirming it lets a paused task pinned to it continue. This is recorded.",
+            challenge: snap.phrase, confirmLabel: "Confirm this snapshot",
+            onConfirm: async (typed) => {
+              await api(`${base}/${encodeURIComponent(state.ref)}/confirm-snapshot`, { method: "POST", body: { snapshot_id: snap.snapshot_id, confirmation: typed } });
+              toast("Snapshot confirmed.");
+              await openLoaded(); paintMain();
+            },
+          });
+        }));
+        document.getElementById("rh-diff")?.addEventListener("click", async () => {
+          const from = document.querySelector('input[name="vf"]:checked')?.value, to = document.querySelector('input[name="vt"]:checked')?.value;
+          const out = document.getElementById("rh-diff-out");
+          if (!from || !to) { toast("Pick a version in each column.", true); return; }
+          try {
+            const diff = await api(`${base}/${encodeURIComponent(state.ref)}/diff?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
+            out.innerHTML = `<div class="diff-box">${diff.fields.length || diff.prompt.length ? "" : `<p>${esc(UI.translate("The two versions are the same."))}</p>`}${diff.fields.map((f) => `<p><strong>${esc(UI.translate(f.field))}</strong>: <span class="diff-del" data-f="b"></span> → <span class="diff-add" data-f="a"></span></p>`).join("")}${diff.prompt.map((part) => `<h4>${esc(part.part)}</h4><pre class="mono diff-lines">${part.lines.map(() => `<div class="diff-line"><span class="op"></span><span class="tx"></span></div>`).join("")}</pre>`).join("")}</div>`;
+            out.querySelectorAll("p").forEach((p, index) => { const field = diff.fields[index]; if (!field) return; p.querySelector('[data-f="b"]').textContent = JSON.stringify(field.before); p.querySelector('[data-f="a"]').textContent = JSON.stringify(field.after); });
+            out.querySelectorAll(".diff-lines").forEach((pre, index) => pre.querySelectorAll(".diff-line").forEach((row, i) => { const line = diff.prompt[index].lines[i]; row.classList.add(line.op === "+" ? "add" : line.op === "-" ? "del" : "same"); row.querySelector(".op").textContent = line.op === " " ? "" : line.op; row.querySelector(".tx").textContent = line.text; }));
+            UI.localize(out);
+          } catch (err) { toast(err.message, true); }
+        });
+        return;
+      }
+      const draft = state.draft;
+      document.getElementById("rs-base").addEventListener("change", (event) => {
+        readEditor(); draft.base_role = event.target.value; draft.stats = draft.stats ? draft.stats : null;
+        document.getElementById("rs-base-help").innerHTML = baseHelp(draft.base_role); UI.localize(document.getElementById("rs-base-help"));
+        document.getElementById("rs-avatars").innerHTML = avatarGrid(draft); bindAvatars();
+        document.getElementById("rs-abilities").innerHTML = abilityRows(draft); bindAbilities();
+      });
+      document.querySelectorAll('input[name="rs-mode"]').forEach((radio) => radio.addEventListener("change", () => {
+        readEditor(); draft.mode = radio.value;
+        document.getElementById("rs-sections").hidden = draft.mode !== "sections"; document.getElementById("rs-freeform").hidden = draft.mode !== "freeform";
+        document.querySelectorAll(".mode-choice").forEach((choice) => choice.classList.toggle("selected", choice.querySelector("input").checked));
+        noteOther();
+      }));
+      document.getElementById("rs-to-freeform").addEventListener("click", () => {
+        readEditor();
+        const text = sectionsAsFreeform(draft.sections);
+        if (!text) { toast("The sections are empty.", true); return; }
+        // A proposal only: it fills the box so the person can edit it; nothing is saved or switched.
+        document.getElementById("rs-free").value = text; draft.freeform = text; noteOther();
+        toast("Copied. Switch to Full text to use it.");
+      });
+      bindRuntime(); bindAvatars(); bindAbilities();
+      document.getElementById("rs-lint").addEventListener("click", runLint);
+      document.getElementById("rs-save").addEventListener("click", save);
+      document.getElementById("rs-goto-preview").addEventListener("click", () => { readEditor(); state.tab = "preview"; paintMain(); });
+      document.getElementById("rs-clone")?.addEventListener("click", () => showModal({
+        title: "Make a copy of this role?", body: "The copy starts at version 1 with the same instructions. Change anything you like; the original stays as it is.",
+        fields: [{ label: "Name of the copy", value: `${state.detail.role.definition.name} 2` }], confirmLabel: "Make a copy",
+        onSubmit: async ([name]) => { const copy = await api(`${base}/${encodeURIComponent(state.ref)}/clone`, { method: "POST", body: { name } }); toast("Copy created."); navTo(`/p/${encodeURIComponent(id)}/roles/${encodeURIComponent(copy.id)}`); },
+      }));
+      document.getElementById("rs-toggle")?.addEventListener("click", () => {
+        const turningOff = state.detail.role.status === "active";
+        showModal({
+          title: turningOff ? "Switch this role off?" : "Switch this role on?",
+          body: turningOff ? "It can no longer be added to a workflow, and a new task cannot start on a workflow that still uses it. Tasks that already started keep running with it." : "It can be added to workflows and used by new tasks again.",
+          confirmLabel: turningOff ? "Switch off" : "Switch on", danger: turningOff,
+          onSubmit: async () => { await api(`${base}/${encodeURIComponent(state.ref)}/status`, { method: "POST", body: { status: turningOff ? "disabled" : "active" } }); data = await api(base); setCustomRoles(data.roles); await openLoaded(); paintList(); paintMain(); toast(turningOff ? "Role switched off." : "Role switched on."); },
+        });
+      });
+    }
+    function bindRuntime() {
+      document.getElementById("rs-provider").addEventListener("change", () => {
+        readEditor();
+        const box = document.getElementById("rs-runtime");
+        box.innerHTML = runtimeRows(state.draft);
+        document.getElementById("rs-model").value = (state.draft.runtime && state.draft.runtime.model) || "";
+        UI.localize(box);
+        bindRuntime();
+      });
+    }
+    function bindAvatars() {
+      document.querySelectorAll("[data-studio-avatar]").forEach((button) => button.addEventListener("click", () => { readEditor(); state.draft.avatar = button.dataset.studioAvatar; document.getElementById("rs-avatars").innerHTML = avatarGrid(state.draft); bindAvatars(); }));
+    }
+    function bindAbilities() {
+      const box = document.getElementById("rs-abilities");
+      const repaint = () => { document.getElementById("rs-radar").innerHTML = radarSvg(statsFor(state.draft), { size: 150, labels: "short" }); };
+      document.getElementById("rs-use-base-stats").addEventListener("change", (event) => {
+        state.draft.stats = event.target.checked ? null : { ...bases[state.draft.base_role].stats };
+        box.innerHTML = abilityRows(state.draft); UI.localize(box); bindAbilities();
+      });
+      box.querySelectorAll("[data-studio-stat]").forEach((range) => range.addEventListener("input", () => {
+        state.draft.stats[range.dataset.studioStat] = Number(range.value); range.nextElementSibling.textContent = range.value; repaint();
+      }));
+    }
+    paintList();
+    paintMain();
+  }
+
   function route() {
     renderGen += 1;
     captureTokenFromHash();
@@ -4004,6 +4538,7 @@ tests/test_clamp.py::test_clamp_upper_bound PASSED
     if (r.view === "tasks" && r.sub) return renderTaskDetail();
     if (r.view === "tasks") return renderTasksList();
     if (r.view === "settings") return renderSettings();
+    if (r.view === "roles") return renderRoleStudio();
     if (r.view === "context") return renderContext();
     if (r.view === "skills") return renderSkills();
     return renderProjectOverview();

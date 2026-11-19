@@ -106,6 +106,15 @@ async def _body(request: Request) -> dict:
     return data
 
 
+def _only(body: dict, *allowed: str) -> dict:
+    """Refuse fields the route does not know, so a typo or an injected field is an error and
+    not silently ignored."""
+    unknown = sorted(set(body) - set(allowed))
+    if unknown:
+        raise BridgeError(f"Unknown fields: {unknown}")
+    return body
+
+
 def bridge_of(request: Request) -> CCCMCP:
     return request.app.state.bridge
 
@@ -524,6 +533,9 @@ async def get_settings(request: Request):
     result["evaluation_weights"] = validated_role_weights(
         result["editable"].get("evaluation_engine", {}).get("weights")
     )
+    result["custom_roles"] = await run(
+        bridge.custom_role_directory, request.path_params["project_id"]
+    )
     return JSONResponse(result)
 
 
@@ -702,6 +714,224 @@ async def task_gate_decision(request: Request):
         request.path_params["task_id"],
         body.get("decision"),
         body.get("note") or "",
+    ))
+
+
+# --- Role studio ------------------------------------------------------------------
+#
+# Custom roles are created and edited here and nowhere else: the console's session token is the
+# local authorization. There is deliberately no MCP tool, CLI command or settings.json route for
+# any of this, so a ChatGPT conversation or a file in the repository cannot write a role's
+# instructions or accept a change to a role's fixed contract.
+
+
+@endpoint
+async def list_roles(request: Request):
+    bridge = bridge_of(request)
+    project_id = request.path_params["project_id"]
+    return JSONResponse({
+        "roles": await run(bridge.custom_role_directory, project_id),
+        "catalog": bridge.role_studio_catalog(),
+        "pending_imports": await run(bridge.pending_imported_roles, project_id),
+    })
+
+
+@endpoint
+async def create_role(request: Request):
+    bridge = bridge_of(request)
+    body = await _body(request)
+    _only(body, "name", "base_role", "description", "avatar", "kind", "prompt", "stats", "runtime")
+    return JSONResponse(await run(
+        bridge.create_custom_role,
+        request.path_params["project_id"],
+        body.get("name"),
+        body.get("base_role"),
+        description=body.get("description") or "",
+        avatar=body.get("avatar"),
+        kind=body.get("kind"),
+        prompt=body.get("prompt"),
+        stats=body.get("stats"),
+        runtime=body.get("runtime"),
+        actor="local-console",
+    ))
+
+
+@endpoint
+async def get_role(request: Request):
+    bridge = bridge_of(request)
+    project_id, role_ref = request.path_params["project_id"], request.path_params["role_ref"]
+    role = await run(bridge.get_custom_role, project_id, role_ref)
+    return JSONResponse({
+        "role": role,
+        "versions": await run(bridge.custom_role_versions, project_id, role_ref),
+        "events": await run(bridge.custom_role_events, project_id, role_ref),
+        "usage": await run(bridge.custom_role_usage, project_id, role_ref),
+        "unconfirmed_snapshots": await run(
+            bridge.unconfirmed_imported_snapshots, project_id, role_ref),
+    })
+
+
+@endpoint
+async def update_role(request: Request):
+    bridge = bridge_of(request)
+    body = await _body(request)
+    _only(body, "changes", "expected_version")
+    return JSONResponse(await run(
+        bridge.update_custom_role,
+        request.path_params["project_id"],
+        request.path_params["role_ref"],
+        body.get("changes"),
+        expected_version=body.get("expected_version"),
+        actor="local-console",
+    ))
+
+
+@endpoint
+async def clone_role(request: Request):
+    bridge = bridge_of(request)
+    body = await _body(request)
+    _only(body, "name")
+    return JSONResponse(await run(
+        bridge.clone_custom_role,
+        request.path_params["project_id"],
+        request.path_params["role_ref"],
+        body.get("name") or None,
+        actor="local-console",
+    ))
+
+
+@endpoint
+async def set_role_status(request: Request):
+    bridge = bridge_of(request)
+    body = await _body(request)
+    _only(body, "status")
+    return JSONResponse(await run(
+        bridge.set_custom_role_status,
+        request.path_params["project_id"],
+        request.path_params["role_ref"],
+        body.get("status"),
+        actor="local-console",
+    ))
+
+
+@endpoint
+async def role_import_review(request: Request):
+    """What the console shows before an imported role is switched on. Read only."""
+    bridge = bridge_of(request)
+    return JSONResponse(await run(
+        bridge.imported_role_review,
+        request.path_params["project_id"],
+        request.path_params["role_ref"],
+    ))
+
+
+@endpoint
+async def confirm_role_import(request: Request):
+    """Switch on an imported role. Only this route can: the person must hold the console's
+    session token and type the phrase for this exact role version."""
+    bridge = bridge_of(request)
+    body = await _body(request)
+    _only(body, "version", "version_sha256", "snapshot_ids", "confirmation", "note")
+    return JSONResponse(await run(
+        bridge.confirm_imported_role_web,
+        request.path_params["project_id"],
+        request.path_params["role_ref"],
+        body.get("version"),
+        body.get("version_sha256"),
+        body.get("snapshot_ids") if body.get("snapshot_ids") is not None else [],
+        body.get("confirmation"),
+        note=body.get("note") or "",
+    ))
+
+
+@endpoint
+async def confirm_role_snapshot(request: Request):
+    """Confirm one more imported snapshot of a role that is already on. Console only."""
+    bridge = bridge_of(request)
+    body = await _body(request)
+    _only(body, "snapshot_id", "confirmation", "note")
+    result = await run(
+        bridge.confirm_imported_snapshot_web,
+        request.path_params["project_id"],
+        request.path_params["role_ref"],
+        body.get("snapshot_id"),
+        body.get("confirmation"),
+        note=body.get("note") or "",
+    )
+    return JSONResponse({"snapshot_id": result["snapshot_id"], "trusted": result["trusted"]})
+
+
+@endpoint
+async def role_diff(request: Request):
+    bridge = bridge_of(request)
+    query = request.query_params
+    return JSONResponse(await run(
+        bridge.custom_role_diff,
+        request.path_params["project_id"],
+        request.path_params["role_ref"],
+        int(query["from"]),
+        int(query["to"]),
+    ))
+
+
+@endpoint
+async def preview_role(request: Request):
+    bridge = bridge_of(request)
+    body = await _body(request)
+    _only(body, "role_ref", "draft", "base_role", "version", "provider", "requirement", "strictness", "max_rounds", "feedback")
+    return JSONResponse(await run(
+        bridge.preview_custom_role_prompt,
+        request.path_params["project_id"],
+        body.get("role_ref"),
+        draft=body.get("draft"),
+        base_role=body.get("base_role"),
+        version=body.get("version"),
+        provider=body.get("provider"),
+        requirement=body.get("requirement"),
+        strictness=body.get("strictness"),
+        max_rounds=body.get("max_rounds"),
+        feedback=body.get("feedback"),
+    ))
+
+
+@endpoint
+async def lint_role(request: Request):
+    bridge = bridge_of(request)
+    body = await _body(request)
+    _only(body, "role_ref", "draft", "base_role", "version")
+    return JSONResponse(await run(
+        bridge.lint_custom_role,
+        request.path_params["project_id"],
+        body.get("role_ref"),
+        draft=body.get("draft"),
+        base_role=body.get("base_role"),
+        version=body.get("version"),
+    ))
+
+
+@endpoint
+async def task_contract(request: Request):
+    bridge = bridge_of(request)
+    return JSONResponse(await run(
+        bridge.task_contract_status,
+        request.path_params["project_id"],
+        request.path_params["task_id"],
+    ))
+
+
+@endpoint
+async def accept_task_contract(request: Request):
+    bridge = bridge_of(request)
+    body = await _body(request)
+    _only(body, "step_id", "snapshot_id", "contract_hash", "confirmation")
+    return JSONResponse(await run(
+        bridge.accept_contract_drift_web,
+        request.path_params["project_id"],
+        request.path_params["task_id"],
+        body.get("step_id"),
+        body.get("snapshot_id"),
+        body.get("contract_hash"),
+        body.get("confirmation"),
     ))
 
 
@@ -1479,6 +1709,32 @@ ROUTES = [
     Route("/api/projects/{project_id}/tasks/{task_id}/delete", task_delete, methods=["POST"]),
     Route(
         "/api/projects/{project_id}/tasks/{task_id}/gate-decision", task_gate_decision,
+        methods=["POST"],
+    ),
+    Route("/api/projects/{project_id}/roles", list_roles, methods=["GET"]),
+    Route("/api/projects/{project_id}/roles", create_role, methods=["POST"]),
+    Route("/api/projects/{project_id}/roles/preview", preview_role, methods=["POST"]),
+    Route("/api/projects/{project_id}/roles/lint", lint_role, methods=["POST"]),
+    Route("/api/projects/{project_id}/roles/{role_ref}", get_role, methods=["GET"]),
+    Route("/api/projects/{project_id}/roles/{role_ref}/update", update_role, methods=["POST"]),
+    Route("/api/projects/{project_id}/roles/{role_ref}/clone", clone_role, methods=["POST"]),
+    Route("/api/projects/{project_id}/roles/{role_ref}/status", set_role_status, methods=["POST"]),
+    Route("/api/projects/{project_id}/roles/{role_ref}/diff", role_diff, methods=["GET"]),
+    Route(
+        "/api/projects/{project_id}/roles/{role_ref}/import-review", role_import_review,
+        methods=["GET"],
+    ),
+    Route(
+        "/api/projects/{project_id}/roles/{role_ref}/confirm-import", confirm_role_import,
+        methods=["POST"],
+    ),
+    Route(
+        "/api/projects/{project_id}/roles/{role_ref}/confirm-snapshot", confirm_role_snapshot,
+        methods=["POST"],
+    ),
+    Route("/api/projects/{project_id}/tasks/{task_id}/contract", task_contract, methods=["GET"]),
+    Route(
+        "/api/projects/{project_id}/tasks/{task_id}/contract/accept", accept_task_contract,
         methods=["POST"],
     ),
     Route("/api/skills", list_skills, methods=["GET"]),

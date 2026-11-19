@@ -304,6 +304,16 @@ class BaseAgentAdapter(ABC):
     def run(self, package, instruction, cwd, timeout, cancelled):
         """Return a validated report. Never trust reports as observed test evidence."""
 
+    # Set by the worker to learn exactly what is handed to the provider (see core/custom_roles).
+    # The adapters report the final text through `sent`; nothing else about a run changes.
+    on_prompt = None
+
+    def sent(self, prompt):
+        """Call with the complete text about to be given to the provider; returns it unchanged."""
+        if self.on_prompt is not None:
+            self.on_prompt(prompt)
+        return prompt
+
     def prompt(self, package, instruction):
         language = package.get("language")
         return operator_policy(language) + meeting_mode_policy(

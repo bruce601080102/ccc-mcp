@@ -56,17 +56,21 @@ class FlowHub:
         who picks a new task's workflow."""
         settings = self.get_project_settings(project_id)
         custom = settings["workflows"]
+        directory = self.custom_role_directory(project_id)
+        declared = {role["id"]: tuple(role["stats"].values()) for role in directory}
         return {
             "selected": settings["workflow"],
             "selection": settings["workflow_selection"],
             "workflows": [
-                {**flow, "stats": team_stats([step["role"] for step in flow["steps"]])}
+                {**flow, "stats": team_stats(
+                    [step.get("role_ref") or step["role"] for step in flow["steps"]], declared)}
                 for flow in (
                     flow_definition(flow_id, custom) for flow_id in [*BUILTIN_FLOWS, *custom]
                 )
             ],
             "role_stats": {role: role_stats(role) for role in ROLE_STATS},
             "stat_axes": list(STAT_AXES),
+            "custom_roles": directory,
         }
 
     def _resolve_task_workflow(self, project_id, requirement, requested=None):
@@ -109,6 +113,18 @@ class FlowHub:
         workflow, selected_by, reason = choice
         flow = flow_definition(workflow, self.get_project_settings(project_id)["workflows"])
         flow = {**flow, "selected_by": selected_by, "reason": reason}
+        if any(step.get("role_ref") for step in flow["steps"]):
+            # The team is fixed here, in the transaction that creates the task (or starts its
+            # next work round), before any step runs and before any plan can be approved. Each
+            # step gets its own id and the frozen snapshot of the role it uses; editing or
+            # disabling a role afterwards cannot reach this task.
+            pin = self.pin_task_roster(conn, project_id, task_id, flow["id"], flow["steps"])
+            flow["steps"] = [
+                {**step, "step_id": entry["step_id"], "snapshot_id": entry["snapshot_id"],
+                 "role_version": entry["role_version"]}
+                for step, entry in zip(flow["steps"], pin["roster"], strict=True)
+            ]
+            flow["roster_pin"], flow["roster_hash"] = pin["id"], pin["roster_hash"]
         if flow["legacy"]:
             conn.execute(
                 "DELETE FROM task_flows WHERE project_id=? AND task_id=?", (project_id, task_id)
@@ -174,23 +190,43 @@ class FlowHub:
         self, project_id, task_id, flow, index, adapter, fake_scenario,
         requirement=None, feedback=None,
     ):
-        role = flow["steps"][index]["role"]
+        step = flow["steps"][index]
+        role = step["role"]
         gate = self.get_project_settings(project_id)["review_gate"]
         if requirement is None:
             requirement = self.task(project_id, task_id)["requirement"]
-        instruction = step_instruction(
-            role, requirement, strictness=gate["ar_strictness"],
-            max_rounds=gate["max_rounds"], feedback=feedback,
-        )
+        identity = self._step_identity(step)
+        if identity:
+            instruction = self.compose_pinned_instruction(
+                project_id, step["snapshot_id"], requirement, feedback
+            )
+        else:
+            instruction = step_instruction(
+                role, requirement, strictness=gate["ar_strictness"],
+                max_rounds=gate["max_rounds"], feedback=feedback,
+            )
+        # Fake-scenario rounds are counted per role *as it appears in the workflow*, so two
+        # custom roles on the same base, or one used at two steps, each start at round zero.
         prior = self.store.one(
-            "SELECT COUNT(*) AS n FROM agent_executions WHERE project_id=? AND task_id=? AND role=?",
-            (project_id, task_id, role),
+            "SELECT COUNT(*) AS n FROM agent_executions WHERE project_id=? AND task_id=? "
+            "AND role=? AND role_ref IS ? AND step_id IS ?",
+            (project_id, task_id, role, identity.get("role_ref"), identity.get("step_id")),
         )["n"]
         return self._dispatch_or_adopt(
             project_id, task_id, role, instruction, adapter,
             scenario_for(fake_scenario, role, prior),
-            flow_step=index, read_only=(role == "SD"), fake_script=fake_scenario,
+            flow_step=index, read_only=(role == "SD"), fake_script=fake_scenario, **identity,
         )
+
+    @staticmethod
+    def _step_identity(step):
+        """The columns that name a custom role at a step; empty for a built-in role."""
+        if not step.get("role_ref"):
+            return {}
+        return {
+            "role_ref": step["role_ref"], "role_snapshot": step["snapshot_id"],
+            "step_id": step["step_id"],
+        }
 
     # -- after a step -----------------------------------------------------------------
 
@@ -204,9 +240,14 @@ class FlowHub:
         )
         index = json.loads(source["options"]).get("flow_step")
         if index is None:
-            # Dispatched by hand outside the flow: continue from the last step with that role.
+            # Dispatched by hand outside the flow: continue from the last step with that role
+            # (or, for a custom role, the step that execution was for).
             index = next(
-                (i for i in range(len(steps) - 1, -1, -1) if steps[i]["role"] == source["role"]),
+                (
+                    i for i in range(len(steps) - 1, -1, -1)
+                    if steps[i]["role"] == source["role"]
+                    and (source["step_id"] is None or steps[i].get("step_id") == source["step_id"])
+                ),
                 None,
             )
             if index is None:
@@ -282,6 +323,23 @@ class FlowHub:
                         conn, project_id, task_id, "AWAITING_PM_REVIEW",
                         "The last gate's blocking claim was unsupported and discarded",
                     )
+                elif state == "AWAITING_PM_DECISION" and not conn.execute(
+                    "SELECT 1 FROM flow_escalations WHERE project_id=? AND task_id=? "
+                    "AND status='OPEN'", (project_id, task_id),
+                ).fetchone():
+                    # The PM answered the escalation of the last gate with "proceed". There is
+                    # no decision left open, so the task settles in AWAITING_PM_REVIEW (the
+                    # state restarting a step also uses) before it is completed, exactly as
+                    # every other path to COMPLETED does. Host test evidence was checked above
+                    # and still outranks this decision; the state machine itself is unchanged.
+                    conn.execute(
+                        "UPDATE tasks SET state='AWAITING_PM_REVIEW' WHERE project_id=? AND id=?",
+                        (project_id, task_id),
+                    )
+                    event(
+                        conn, project_id, task_id, "AWAITING_PM_DECISION", "AWAITING_PM_REVIEW",
+                        "The PM accepted the last gate's outcome and the workflow carried on",
+                    )
                 self._transition(
                     conn, project_id, task_id, "COMPLETED",
                     f"Every step of the {flow['name']} workflow passed",
@@ -317,13 +375,17 @@ class FlowHub:
             if reason:
                 gate = {**gate, "verdict": "NEEDS_REVISION", "reason": reason}
         gate = {**gate, "role": role, "step_index": index, "strictness": strictness}
+        if source["role_ref"]:
+            gate = {**gate, "role_ref": source["role_ref"], "step_id": source["step_id"]}
         with self.store.transaction() as conn:
             conn.execute(
                 "INSERT OR IGNORE INTO flow_gate_results(id,project_id,task_id,step_index,role,"
-                "source_execution_id,verdict,strictness,detail,created) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                "source_execution_id,verdict,strictness,detail,created,role_ref,step_id) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     "GATE-" + uuid.uuid4().hex[:16], project_id, task_id, index, role,
                     source["id"], gate["verdict"], strictness, json.dumps(gate), now(),
+                    source["role_ref"], source["step_id"],
                 ),
             )
         return gate
@@ -371,11 +433,12 @@ class FlowHub:
                     return {"escalated": True, "reason": reason}
                 conn.execute(
                     "INSERT INTO flow_escalations(id,project_id,task_id,step_index,role,reason,"
-                    "detail,adapter,fake_scenario,escalation,status,created) "
-                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "detail,adapter,fake_scenario,escalation,status,created,role_ref,step_id) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         row_id, project_id, task_id, index, flow["steps"][index]["role"], reason,
                         json.dumps(detail), adapter, fake_scenario, escalation, "OPEN", now(),
+                        flow["steps"][index].get("role_ref"), flow["steps"][index].get("step_id"),
                     ),
                 )
                 self._transition(
@@ -396,6 +459,8 @@ class FlowHub:
         return {
             "escalation_id": row["id"],
             "role": row["role"],
+            "role_ref": row["role_ref"],
+            "step_id": row["step_id"],
             "step_index": row["step_index"],
             "reason": row["reason"],
             "findings": detail.get("blocking") or [],
@@ -473,6 +538,15 @@ class FlowHub:
         ):
             raise BridgeError(f"step must be a number from 0 to {len(steps) - 1}")
         role = steps[step_index]["role"]
+        if steps[step_index].get("snapshot_id"):
+            # Refuse before anything is cancelled or reset: a step that cannot be dispatched
+            # (its snapshot is untrusted, or its fixed contract changed incompatibly) must not
+            # leave the task half-restarted with its continuation thrown away.
+            snapshot = self.role_snapshot(project_id, steps[step_index]["snapshot_id"])
+            self.require_role_snapshot_trusted(project_id, snapshot["snapshot_id"])
+            self.check_snapshot_contract(
+                project_id, task_id, snapshot, steps[step_index]["step_id"]
+            )
         with self.lock(project_id):
             task = self.task(project_id, task_id)
             control = self.task_control(project_id, task_id)
@@ -544,7 +618,10 @@ class FlowHub:
                 "INSERT INTO task_interventions(project_id,task_id,action,content,context_version,"
                 "execution_id,created) VALUES(?,?,?,?,?,?,?)",
                 (project_id, task_id, "role_returned",
-                 json.dumps({"role": role, "step": step_index, "text": greeting},
+                 json.dumps({"role": role, "step": step_index, "text": greeting,
+                             **({"role_ref": steps[step_index]["role_ref"],
+                                 "step_id": steps[step_index]["step_id"]}
+                                if steps[step_index].get("role_ref") else {})},
                             ensure_ascii=False),
                  version, started.get("execution_id"), greeted),
             )
@@ -581,8 +658,8 @@ class FlowHub:
     def flow_gate_history(self, project_id, task_id):
         """Every gate verdict of a task, oldest first (read-only)."""
         rows = self.store.all(
-            "SELECT step_index,role,verdict,strictness,detail,source_execution_id,created "
-            "FROM flow_gate_results WHERE project_id=? AND task_id=? ORDER BY created",
+            "SELECT step_index,role,role_ref,step_id,verdict,strictness,detail,source_execution_id,"
+            "created FROM flow_gate_results WHERE project_id=? AND task_id=? ORDER BY created",
             (project_id, task_id),
         )
         return [{**r, "detail": json.loads(r["detail"])} for r in rows]

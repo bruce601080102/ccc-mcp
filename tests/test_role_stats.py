@@ -56,3 +56,12 @@ def test_workflows_and_tasks_carry_their_ability_charts(bridge, human):
     task_id = bridge.start_project_request("demo", "Plan a trip")["workstream"]["id"]
     brief = bridge.get_task_status("demo", task_id)["brief"]
     assert brief["workflow"]["stats"]["team"] == life["stats"]["team"]
+
+
+def test_a_custom_roles_declared_abilities_join_the_team_chart():
+    mine = (0, 0, 0, 0, 5, 5)
+    chart = team_stats(["SA", "u-gate"], {"u-gate": mine})
+    assert chart["team"]["verification"] == 5 and chart["team"]["risk"] == 5
+    assert chart["roles"]["u-gate"]["risk"] == 5
+    assert team_stats(["SA", "u-gate"]) == team_stats(["SA"])       # unknown without the extra
+    assert team_stats(["SA", "u-gate", "u-gate"], {"u-gate": mine}) == chart

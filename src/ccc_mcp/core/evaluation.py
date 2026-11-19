@@ -25,7 +25,10 @@ class EvaluationHub:
     # evaluations/reputation_events write is independently atomic via
     # bridge.store.transaction(), which is a different (SQLite-level) mechanism.
 
-    def evaluate_task(self, project_id, task_id=None, role=None, task_type="general", force=False):
+    def evaluate_task(
+        self, project_id, task_id=None, role=None, task_type="general", force=False,
+        role_ref=None, step_id=None,
+    ):
         resolved = task_id or self.project_workstream_task(project_id)
         if not self.get_project_settings(project_id)["evaluation_engine"]["enabled"]:
             raise BridgeError(
@@ -34,7 +37,7 @@ class EvaluationHub:
             )
         return evaluation_service.evaluate_task(
             self, project_id, resolved, role=role, task_type=task_type,
-            trigger="manual", force=force,
+            trigger="manual", force=force, role_ref=role_ref, step_id=step_id,
         )
 
     def reevaluate_execution(self, project_id, task_id, execution_id, task_type="general"):
@@ -49,9 +52,18 @@ class EvaluationHub:
             self, project_id, task_id, execution_id, task_type=task_type, trigger="manual"
         )
 
-    def get_task_evaluations(self, project_id, task_id=None, role=None):
+    def get_task_evaluations(self, project_id, task_id=None, role=None, role_ref=None):
         resolved = task_id or self.project_workstream_task(project_id)
-        return evaluation_service.get_evaluations(self, project_id, resolved, role=role)
+        rows = evaluation_service.get_evaluations(
+            self, project_id, resolved, role=role, role_ref=role_ref
+        )
+        labels = self.role_labels(project_id, [row.get("role_snapshot") for row in rows])
+        for row in rows:
+            label = labels.get(row.get("role_snapshot"))
+            if label:
+                row.update(role_name=label["name"], role_avatar=label["avatar"],
+                           role_version=label["version"])
+        return rows
 
     def export_scoring_cases(self, project_id, task_ids=None):
         """Read-only: the inputs `ccc-mcp validate-scoring` needs, one per task."""

@@ -12,7 +12,7 @@ from pydantic import ValidationError
 
 from ..adapters.git import git
 from ..adapters.skills import available_skills
-from ..adapters.storage import artifact, decode, now
+from ..adapters.storage import ROLE_TASK_NO_DELETE_TRIGGERS, ROLE_TASK_TABLES, artifact, decode, now
 from ..infra.config import metadata_name
 from ..infra.errors import BridgeError, PermissionDenied, VersionConflict
 from ..infra.security import (
@@ -428,10 +428,18 @@ class ContextHub:
             }
             try:
                 with self.store.transaction() as conn:
+                    role_trigger_sql = [
+                        row[0] for row in conn.execute(
+                            "SELECT sql FROM sqlite_master WHERE type='trigger' AND name IN "
+                            f"({','.join('?' for _ in ROLE_TASK_NO_DELETE_TRIGGERS)})",
+                            ROLE_TASK_NO_DELETE_TRIGGERS,
+                        )
+                    ]
                     for trigger in (
                         "meeting_clarifications_no_delete",
                         "decisions_no_delete",
                         "context_no_delete",
+                        *ROLE_TASK_NO_DELETE_TRIGGERS,
                     ):
                         conn.execute(f"DROP TRIGGER {trigger}")
                     for table in (
@@ -448,6 +456,7 @@ class ContextHub:
                         "context_patches",
                         "context_versions",
                         "tasks",
+                        *ROLE_TASK_TABLES,
                     ):
                         conn.execute(f"DELETE FROM {table} WHERE project_id=?", (project_id,))
                     conn.execute(
@@ -473,6 +482,8 @@ class ContextHub:
                         "CREATE TRIGGER context_no_delete BEFORE DELETE ON context_versions "
                         "BEGIN SELECT RAISE(ABORT, 'Context history is immutable'); END"
                     )
+                    for sql in role_trigger_sql:
+                        conn.execute(sql)
             except BaseException:
                 for archived_path, original_path in reversed(moved):
                     if archived_path.exists() and not original_path.exists():

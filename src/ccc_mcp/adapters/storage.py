@@ -244,6 +244,204 @@ CREATE TRIGGER IF NOT EXISTS reputation_events_no_update BEFORE UPDATE ON reputa
  BEGIN SELECT RAISE(ABORT, 'Reputation ledger is immutable'); END;
 CREATE TRIGGER IF NOT EXISTS reputation_events_no_delete BEFORE DELETE ON reputation_events
  BEGIN SELECT RAISE(ABORT, 'Reputation ledger is immutable'); END;
+
+-- Custom roles (core/custom_roles.py). Every table here is new, so an existing database only
+-- gains structure. No table has a foreign key: project removal and history clearing manage
+-- their own deletes (see ROLE_NO_DELETE_TRIGGERS).
+--
+-- The mutable head of a role. Everything about its content lives in the append-only version
+-- rows; here only the pointer to the newest version and the on/off state can change.
+CREATE TABLE IF NOT EXISTS custom_roles (
+ project_id TEXT NOT NULL, id TEXT NOT NULL, base_role TEXT NOT NULL,
+ status TEXT NOT NULL CHECK(status IN ('active','disabled','imported_pending')),
+ current_version INTEGER NOT NULL,
+ origin TEXT NOT NULL CHECK(origin IN ('local','imported')),
+ cloned_from TEXT, created TEXT NOT NULL, updated TEXT NOT NULL,
+ PRIMARY KEY(project_id, id));
+CREATE TRIGGER IF NOT EXISTS custom_roles_no_delete BEFORE DELETE ON custom_roles
+ BEGIN SELECT RAISE(ABORT, 'Custom roles cannot be deleted; disable the role instead'); END;
+CREATE TRIGGER IF NOT EXISTS custom_roles_identity_fixed
+ BEFORE UPDATE OF project_id, id, base_role, origin, cloned_from, created ON custom_roles
+ BEGIN SELECT RAISE(ABORT, 'A custom role''s identity and base role cannot change'); END;
+CREATE TRIGGER IF NOT EXISTS custom_roles_version_forward_only
+ BEFORE UPDATE OF current_version ON custom_roles
+ WHEN NEW.current_version < OLD.current_version
+ BEGIN SELECT RAISE(ABORT, 'A custom role''s version cannot go backwards'); END;
+-- One immutable row per edit.
+CREATE TABLE IF NOT EXISTS custom_role_versions (
+ project_id TEXT NOT NULL, role_ref TEXT NOT NULL, version INTEGER NOT NULL,
+ definition TEXT NOT NULL, sha256 TEXT NOT NULL, actor TEXT NOT NULL, created TEXT NOT NULL,
+ PRIMARY KEY(project_id, role_ref, version));
+CREATE TRIGGER IF NOT EXISTS custom_role_versions_no_update BEFORE UPDATE ON custom_role_versions
+ BEGIN SELECT RAISE(ABORT, 'Custom role versions are immutable'); END;
+CREATE TRIGGER IF NOT EXISTS custom_role_versions_no_delete BEFORE DELETE ON custom_role_versions
+ BEGIN SELECT RAISE(ABORT, 'Custom role versions are immutable'); END;
+CREATE TABLE IF NOT EXISTS custom_role_events (
+ seq INTEGER PRIMARY KEY AUTOINCREMENT, project_id TEXT NOT NULL, role_ref TEXT NOT NULL,
+ action TEXT NOT NULL CHECK(action IN ('created','cloned','edited','disabled','enabled',
+  'imported','activated','snapshot_trusted','snapshot_revoked')),
+ version INTEGER, actor TEXT NOT NULL, detail TEXT NOT NULL, created TEXT NOT NULL);
+CREATE TRIGGER IF NOT EXISTS custom_role_events_no_update BEFORE UPDATE ON custom_role_events
+ BEGIN SELECT RAISE(ABORT, 'Custom role history is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS custom_role_events_no_delete BEFORE DELETE ON custom_role_events
+ BEGIN SELECT RAISE(ABORT, 'Custom role history is immutable'); END;
+-- A frozen, content-addressed copy of everything that influences an execution of a role.
+-- Never modified. Whether it may be dispatched is recorded separately, below.
+CREATE TABLE IF NOT EXISTS role_snapshots (
+ project_id TEXT NOT NULL, snapshot_id TEXT NOT NULL, role_ref TEXT NOT NULL,
+ version INTEGER NOT NULL, base_role TEXT NOT NULL, content TEXT NOT NULL,
+ contract_hash TEXT NOT NULL, origin TEXT NOT NULL CHECK(origin IN ('local','imported')),
+ created TEXT NOT NULL, PRIMARY KEY(project_id, snapshot_id));
+CREATE TRIGGER IF NOT EXISTS role_snapshots_no_update BEFORE UPDATE ON role_snapshots
+ BEGIN SELECT RAISE(ABORT, 'Role snapshots are immutable'); END;
+CREATE TRIGGER IF NOT EXISTS role_snapshots_no_delete BEFORE DELETE ON role_snapshots
+ BEGIN SELECT RAISE(ABORT, 'Role snapshots are immutable'); END;
+-- Confirmations (and revocations) of a snapshot, appended as they happen. The newest one wins;
+-- a snapshot with none is trusted only if it was created on this device.
+CREATE TABLE IF NOT EXISTS role_snapshot_trust_events (
+ seq INTEGER PRIMARY KEY AUTOINCREMENT, project_id TEXT NOT NULL, snapshot_id TEXT NOT NULL,
+ action TEXT NOT NULL CHECK(action IN ('trust','revoke')),
+ actor TEXT NOT NULL, note TEXT NOT NULL, created TEXT NOT NULL);
+CREATE TRIGGER IF NOT EXISTS role_snapshot_trust_events_no_update
+ BEFORE UPDATE ON role_snapshot_trust_events
+ BEGIN SELECT RAISE(ABORT, 'Role trust history is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS role_snapshot_trust_events_no_delete
+ BEFORE DELETE ON role_snapshot_trust_events
+ BEGIN SELECT RAISE(ABORT, 'Role trust history is immutable'); END;
+CREATE VIEW IF NOT EXISTS role_snapshot_status AS
+ SELECT s.project_id, s.snapshot_id, s.origin,
+  COALESCE(
+   (SELECT t.action FROM role_snapshot_trust_events t
+     WHERE t.project_id=s.project_id AND t.snapshot_id=s.snapshot_id
+     ORDER BY t.seq DESC LIMIT 1),
+   CASE s.origin WHEN 'local' THEN 'trust' ELSE 'none' END) = 'trust' AS trusted
+ FROM role_snapshots s;
+-- Which role definition runs at which step of a task, pinned when the task starts a work
+-- round (in the same transaction that pins its workflow). Append-only: a new round adds a pin.
+CREATE TABLE IF NOT EXISTS task_roster_pins (
+ id TEXT PRIMARY KEY, project_id TEXT NOT NULL, task_id TEXT NOT NULL, seq INTEGER NOT NULL,
+ flow_id TEXT NOT NULL, roster TEXT NOT NULL, roster_hash TEXT NOT NULL, created TEXT NOT NULL,
+ UNIQUE(project_id, task_id, seq));
+CREATE TRIGGER IF NOT EXISTS task_roster_pins_no_update BEFORE UPDATE ON task_roster_pins
+ BEGIN SELECT RAISE(ABORT, 'Roster pins are immutable'); END;
+CREATE TRIGGER IF NOT EXISTS task_roster_pins_no_delete BEFORE DELETE ON task_roster_pins
+ BEGIN SELECT RAISE(ABORT, 'Roster pins are immutable'); END;
+-- Which roster a plan approval was given for. A separate append-only table, because the
+-- approvals table is written with positional INSERTs and is updated as approvals change state.
+CREATE TABLE IF NOT EXISTS approval_rosters (
+ project_id TEXT NOT NULL, approval_id TEXT NOT NULL, pin_id TEXT NOT NULL,
+ roster_hash TEXT NOT NULL, created TEXT NOT NULL, PRIMARY KEY(project_id, approval_id));
+CREATE TRIGGER IF NOT EXISTS approval_rosters_no_update BEFORE UPDATE ON approval_rosters
+ BEGIN SELECT RAISE(ABORT, 'Approval roster bindings are immutable'); END;
+CREATE TRIGGER IF NOT EXISTS approval_rosters_no_delete BEFORE DELETE ON approval_rosters
+ BEGIN SELECT RAISE(ABORT, 'Approval roster bindings are immutable'); END;
+-- Every time a pinned role snapshot was checked against the current fixed contract and found
+-- different: what changed, whether the dispatch was allowed, and who accepted a blocking change.
+-- 'blocked' = incompatible and not accepted; 'accepted' = a person accepted that exact change for
+-- this task; 'compatible' = same major versions, run with the current wording.
+CREATE TABLE IF NOT EXISTS contract_drift_log (
+ seq INTEGER PRIMARY KEY AUTOINCREMENT, project_id TEXT NOT NULL, task_id TEXT NOT NULL,
+ step_id TEXT, snapshot_id TEXT NOT NULL, pinned_contract_hash TEXT NOT NULL,
+ current_contract_hash TEXT NOT NULL,
+ decision TEXT NOT NULL CHECK(decision IN ('compatible','blocked','accepted')),
+ changes TEXT NOT NULL, actor TEXT, created TEXT NOT NULL);
+CREATE TRIGGER IF NOT EXISTS contract_drift_log_no_update BEFORE UPDATE ON contract_drift_log
+ BEGIN SELECT RAISE(ABORT, 'Contract drift history is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS contract_drift_log_no_delete BEFORE DELETE ON contract_drift_log
+ BEGIN SELECT RAISE(ABORT, 'Contract drift history is immutable'); END;
+-- The complete text handed to a provider for one real execution. A preview is never stored.
+CREATE TABLE IF NOT EXISTS execution_prompts (
+ execution_id TEXT PRIMARY KEY, project_id TEXT NOT NULL, provider TEXT NOT NULL,
+ via TEXT NOT NULL CHECK(via IN ('adapter_stdin','chatgpt_handoff')),
+ prompt_sha256 TEXT NOT NULL, prompt_text TEXT NOT NULL, redacted INTEGER NOT NULL DEFAULT 0,
+ segments TEXT NOT NULL, created TEXT NOT NULL);
+CREATE TRIGGER IF NOT EXISTS execution_prompts_no_update BEFORE UPDATE ON execution_prompts
+ BEGIN SELECT RAISE(ABORT, 'Execution prompts are immutable'); END;
+CREATE TRIGGER IF NOT EXISTS execution_prompts_no_delete BEFORE DELETE ON execution_prompts
+ BEGIN SELECT RAISE(ABORT, 'Execution prompts are immutable'); END;
+"""
+
+# Immutable-history triggers that project removal / history clearing must drop while they
+# delete (and restore afterwards), as they already do for the older history tables.
+ROLE_NO_DELETE_TRIGGERS = (
+    "custom_roles_no_delete", "custom_role_versions_no_delete", "custom_role_events_no_delete",
+    "role_snapshots_no_delete", "role_snapshot_trust_events_no_delete",
+    "task_roster_pins_no_delete", "execution_prompts_no_delete", "approval_rosters_no_delete",
+    "contract_drift_log_no_delete",
+)
+# Removing a project removes its roles; clearing task history only removes what belongs to tasks.
+ROLE_PROJECT_TABLES = (
+    "execution_prompts", "approval_rosters", "contract_drift_log", "task_roster_pins",
+    "role_snapshot_trust_events", "role_snapshots",
+    "custom_role_events", "custom_role_versions", "custom_roles",
+)
+ROLE_TASK_TABLES = (
+    "execution_prompts", "approval_rosters", "contract_drift_log", "task_roster_pins",
+)
+ROLE_TASK_NO_DELETE_TRIGGERS = (
+    "execution_prompts_no_delete", "approval_rosters_no_delete", "contract_drift_log_no_delete",
+    "task_roster_pins_no_delete",
+)
+
+# Columns added to existing tables. All are nullable: NULL means "a built-in role, no step
+# identity", which is exactly what every row written before they existed is.
+ADDED_COLUMNS = {
+    "agent_executions": ("role_ref", "role_snapshot", "step_id"),
+    "pending_dispatch": ("role_ref", "role_snapshot", "step_id"),
+    "flow_gate_results": ("role_ref", "step_id"),
+    "flow_escalations": ("role_ref", "step_id"),
+    "evaluations": ("role_ref", "role_snapshot", "step_id"),
+    "reputation_events": ("role_ref", "role_snapshot", "step_id"),
+    "meeting_clarifications": (
+        "asker_role_ref", "asker_step_id", "responder_role_ref", "responder_step_id",
+    ),
+}
+
+# Objects that refer to the added columns, so they can only be created once the columns exist.
+# A custom execution must name its role and its step and may only use a snapshot of that very
+# role that is trusted. The database enforces it on every insert, so no code path (console,
+# MCP tool, CLI, worker or a resumed dispatch) can start an untrusted or anonymous role.
+_IDENTITY_CHECKS = """
+ SELECT CASE WHEN NEW.role_snapshot IS NOT NULL
+   AND (NEW.role_ref IS NULL OR NEW.step_id IS NULL)
+  THEN RAISE(ABORT, 'A custom role execution needs role_ref and step_id') END;
+ SELECT CASE WHEN NEW.role_snapshot IS NOT NULL AND NOT EXISTS (
+   SELECT 1 FROM role_snapshot_status v WHERE v.project_id=NEW.project_id
+    AND v.snapshot_id=NEW.role_snapshot AND v.trusted)
+  THEN RAISE(ABORT, 'Role snapshot is not trusted on this device') END;
+ SELECT CASE WHEN NEW.role_snapshot IS NOT NULL AND NOT EXISTS (
+   SELECT 1 FROM role_snapshots s WHERE s.project_id=NEW.project_id
+    AND s.snapshot_id=NEW.role_snapshot AND s.role_ref=NEW.role_ref AND s.base_role=NEW.role)
+  THEN RAISE(ABORT, 'Role snapshot does not belong to this role') END;
+"""
+# Also used by a project import, which drops this one trigger for the length of its own
+# transaction (finished runs are history, not dispatches) and recreates it from this text.
+AGENT_EXECUTION_IDENTITY_TRIGGER = (
+    "CREATE TRIGGER IF NOT EXISTS agent_executions_role_identity BEFORE INSERT ON "
+    f"agent_executions BEGIN {_IDENTITY_CHECKS} END"
+)
+COLUMN_SCHEMA = f"""
+{AGENT_EXECUTION_IDENTITY_TRIGGER};
+CREATE TRIGGER IF NOT EXISTS agent_executions_role_identity_fixed
+ BEFORE UPDATE OF role_ref, role_snapshot, step_id ON agent_executions
+ WHEN OLD.role_ref IS NOT NEW.role_ref OR OLD.role_snapshot IS NOT NEW.role_snapshot
+  OR OLD.step_id IS NOT NEW.step_id
+ BEGIN SELECT RAISE(ABORT, 'An execution''s role identity cannot change'); END;
+CREATE TRIGGER IF NOT EXISTS pending_dispatch_role_identity BEFORE INSERT ON pending_dispatch
+ BEGIN {_IDENTITY_CHECKS} END;
+CREATE TRIGGER IF NOT EXISTS pending_dispatch_role_identity_update
+ BEFORE UPDATE OF role_ref, role_snapshot, step_id ON pending_dispatch
+ BEGIN {_IDENTITY_CHECKS} END;
+-- A pending dispatch that moves to another role must say who that is; it can never keep the
+-- identity of the role it replaces.
+CREATE TRIGGER IF NOT EXISTS pending_dispatch_role_moved BEFORE UPDATE OF role ON pending_dispatch
+ WHEN NEW.role IS NOT OLD.role AND OLD.role_ref IS NOT NULL AND NEW.role_ref IS OLD.role_ref
+ BEGIN SELECT RAISE(ABORT, 'A pending dispatch changed role without changing its role identity');
+ END;
+CREATE INDEX IF NOT EXISTS idx_agent_executions_role_ref
+ ON agent_executions(project_id, role_ref, step_id);
+CREATE INDEX IF NOT EXISTS idx_evaluations_role_ref ON evaluations(project_id, role_ref);
+CREATE INDEX IF NOT EXISTS idx_reputation_events_role_ref ON reputation_events(role_ref);
 """
 
 
@@ -263,6 +461,12 @@ class Store:
             control_columns = {row[1] for row in conn.execute("PRAGMA table_info(task_controls)")}
             if "host_test_running" not in control_columns:
                 conn.execute("ALTER TABLE task_controls ADD COLUMN host_test_running INTEGER NOT NULL DEFAULT 0")
+            for table, names in ADDED_COLUMNS.items():
+                present = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+                for name in names:
+                    if name not in present:
+                        conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} TEXT")
+            conn.executescript(COLUMN_SCHEMA)
 
     @contextmanager
     def connect(self):

@@ -30,16 +30,22 @@ def outcome_for(task_status):
     return None
 
 
-def record_outcome(store, *, project_id, task_id, role, agent, model, task_type, execution_id, outcome):
+def record_outcome(
+    store, *, project_id, task_id, role, agent, model, task_type, execution_id, outcome,
+    identity=(None, None, None),
+):
+    """`identity` is (role_ref, role_snapshot, step_id): who a custom role's outcome belongs to.
+    Reliability keeps counting by base role, as before; the identity is stored so it can be
+    counted separately later."""
     if outcome not in OUTCOMES:
         raise ValueError(f"Invalid reputation outcome: {outcome!r}")
     store.execute(
         "INSERT OR IGNORE INTO reputation_events"
-        "(id,project_id,task_id,role,agent,model,task_type,source_execution_id,outcome,created) "
-        "VALUES(?,?,?,?,?,?,?,?,?,?)",
+        "(id,project_id,task_id,role,agent,model,task_type,source_execution_id,outcome,created,"
+        "role_ref,role_snapshot,step_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (
             "REP-" + uuid.uuid4().hex[:16], project_id, task_id, role, agent, model,
-            task_type, execution_id, outcome, now(),
+            task_type, execution_id, outcome, now(), *identity,
         ),
     )
 

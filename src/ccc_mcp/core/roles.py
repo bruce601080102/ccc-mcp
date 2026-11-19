@@ -126,14 +126,18 @@ def role_stats(role):
     return dict(zip(STAT_AXES, values)) if values else None
 
 
-def team_stats(roles):
+def team_stats(roles, extra=None):
     """The combined ability chart of a workflow's roles (each role counts once, however many
     steps it has). The strongest member sets an ability; every other member who is strong at
-    it adds STAT_BACKUP_BONUS, up to STAT_MAX. `gaps` are abilities nobody is good at."""
-    distinct = [role for role in dict.fromkeys(roles) if role in ROLE_STATS]
+    it adds STAT_BACKUP_BONUS, up to STAT_MAX. `gaps` are abilities nobody is good at.
+
+    `extra` adds members that are not built-in roles, as {name: six scores}: a custom role's
+    declared abilities."""
+    table = {**ROLE_STATS, **{key: tuple(value) for key, value in (extra or {}).items()}}
+    distinct = [role for role in dict.fromkeys(roles) if role in table]
     team = {}
     for index, axis in enumerate(STAT_AXES):
-        scores = sorted((ROLE_STATS[role][index] for role in distinct), reverse=True)
+        scores = sorted((table[role][index] for role in distinct), reverse=True)
         best = scores[0] if scores else 0
         backups = sum(1 for score in scores[1:] if score >= STAT_STRONG)
         team[axis] = min(STAT_MAX, round(best + STAT_BACKUP_BONUS * backups, 1))
@@ -143,7 +147,9 @@ def team_stats(roles):
         "team": team,
         "power": round(sum(team.values()), 1),
         "gaps": [axis for axis in STAT_AXES if team[axis] <= STAT_GAP],
-        "roles": {role: role_stats(role) for role in distinct},
+        "roles": {
+            role: dict(zip(STAT_AXES, table[role], strict=True)) for role in distinct
+        },
     }
 
 

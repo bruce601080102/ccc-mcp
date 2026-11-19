@@ -108,7 +108,7 @@ class CodexAdapter(BaseAgentAdapter):
                 argv[4:4] = ["--model", options["model"]]
             if options.get("effort"):
                 argv[4:4] = ["-c", "model_reasoning_effort=" + options["effort"]]
-            prompt = self.prompt(package, instruction) + self.EXTRA_INSTRUCTION
+            prompt = self.sent(self.prompt(package, instruction) + self.EXTRA_INSTRUCTION)
             stdout, stderr = run_process(argv, cwd, prompt, timeout, cancelled)
             record_output("codex", stdout, stderr)
             if not output.is_file():

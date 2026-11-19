@@ -6,6 +6,7 @@ import portalocker
 
 from .adapters.agents import ADAPTERS, FakeAgentAdapter
 from .adapters.git import git, tracked_snapshot, working_snapshot, worktree
+from .core.role_prompt import describe_sent
 from .core.roles import REVIEWER_ROLES, writes_files
 from .infra.errors import AgentCancelled, AgentTimeout, BridgeError
 from .infra.security import canonical, comment_check, redact, reject_secrets, same_text_content
@@ -127,6 +128,18 @@ def run_execution(bridge, execution_id):
                 adapter = ADAPTERS[row["agent"]]()
             else:
                 raise BridgeError(f"No adapter registered for provider: {row['agent']}")
+            if row["role_ref"] and row["adapter"] != "fake":
+                # A custom role's execution keeps the complete text its provider was given,
+                # recorded at the moment it is handed over (not rebuilt afterwards).
+                def keep(text, _row=row, _package=package):
+                    with bridge.store.transaction() as conn:
+                        bridge.record_execution_prompt(
+                            conn, _row["project_id"], _row["id"], _row["agent"], "adapter_stdin",
+                            text,
+                            describe_sent(_row["agent"], _package, _row["instruction"], text),
+                        )
+
+                adapter.on_prompt = keep
             with audit_scope(audit):
                 report = adapter.run(
                     package, row["instruction"], cwd, options["timeout"], cancelled
@@ -248,6 +261,13 @@ def run_execution(bridge, execution_id):
                             row["instruction"],
                             "real",
                             fallback_from=execution_id,
+                            role_ref=row["role_ref"],
+                            role_snapshot=row["role_snapshot"],
+                            step_id=row["step_id"],
+                            flow_step=(
+                                json.loads(row["options"]).get("flow_step")
+                                if row["role_ref"] else None
+                            ),
                         )
                         fallback_info = {
                             "attempted": True,

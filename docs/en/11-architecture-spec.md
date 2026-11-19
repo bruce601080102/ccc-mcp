@@ -20,5 +20,9 @@ ccc-mcp is a local orchestration layer, not a replacement coding model. Its cent
 4. Fallback is specific to classified quota exhaustion and runs at most once per original execution.
 5. Project authorization is explicit, scoped, and does not extend to arbitrary filesystem access.
 6. An existing read-only project is never upgraded to read-write as a side effect of another action (viewing it, registering a sibling project, a background sync); enabling write is always its own explicit, disclosed step, in every interface.
+7. A custom role can never gain a permission from its own instructions: access, sandbox, gate verdicts and approval come from the base role's code, and a task keeps the role snapshot it was pinned to.
+8. A file never carries its own trust. Roles and snapshots in an imported bundle arrive unconfirmed whatever the file says, and only a person at the local console can confirm them; the database refuses to start an execution on an untrusted snapshot.
+
+Agent Studio's user-facing contract is in [14. Agent Studio](14-agent-studio.md); the Chinese record linked below predates it.
 
 The implementation-oriented Chinese design record remains in [中文架構規格](../ch/11-architecture-spec.md). When changing behavior, update this concise architecture contract and the public schemas together.

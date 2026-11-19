@@ -110,7 +110,7 @@ class ClaudeCodeAdapter(BaseAgentAdapter):
         )
         try:
             stdout, stderr = run_process(
-                argv, cwd, self.prompt(package, instruction), timeout, cancelled, *extra
+                argv, cwd, self.sent(self.prompt(package, instruction)), timeout, cancelled, *extra
             )
             record_output("claude", stdout, stderr)
         except AgentProcessError as exc:

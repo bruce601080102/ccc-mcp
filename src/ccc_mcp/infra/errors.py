@@ -10,6 +10,10 @@ class PermissionDenied(BridgeError):
     pass
 
 
+class ContractDriftBlocked(PermissionDenied):
+    """A pinned role was frozen under a fixed contract that has since changed incompatibly."""
+
+
 class AgentCancelled(BridgeError):
     pass
 

@@ -56,13 +56,14 @@ def evaluate_execution(bridge, project_id, task_id, execution_id, *, task_type="
         conn.execute(
             "INSERT INTO evaluations(id,project_id,task_id,role,agent,model,task_type,"
             "source_execution_id,version,trigger,quality_score,evidence_coverage,task_status,"
-            "scoring_details,evidence,disagreements,schema_version,created) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "scoring_details,evidence,disagreements,schema_version,created,role_ref,"
+            "role_snapshot,step_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 evaluation_id, project_id, task_id, role, agent, model, task_type, execution_id,
                 version, trigger, scored["quality_score"], scored["evidence_coverage"],
                 scored["task_status"], canonical(scoring_details), canonical(bundle["evidence"]),
                 canonical(detected["disagreements"]), SCHEMA_VERSION, created,
+                row["role_ref"], row["role_snapshot"], row["step_id"],
             ),
         )
         outcome = reputation.outcome_for(scored["task_status"])
@@ -73,6 +74,7 @@ def evaluate_execution(bridge, project_id, task_id, execution_id, *, task_type="
             reputation.record_outcome(
                 conn, project_id=project_id, task_id=task_id, role=role, agent=agent,
                 model=model, task_type=task_type, execution_id=execution_id, outcome=outcome,
+                identity=(row["role_ref"], row["role_snapshot"], row["step_id"]),
             )
 
     low_sample_threshold = _settings(bridge, project_id).get(
@@ -98,6 +100,9 @@ def evaluate_execution(bridge, project_id, task_id, execution_id, *, task_type="
         "agent": agent,
         "model": model,
         "role": role,
+        "role_ref": row["role_ref"],
+        "role_snapshot": row["role_snapshot"],
+        "step_id": row["step_id"],
         "task_type": task_type,
         "quality_score": scored["quality_score"],
         "reliability_score": reliability_row["reliability_score"] if reliability_row else None,
@@ -114,14 +119,26 @@ def evaluate_execution(bridge, project_id, task_id, execution_id, *, task_type="
     }
 
 
-def evaluate_task(bridge, project_id, task_id, *, role=None, task_type="general", trigger="manual", force=False):
+def evaluate_task(
+    bridge, project_id, task_id, *, role=None, task_type="general", trigger="manual", force=False,
+    role_ref=None, step_id=None,
+):
     """No `role`: evaluate the latest SUCCEEDED execution of every role that has one.
     Skips a role whose latest execution was already evaluated at least once, unless
     `force` — the auto-evaluate hook relies on this to stay idempotent per execution
-    (brief's test #7 applies just as much to a whole-task re-run as to one execution)."""
+    (brief's test #7 applies just as much to a whole-task re-run as to one execution).
+
+    "Every role" means every *role as it appears in the workflow*: a custom role is told apart
+    by its id and step, so two custom roles on the same base, or one custom role at two steps,
+    each get their own latest execution evaluated. Built-in roles group by name as before."""
     executions = bridge.get_task_result(project_id, task_id)
     if role is not None:
-        candidates = [r for r in executions if r["role"] == role and r["status"] == "SUCCEEDED"]
+        candidates = [
+            r for r in executions
+            if r["role"] == role and r["status"] == "SUCCEEDED"
+            and (role_ref is None or r["role_ref"] == role_ref)
+            and (step_id is None or r["step_id"] == step_id)
+        ]
         if not candidates:
             raise BridgeError(f"No succeeded {role} execution on this task")
         targets = [candidates[-1]]
@@ -129,7 +146,7 @@ def evaluate_task(bridge, project_id, task_id, *, role=None, task_type="general"
         latest_by_role = {}
         for row in executions:
             if row["status"] == "SUCCEEDED":
-                latest_by_role[row["role"]] = row
+                latest_by_role[(row["role"], row["role_ref"], row["step_id"])] = row
         targets = list(latest_by_role.values())
     reports = []
     for row in targets:
@@ -157,6 +174,9 @@ def _decode(row):
         "agent": row["agent"],
         "model": row["model"],
         "role": row["role"],
+        "role_ref": row["role_ref"],
+        "role_snapshot": row["role_snapshot"],
+        "step_id": row["step_id"],
         "task_type": row["task_type"],
         "quality_score": row["quality_score"],
         "evidence_coverage": row["evidence_coverage"],
@@ -168,11 +188,14 @@ def _decode(row):
     }
 
 
-def get_evaluations(bridge, project_id, task_id, *, role=None):
+def get_evaluations(bridge, project_id, task_id, *, role=None, role_ref=None):
     clauses, args = ["project_id=?", "task_id=?"], [project_id, task_id]
     if role is not None:
         clauses.append("role=?")
         args.append(role)
+    if role_ref is not None:
+        clauses.append("role_ref=?")
+        args.append(role_ref)
     rows = bridge.store.all(
         f"SELECT * FROM evaluations WHERE {' AND '.join(clauses)} ORDER BY created, version", args
     )

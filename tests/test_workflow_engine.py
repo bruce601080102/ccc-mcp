@@ -832,3 +832,73 @@ def test_everyday_roles_can_be_put_in_your_own_workflow(bridge):
     assert [s["role"] for s in saved["steps"]] == ["PA", "WR", "ED"]
     with pytest.raises(BridgeError):
         bridge.save_workflow("demo", ["VC", "WR"])  # a checker needs something to check first
+
+
+# -- a gate that is the last step: the PM's "proceed" must be able to finish the task ---------------
+
+
+def gate_last_flow(bridge, script, steps=("SA", "SD", "AR"), test_command=None):
+    bridge.configure_review_gate("demo", max_rounds=1)
+    saved = bridge.save_workflow("demo", list(steps), name="Gate last")
+    bridge.configure_workflow("demo", saved["id"])
+    task_id = start(bridge, script, workflow=saved["id"])
+    if test_command:
+        bridge.configure_test_command("demo", test_command)
+    return task_id
+
+
+def test_proceeding_from_an_escalated_last_gate_completes_the_task(full_flow):
+    bridge = full_flow
+    task_id = gate_last_flow(bridge, "AR:revision")
+    drive(bridge, task_id, "AR:revision")
+    assert bridge.pending_flow_decision("demo", task_id)["role"] == "AR"
+    assert bridge.task("demo", task_id)["state"] == "AWAITING_PM_DECISION"
+
+    result = bridge.resolve_flow_gate("demo", task_id, "proceed", "Accepted the risk")
+
+    assert result["workflow_completed"] is True
+    assert bridge.task("demo", task_id)["state"] == "COMPLETED"
+    assert bridge.pending_flow_decision("demo", task_id) is None
+    states = [e["new_state"] for e in bridge.store.all(
+        "SELECT new_state FROM task_events WHERE project_id='demo' AND task_id=? ORDER BY seq",
+        (task_id,))]
+    assert states[-2:] == ["AWAITING_PM_REVIEW", "COMPLETED"]       # an ordinary, recorded path
+
+
+def test_proceed_cannot_override_failing_host_tests_on_the_last_gate(full_flow):
+    bridge = full_flow
+    task_id = gate_last_flow(
+        bridge, "AR:revision", steps=("SA", "SD/RD", "AR"),
+        test_command=[sys.executable, "-c", "import sys; sys.exit(1)"])
+    drive(bridge, task_id, "AR:revision")
+    first = bridge.pending_flow_decision("demo", task_id)
+
+    result = bridge.resolve_flow_gate("demo", task_id, "proceed", "Ship it")
+
+    # host evidence still outranks the PM's click: the task is not completed and a new
+    # decision is waiting
+    assert result.get("escalated") is True
+    assert bridge.task("demo", task_id)["state"] == "AWAITING_PM_DECISION"
+    again = bridge.pending_flow_decision("demo", task_id)
+    assert again is not None and again["escalation_id"] != first["escalation_id"]
+    assert "Host test evidence" in again["reason"]
+
+
+def test_retry_from_an_escalated_last_gate_goes_back_and_can_then_finish(full_flow):
+    bridge = full_flow
+    task_id = gate_last_flow(bridge, "AR:revision,success")
+    drive(bridge, task_id, "AR:revision,success")
+    assert bridge.task("demo", task_id)["state"] == "AWAITING_PM_DECISION"
+
+    retried = bridge.resolve_flow_gate("demo", task_id, "retry", "Try again")
+    assert retried["bounced_to"] == 1
+    drive(bridge, task_id, "AR:revision,success")
+    assert bridge.task("demo", task_id)["state"] == "COMPLETED"
+
+
+def test_stopping_at_an_escalated_last_gate_cancels_the_task(full_flow):
+    bridge = full_flow
+    task_id = gate_last_flow(bridge, "AR:revision")
+    drive(bridge, task_id, "AR:revision")
+    stopped = bridge.resolve_flow_gate("demo", task_id, "stop", "No")
+    assert stopped["state"] == "CANCELLED" and bridge.task("demo", task_id)["state"] == "CANCELLED"

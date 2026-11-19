@@ -15,5 +15,6 @@
 11. [架構規格](11-architecture-spec.md)
 12. [ChatGPT-only 真人端對端驗收範例](12-chatgpt-only-e2e-walkthrough.md)
 13. [Meeting Mode 端對端走查](13-meeting-mode-walkthrough.md)
+14. [Agent Studio：建立你自己的角色](14-agent-studio.md)
 
 想快速判斷本專案是否適合你，先看[繁體中文 README](../../README_ZH.md)。英文版在 [docs/en](../en/README.md)。
