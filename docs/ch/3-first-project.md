@@ -86,4 +86,4 @@ ccc-mcp --project hello-demo-chatgpt context show
 
 ## Web 控制台
 
-比起終端機更想用瀏覽器完成以上步驟？`ccc-mcp ui` 會啟動本機 Web 控制台，可以加入既有資料夾或建立新專案，同樣只需要一個明確的「啟用寫入」步驟（完整揭露後再輸入確認文字），取代 CLI 的 `--write` 旗標——啟動方式見 [README](../../README.md#web-控制台)，信任模型細節見 [7-reliability-and-security.md](7-reliability-and-security.md#web-控制台)。
+比起終端機更想用瀏覽器完成以上步驟？`ccc-mcp ui` 會啟動本機 Web 控制台，可以加入既有資料夾或建立新專案，同樣只需要一個明確的「啟用寫入」步驟（完整揭露後再輸入確認文字），取代 CLI 的 `--write` 旗標——啟動方式見 [README](../../README_ZH.md#web-控制台)，信任模型細節見 [7-reliability-and-security.md](7-reliability-and-security.md#web-控制台)。

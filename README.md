@@ -13,7 +13,7 @@
 
 ccc-mcp is a local MCP server, CLI and web console. It connects ChatGPT, and optionally Codex and Claude Code, to your project as a team of role-based specialists: analyst, designer, reviewers, developer. Requirements, approved plans, shared Context, Git changes and host test results are stored as a work state you can trace, and a task is judged by evidence the host collected, not by an agent saying it is done.
 
-**For example,** you type *"Build a member management system."* A workflow of analyst, designer and reviewers can turn that into login methods, roles and permissions, a data model, error cases, acceptance criteria and open questions before any code is written ([walk-through](#an-ai-team-that-sharpens-the-requirement)). That walk-through is an illustration, not a recorded run, and the result is not guaranteed to be complete.
+**For example,** you type *"Build a member management system."* A workflow of analyst, designer and reviewers can turn that into login methods, roles and permissions, a data model, error cases, acceptance criteria and open questions before any code is written ([walk-through](#an-ai-team-that-sharpens-the-requirement)). That walk-through is an illustration, not a recorded run, and the result is not guaranteed to be complete. A [real recorded run](#a-recorded-run) of the same kind, on a small demo project, is further down.
 
 **Three things that set it apart:**
 
@@ -96,17 +96,18 @@ A chat summary is whatever one model remembers. ccc-mcp keeps the work state as 
 | --- | --- |
 | **Project** | A registered folder. Readable documents live under `.ccc-mcp/` in it (the shared `CONTEXT.md`, `context/`, and per-task reports); the database lives in ccc-mcp's home directory. |
 | **Task** | `TASK-0001` and so on: the requirement, the acceptance criteria, a state, and the reason it is waiting, such as `AGENT_RUNNING`, `USER_APPROVAL`, `PM_FLOW_DECISION`, `CHATGPT_HANDOFF_PENDING` or `PAUSED`. |
-| **Approved Plan** | Each plan has an ID, a version and a SHA-256 hash of its text. An approval records who approved which version and hash, and which Context version it was approved against. It applies only to that exact plan, so a newer plan needs a new approval. In a project with write access, the project authorization stands in for per-plan approval; otherwise a local operator confirms the exact hash. |
+| **Approved Plan** | Each plan has an ID, a version and a SHA-256 hash of its text. An approval records who approved which version and hash, and which Context version it was approved against. It applies only to that exact plan, so a newer plan needs a new approval. There are two paths. With read-write project authorization (`--write`), a plan is approved automatically and the record names that authorization, not a person, so treat enabling it as approving the plans that follow. Without it, a local operator confirms the exact hash. |
 | **Shared Context** | Versioned snapshots with a history. A change arrives as a Context Patch that names the version it was based on and cites where it came from. |
 | **Agent results** | The raw report of every execution is kept unmodified as the audit trail. |
 
 **How conflicts and bad updates are handled**
 
-- A patch or plan based on an older Context version is rejected with a version conflict.
+- A Context Patch, a plan, an approval or a dispatch built on an older Context version is rejected with a version conflict. This protects ccc-mcp's own records. It does not lock your files or merge edits made outside ccc-mcp; Git still does that.
 - Protected invariants cannot be removed or rewritten.
 - Architecture claims must cite a source document and its sha256, and the file must still match.
 - A patch built from an agent's result must cite that result's saved original report.
-- Secrets are rejected, and a PM must acknowledge a semantic change after reading its diff. ccc-mcp cannot prove two statements mean the same thing, so it records the acknowledgement and does not claim to check it.
+- Patches and plan text are checked against pattern rules for private-key blocks, `sk-` and `gh*_` tokens, bearer tokens and `api_key`, `token`, `password` or `secret` assignments, and a match is rejected. This is pattern matching: it can miss other credential formats and can flag harmless text, so it is a safety net, not permission to paste secrets.
+- A PM must acknowledge a semantic change after reading its diff. ccc-mcp cannot prove two statements mean the same thing, so it records the acknowledgement and does not claim to check it.
 
 **Three kinds of facts, never mixed.** Every line of a handoff is labeled as an *Agent self-report* (unverified), *Host evidence* (the host ran it), or a *live Git read* (`git status` and a diff taken just now).
 
@@ -165,6 +166,21 @@ Add `RD → CR → QA` after it and the same team goes on to build and check the
 
 **Make it yours.** Build a workflow of up to 12 steps from any roles (up to 20 per project), set who picks the workflow for a new task (fixed, the PM, or automatic by the task text), and give each role its own provider, model and effort. The specification writer is not in a built-in workflow yet; add it in **Settings → Workflow**. The everyday teams run on ChatGPT, so they can browse, and when ChatGPT plays a step the next one starts as soon as its report is handed in.
 
+### A recorded run
+
+A real run, recorded around 5 November 2026 on a small local demo project, `hello-demo`: one Python function that adds 1 to 1,500, and three tests. The request was one sentence, paraphrased here: *"If I turned this project into a service, how could I do it?"* The PM step turned it into a read-only brief with three acceptance criteria (no file changes, no deploy), and the project's chosen workflow ran **SA → SR → REVIEW → SD → REVIEW → SW**.
+
+| Step | What its saved report contains |
+| --- | --- |
+| **SA** | Compared a CLI, a REST API, a web UI, a scheduled job and a full SaaS, and recommended a database-free FastAPI MVP with `GET /health` and `GET /sum/fixed`. |
+| **SR** | Five findings marked major, each with evidence taken from `hello.py` or `test_hello.py`: the function is fixed to 1..1500 although it is named `sum_1_to_100`, so it cannot back a `?start&end` API; importing `hello.py` prints "Hello World" as a side effect; fixed and dynamic endpoints need separate contracts; public input needs type and range checks; and a one-line function may not justify a service at all. |
+| **REVIEW** (first) | Passed the direction and told SD to deal with the import side effect, the fixed-versus-dynamic contract, input validation, security and tests. |
+| **SD** | Answered each point: version 1 is only `/health` and `/sum/fixed`; a dynamic `/sum?start&end` becomes a separate `sum_range` function with 422 validation; the `print` moves under a `__main__` guard once someone authorizes code changes. |
+| **REVIEW** (final) | Checked that SD had answered SR's findings and passed the plan as a design only. |
+| **SW** | Wrote `SPEC.md`: numbered requirements `REQ-001` to `REQ-018` (MUST, SHOULD, MAY), a decision table, acceptance conditions, and **12 open questions left open**, for example that the 1,000,000 upper bound was only proposed and never approved. |
+
+**How to read this run.** It is an analysis-only task, so no review step asked for a revision and no gate sent work back; it shows the hand-over from role to role, not a rejection loop. Five of the six steps ran in one ChatGPT conversation and SW ran through the Codex CLI, so these are separate role reports, not independent models' opinions. No code was written and no test was run, and the specification describes a design, not a working API. The raw records sit in a local demo project that is not published in this repository, the original reports are in Chinese, and the table above is a paraphrase of them.
+
 ## The meeting room
 
 The task page opens as a conversation, not a log file.
@@ -176,17 +192,21 @@ The task page opens as a conversation, not a log file.
 
 ## An explainable quality score
 
-Three different things appear in ccc-mcp. Do not read one as another.
+Five different things appear in ccc-mcp. Do not read one as another.
 
 | | What it is | Where it comes from |
 | --- | --- | --- |
 | **A. Ability chart** | The abilities a role is *set up* to have: research, reasoning, planning, creation, verification, risk sense, each 0 to 5. | Declared in **Settings**. Not measured, and not part of any score. |
-| **B. Quality score** | A rule-based estimate of how good the evidence we have looks. | Computed from host tests, the diff, static analysis and review results. Released, opt-in. |
-| **C. Requirement checklist** | How many of your requirements are confirmed by recorded evidence. | Checked against the evidence on the Results page. **Preview.** |
+| **B. Quality score** | A weighted, rule-based estimate of how good the evidence we have looks. | Computed from host tests, the diff, static analysis and review results. Released, opt-in. |
+| **C. Evidence coverage** | How much of that estimate rests on evidence: the weight of the sub-scores that had evidence, out of the role's total weight. | Computed together with the score. Released, opt-in. |
+| **D. Task status** | `PASSED`, `FAILED`, `NEEDS_VERIFICATION` or `INSUFFICIENT_EVIDENCE`. | Decided by hard rules, separately from the score. Released, opt-in. |
+| **E. Requirement checklist** | How many of your requirements are confirmed by recorded evidence. | Checked against the evidence on the Results page. **Preview.** |
 
 The quality score is not an AI accuracy rate. It does not say the code is correct.
 
-**How the score is computed** (`config evaluation-engine on`; no extra model call):
+**How the score is computed.** The engine is off by default. Turn it on with `ccc-mcp config evaluation-engine on`, then run `task evaluate`, or add `--auto-evaluate` to score after each successful role run. It is plain arithmetic on saved evidence and makes no model call.
+
+Two numbers come out:
 
 - `quality_score` is the weighted average of only the sub-scores that have real evidence, using the role's weights, re-normalized over those. A sub-score with no evidence is *missing*, not zero and not perfect.
 - `evidence_coverage` is the total weight of the sub-scores that had evidence, divided by the role's total weight. It says how much of the judgment rested on evidence.
@@ -194,12 +214,14 @@ The quality score is not an AI accuracy rate. It does not say the code is correc
 | Sub-score | Weight (SD/RD) | How it is computed |
 | --- | --- | --- |
 | `test` | 0.40 | Pass rate of the host-run tests. Counted only if the round changed something; capped at 70 when the only passing tests were written by the agent itself. |
-| `requirement` | 0.25 | Share of acceptance items with at least one of their words found in the saved text. This is a text match, not proof. |
-| `code_quality` | 0.15 | 100 minus 10 for each `ruff` finding. |
-| `security` | 0.10 | 100 with no security findings, otherwise 100 minus 50 for each. |
+| `requirement` | 0.25 | Share of acceptance items with at least one of their words found anywhere in the agent's saved report. This is a keyword match. A hit does not mean the requirement is met. |
+| `code_quality` | 0.15 | 100 minus 10 for each `ruff` finding in the changed Python files. |
+| `security` | 0.10 | `ruff`'s bandit-style `S` rules on the changed Python files: 100 with no findings, otherwise 100 minus 50 for each. No findings means this one scanner found nothing, not that the code is secure. |
 | `review` | 0.10 | 100, or 40 if the reviewer asked for a revision. Missing if there was no review. |
 
-Weights differ by role (for example SA is scored 70% on `requirement` and 30% on `review`) and can be changed.
+`code_quality` and `security` are missing if `ruff` is not installed on the host or no Python file changed. Missing lowers evidence coverage and is never counted as a pass.
+
+**Rules differ by role.** The weights above are for SD, RD and SD/RD. SA is scored 70% on `requirement` and 30% on `review`, and its `review` is never filled. REVIEW has its own profile: `test` asks whether its "no revision needed" verdict held up against the host tests, `requirement` is the same keyword match on its findings, and `review` is the share of its findings that were verified. `code_quality` and `security` do not apply to REVIEW, so they are left out of its coverage rather than counted as missing. Weights can be changed per role.
 
 **A worked example,** computed with the real scoring code on made-up inputs, not from a recorded task. An SD/RD round has green host tests, two `ruff` findings, and half of the acceptance wording matched:
 
@@ -210,11 +232,16 @@ Weights differ by role (for example SA is scored 70% on `requirement` and 30% on
 
 A score can look healthy while coverage is low. The analyst is the clearest case: its `review` sub-score is never filled, so a perfect `requirement` score still gives a quality score of 100 with only 70% coverage. Read the two numbers together.
 
-**Status is decided separately.** `PASSED`, `FAILED`, `NEEDS_VERIFICATION` or `INSUFFICIENT_EVIDENCE` come from hard rules that a high score cannot override: a failing acceptance test is `FAILED`, no host test run or no change at all is `NEEDS_VERIFICATION`, and coverage below 60% is `INSUFFICIENT_EVIDENCE`.
+**Status is decided separately,** by hard rules that a high score cannot override.
 
-**Where you can see it.** The task page shows each evaluation with its score, coverage, status, the sub-scores and their weights, a version number and what triggered it. `task evaluations` lists the history and `task reevaluate` re-scores a task from the saved evidence. The released scorer covers the SA, SD, RD, SD/RD and CR roles.
+- **SD, RD and SD/RD.** If the host could not run the tests, `INSUFFICIENT_EVIDENCE`. A failing host test run, a failing newly added test or any security finding is `FAILED`. No host test run, no tests collected, or no change at all is `NEEDS_VERIFICATION`. Otherwise `PASSED`.
+- **SA.** `PASSED` when at least 80% of the acceptance items matched a word in its report, otherwise `NEEDS_VERIFICATION`. That is a keyword match only, so an SA `PASSED` does not mean the analysis is right.
+- **REVIEW.** `FAILED` when it said no revision was needed but the host tests failed or collected nothing.
+- **Thin evidence.** A result that would be `PASSED` becomes `INSUFFICIENT_EVIDENCE` when coverage is below 60%.
 
-**What it cannot do.** In a toy benchmark of 30 hand-written patches, host-visible tests caught broken work but could not tell wrong-but-green work from correct work (AUROC 0.67). `ccc-mcp validate-scoring` lets you test the score against ground truth on your own cases. See the [Technical reference](docs/en/10-technical-reference.md#evaluation-engine).
+**Where you can see it.** The task page shows each evaluation with its score, coverage, status, the sub-scores and their weights, a version number and what triggered it. `task evaluations` lists the history and `task reevaluate` re-scores a task from the saved evidence. The released scorer covers the SA, SD, RD, SD/RD and REVIEW roles; other roles are not scored.
+
+**What it cannot do.** The AUROC of 0.67 comes from a toy benchmark of 30 hand-written patches over six one-function tasks, not from real agents. In it, host-visible tests caught broken work but could not tell wrong-but-green work from correct work: all 12 wrong-but-green patches were scored `PASSED`, so half of the `PASSED` results were wrong. Read the number as a statement about these rules on that toy set, not as a measure of how often a real `PASSED` is right. `ccc-mcp validate-scoring` lets you test the score against ground truth on your own cases. See the [Technical reference](docs/en/10-technical-reference.md#evaluation-engine).
 
 ### The Results page (Preview)
 
@@ -318,13 +345,9 @@ This README covers two different states. Check which one you have before followi
 
 The vNext Preview is a local build of the next release. It is verified in one repository only, its version number is not decided, and nothing in it has been published.
 
-To try the development preview from source:
+**Installing from source does not give you the Preview.** `pip install -e .` from a clone of GitHub `main` gives you the same code as the 0.4.0 release. On 2026-11-19 the only differences between `main` and the `v0.4.0` tag were the README files and the version string, which still reads 0.3.1 in `main` because Release does not edit `main`. The Preview exists only in a local candidate build that is not pushed or published, so it cannot be installed from this repository yet.
 
-```bash
-git clone https://github.com/bruce601080102/ccc-mcp.git
-cd ccc-mcp
-pip install -e .
-```
+How this was checked: the published 0.4.0 wheel, the `v0.4.0` tag and `main` were compared, and the Preview names (`acceptance_contract`, `scorecard`, `evidence_verifier`) appear only in the candidate source.
 
 ## Proof: three selected SWE-bench Verified cases
 
