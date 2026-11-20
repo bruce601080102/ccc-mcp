@@ -1522,3 +1522,49 @@ tr.clickable:hover .btn.quiet, tr.clickable:focus-within .btn.quiet, .btn.danger
 .drift-steps { list-style: none; padding: 0; margin: 8px 0 0; display: flex; flex-direction: column; gap: 8px; }
 .chip.ok { background: var(--pill-positive-bg); color: var(--pill-positive-ink); }
 @media (max-width: 860px) { .studio-layout { grid-template-columns: 1fr; } .studio-list { position: static; } }
+
+/* Goals (Stage A) */
+.goal-new { display: grid; gap: 8px; max-width: 780px; margin: 0 0 24px; }
+.goal-new label, .goal-actions label { font-weight: 650; font-size: 13px; }
+.goal-new textarea, .goal-actions textarea { width: 100%; padding: 10px 12px; resize: vertical; border: 1px solid var(--control); border-radius: 9px; background: var(--raised); color: var(--text); line-height: 1.5; }
+.goal-new-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.goal-table tr[data-goal] { cursor: pointer; }
+.goal-thread { margin: 18px 0 24px; }
+.goal-avatar { font-size: 11px; font-weight: 700; letter-spacing: .02em; }
+.goal-plan { max-width: 850px; margin: 0 auto 24px; padding: 18px 20px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
+.goal-plan h2 small { margin-left: 8px; color: var(--muted); font-size: 12px; font-weight: 500; }
+.goal-plan h3 { margin: 16px 0 6px; font-size: 13px; }
+.goal-plan h4 { margin: 10px 0 4px; font-size: 12px; color: var(--muted); }
+.goal-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 0 24px; }
+.goal-phases { display: grid; gap: 12px; margin: 14px 0; padding: 0; list-style: none; counter-reset: phase; }
+.goal-phase { padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--raised); }
+.goal-phase-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.goal-criteria { display: grid; gap: 6px; margin: 4px 0 8px; padding-left: 18px; }
+.goal-verify { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 2px; font-size: 12px; }
+.goal-budget { margin-top: 14px; font-size: 12px; }
+.goal-actions { display: grid; gap: 10px; max-width: 850px; margin: 0 auto 20px; }
+.goal-buttons { display: flex; flex-wrap: wrap; gap: 10px; }
+.goal-buttons.end { justify-content: flex-end; }
+.goal-working { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 10px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--accent-bg); }
+.goal-ready { margin: 0; padding: 10px 14px; border: 1px solid var(--pill-positive-bg); border-radius: 10px; background: var(--pill-positive-bg); color: var(--pill-positive-ink); }
+.goal-versions, .goal-advanced { max-width: 850px; margin: 0 auto 12px; font-size: 12px; color: var(--muted); }
+.goal-advanced dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 8px 0 0; }
+.goal-advanced dd { margin: 0; overflow-wrap: anywhere; }
+/* Phase runs (Stage B): one phase told as a conversation, with the limits and the evidence under it. */
+.phase-run { margin-top: 18px; }
+.phase-run h2 small { margin-left: 8px; color: var(--muted); font-size: 12px; font-weight: 500; }
+.phase-thread { margin: 10px 0 14px; }
+.phase-code { margin: 6px 0 0; padding: 8px 10px; max-height: 240px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; border: 1px solid var(--border); border-radius: 8px; background: var(--raised); font-size: 12px; }
+.phase-quote { margin: 4px 0 0; padding: 4px 8px; border-left: 3px solid var(--border); color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.phase-causes { display: grid; gap: 6px; margin: 6px 0; padding-left: 18px; }
+.phase-budget { display: grid; gap: 6px; max-width: 520px; margin: 12px 0; }
+.phase-meter { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; font-size: 12px; }
+.phase-bar { grid-column: 1 / -1; height: 6px; border-radius: 3px; background: var(--raised); overflow: hidden; }
+.phase-bar > div { height: 100%; background: var(--accent); }
+.goal-phase-run { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.phase-evidence h4 { margin: 12px 0 4px; font-size: 12px; }
+@media (max-width: 640px) { .phase-run { padding: 14px; } .phase-meter { grid-template-columns: 1fr; } }
+.goalrun-headline { margin: 6px 0 12px; font-size: 15px; }
+.goalrun-verification { margin: 8px 0 14px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--raised); }
+.goalrun-start { margin-top: 18px; }
+.goalrun-phases .goal-phase { gap: 6px; }

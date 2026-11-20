@@ -1604,6 +1604,259 @@ async def connect_save(request: Request):
     return JSONResponse(profile)
 
 
+# Goals (Stage A): plan and approve only. Approval is the one act here that needs the operator's
+# typed phrase on top of the console's session token, exactly like authorizing a project.
+@endpoint
+async def goals_list(request: Request):
+    bridge = bridge_of(request)
+    return JSONResponse(await run(bridge.list_goals, request.path_params["project_id"]))
+
+
+@endpoint
+async def goal_create(request: Request):
+    bridge = bridge_of(request)
+    body = _only(await _body(request), "requirement", "title", "request_key")
+    return JSONResponse(await run(
+        bridge.create_goal, request.path_params["project_id"], body.get("requirement", ""),
+        body.get("title"), body.get("request_key"),
+    ))
+
+
+@endpoint
+async def goal_get(request: Request):
+    bridge = bridge_of(request)
+    return JSONResponse(await run(
+        bridge.get_goal, request.path_params["project_id"], request.path_params["goal_id"]
+    ))
+
+
+@endpoint
+async def goal_plan(request: Request):
+    bridge = bridge_of(request)
+    body = _only(await _body(request), "change_request", "base_version", "provider")
+    if body.get("provider") not in (None, "codex", "claude"):
+        raise BridgeError("provider must be codex or claude")
+    return JSONResponse(await run(
+        bridge.request_goal_plan, request.path_params["project_id"],
+        request.path_params["goal_id"], body.get("change_request"), body.get("base_version"),
+        body.get("provider"),
+    ))
+
+
+@endpoint
+async def goal_plan_cancel(request: Request):
+    bridge = bridge_of(request)
+    return JSONResponse(await run(
+        bridge.cancel_planning_run, request.path_params["project_id"],
+        request.path_params["goal_id"],
+    ))
+
+
+@endpoint
+async def goal_import(request: Request):
+    bridge = bridge_of(request)
+    body = _only(await _body(request), "plan", "base_version", "note")
+    return JSONResponse(await run(
+        bridge.import_goal_plan, request.path_params["project_id"],
+        request.path_params["goal_id"], body.get("plan"), body.get("base_version"),
+        body.get("note", ""),
+    ))
+
+
+@endpoint
+async def goal_approve(request: Request):
+    bridge = bridge_of(request)
+    body = _only(await _body(request), "version", "sha256", "confirm")
+    version = body.get("version")
+    if isinstance(version, bool) or not isinstance(version, int):
+        raise BridgeError("version must be a whole number")
+    return JSONResponse(await run(
+        bridge.approve_goal_web, request.path_params["project_id"],
+        request.path_params["goal_id"], version, body.get("sha256", ""), body.get("confirm", ""),
+    ))
+
+
+@endpoint
+async def goal_cancel(request: Request):
+    bridge = bridge_of(request)
+    body = _only(await _body(request), "reason")
+    return JSONResponse(await run(
+        bridge.cancel_goal, request.path_params["project_id"], request.path_params["goal_id"],
+        body.get("reason", ""),
+    ))
+
+
+# Phase runs (Stage B). Starting, pausing, resuming and cancelling go through the session token like
+# any change; accepting criteria no command can judge also needs the typed phrase. Nothing here can
+# raise a budget, choose a command, or override the host-test safety refusal (that is a CLI-only
+# operator flag), and no route starts the next phase.
+@endpoint
+async def phase_start(request: Request):
+    bridge = bridge_of(request)
+    body = _only(await _body(request), "pm_provider")
+    if body.get("pm_provider") not in (None, "codex", "claude"):
+        raise BridgeError("pm_provider must be codex or claude")
+    return JSONResponse(await run(
+        bridge.start_phase_run, request.path_params["project_id"], request.path_params["goal_id"],
+        request.path_params["phase_id"], adapter="real", pm_provider=body.get("pm_provider"),
+    ))
+
+
+@endpoint
+async def phase_run_get(request: Request):
+    bridge = bridge_of(request)
+    return JSONResponse(await run(
+        bridge.get_phase_run, request.path_params["project_id"], request.path_params["run_id"]
+    ))
+
+
+@endpoint
+async def phase_run_pause(request: Request):
+    bridge = bridge_of(request)
+    body = _only(await _body(request), "reason")
+    return JSONResponse(await run(
+        bridge.pause_phase_run, request.path_params["project_id"], request.path_params["run_id"],
+        body.get("reason", ""),
+    ))
+
+
+@endpoint
+async def phase_run_resume(request: Request):
+    bridge = bridge_of(request)
+    body = _only(await _body(request), "note", "acknowledge")
+    return JSONResponse(await run(
+        bridge.resume_phase_run, request.path_params["project_id"], request.path_params["run_id"],
+        body.get("note", ""), body.get("acknowledge"),
+    ))
+
+
+@endpoint
+async def phase_run_cancel(request: Request):
+    bridge = bridge_of(request)
+    body = _only(await _body(request), "reason")
+    return JSONResponse(await run(
+        bridge.cancel_phase_run, request.path_params["project_id"], request.path_params["run_id"],
+        body.get("reason", ""),
+    ))
+
+
+@endpoint
+async def phase_run_accept(request: Request):
+    bridge = bridge_of(request)
+    body = _only(await _body(request), "confirm")
+    return JSONResponse(await run(
+        bridge.accept_phase_web, request.path_params["project_id"], request.path_params["run_id"],
+        body.get("confirm", ""),
+    ))
+
+
+@endpoint
+async def phase_run_accept_preview(request: Request):
+    bridge = bridge_of(request)
+    return JSONResponse(await run(
+        bridge.accept_phase_description, request.path_params["project_id"],
+        request.path_params["run_id"],
+    ))
+
+
+@endpoint
+async def phase_runs_recover(request: Request):
+    bridge = bridge_of(request)
+    return JSONResponse(await run(bridge.recover_phase_runs, request.path_params["project_id"]))
+
+
+# Goal runs (Stage C): the whole approved goal, phase by phase. Same rules as the phase routes: every
+# change goes through the session token, accepting what no command can judge needs the typed phrase, and
+# nothing here can raise a budget, choose a command, approve a plan or override the host-test safety
+# refusal (a CLI-only operator flag). A revised plan is drafted here but approved only by a person at
+# the plan's own approval step.
+@endpoint
+async def goal_run_start(request: Request):
+    bridge = bridge_of(request)
+    body = _only(await _body(request), "pm_provider")
+    if body.get("pm_provider") not in (None, "codex", "claude"):
+        raise BridgeError("pm_provider must be codex or claude")
+    return JSONResponse(await run(
+        bridge.start_goal_run, request.path_params["project_id"], request.path_params["goal_id"],
+        adapter="real", pm_provider=body.get("pm_provider"),
+    ))
+
+
+@endpoint
+async def goal_run_get(request: Request):
+    bridge = bridge_of(request)
+    return JSONResponse(await run(
+        bridge.get_goal_run, request.path_params["project_id"], request.path_params["run_id"]
+    ))
+
+
+@endpoint
+async def goal_run_pause(request: Request):
+    bridge = bridge_of(request)
+    body = _only(await _body(request), "reason")
+    return JSONResponse(await run(
+        bridge.pause_goal_run, request.path_params["project_id"], request.path_params["run_id"],
+        body.get("reason", ""),
+    ))
+
+
+@endpoint
+async def goal_run_resume(request: Request):
+    bridge = bridge_of(request)
+    body = _only(await _body(request), "note", "acknowledge")
+    return JSONResponse(await run(
+        bridge.resume_goal_run, request.path_params["project_id"], request.path_params["run_id"],
+        body.get("note", ""), body.get("acknowledge"),
+    ))
+
+
+@endpoint
+async def goal_run_cancel(request: Request):
+    bridge = bridge_of(request)
+    body = _only(await _body(request), "reason")
+    return JSONResponse(await run(
+        bridge.cancel_goal_run, request.path_params["project_id"], request.path_params["run_id"],
+        body.get("reason", ""),
+    ))
+
+
+@endpoint
+async def goal_run_accept(request: Request):
+    bridge = bridge_of(request)
+    body = _only(await _body(request), "confirm")
+    return JSONResponse(await run(
+        bridge.accept_goal_web, request.path_params["project_id"], request.path_params["run_id"],
+        body.get("confirm", ""),
+    ))
+
+
+@endpoint
+async def goal_run_accept_preview(request: Request):
+    bridge = bridge_of(request)
+    return JSONResponse(await run(
+        bridge.accept_goal_description, request.path_params["project_id"],
+        request.path_params["run_id"],
+    ))
+
+
+@endpoint
+async def goal_run_revise(request: Request):
+    bridge = bridge_of(request)
+    body = _only(await _body(request), "change_request", "provider")
+    if body.get("provider") not in (None, "codex", "claude"):
+        raise BridgeError("provider must be codex or claude")
+    return JSONResponse(await run(
+        bridge.draft_goal_revision, request.path_params["project_id"], request.path_params["run_id"],
+        body.get("change_request"), provider=body.get("provider"),
+    ))
+
+
+@endpoint
+async def goal_runs_recover(request: Request):
+    bridge = bridge_of(request)
+    return JSONResponse(await run(bridge.recover_goal_runs, request.path_params["project_id"]))
+
+
 ROUTES = [
     Route("/api/session", session_info),
     Route("/api/docs/{language}/{slug}", documentation, methods=["GET"]),
@@ -1711,6 +1964,38 @@ ROUTES = [
         "/api/projects/{project_id}/tasks/{task_id}/gate-decision", task_gate_decision,
         methods=["POST"],
     ),
+    Route("/api/projects/{project_id}/goals", goals_list, methods=["GET"]),
+    Route("/api/projects/{project_id}/goals", goal_create, methods=["POST"]),
+    Route("/api/projects/{project_id}/goals/{goal_id}", goal_get, methods=["GET"]),
+    Route("/api/projects/{project_id}/goals/{goal_id}/plan", goal_plan, methods=["POST"]),
+    Route("/api/projects/{project_id}/goals/{goal_id}/plan/cancel", goal_plan_cancel,
+          methods=["POST"]),
+    Route("/api/projects/{project_id}/goals/{goal_id}/import", goal_import, methods=["POST"]),
+    Route("/api/projects/{project_id}/goals/{goal_id}/approve", goal_approve, methods=["POST"]),
+    Route("/api/projects/{project_id}/goals/{goal_id}/cancel", goal_cancel, methods=["POST"]),
+    Route("/api/projects/{project_id}/goals/{goal_id}/phases/{phase_id}/start", phase_start,
+          methods=["POST"]),
+    Route("/api/projects/{project_id}/goals/{goal_id}/run", goal_run_start, methods=["POST"]),
+    Route("/api/projects/{project_id}/goal-runs/recover", goal_runs_recover, methods=["POST"]),
+    Route("/api/projects/{project_id}/goal-runs/{run_id}", goal_run_get, methods=["GET"]),
+    Route("/api/projects/{project_id}/goal-runs/{run_id}/pause", goal_run_pause, methods=["POST"]),
+    Route("/api/projects/{project_id}/goal-runs/{run_id}/resume", goal_run_resume, methods=["POST"]),
+    Route("/api/projects/{project_id}/goal-runs/{run_id}/cancel", goal_run_cancel, methods=["POST"]),
+    Route("/api/projects/{project_id}/goal-runs/{run_id}/accept", goal_run_accept, methods=["POST"]),
+    Route("/api/projects/{project_id}/goal-runs/{run_id}/accept-preview", goal_run_accept_preview,
+          methods=["GET"]),
+    Route("/api/projects/{project_id}/goal-runs/{run_id}/revise", goal_run_revise, methods=["POST"]),
+    Route("/api/projects/{project_id}/phase-runs/recover", phase_runs_recover, methods=["POST"]),
+    Route("/api/projects/{project_id}/phase-runs/{run_id}", phase_run_get, methods=["GET"]),
+    Route("/api/projects/{project_id}/phase-runs/{run_id}/pause", phase_run_pause, methods=["POST"]),
+    Route("/api/projects/{project_id}/phase-runs/{run_id}/resume", phase_run_resume,
+          methods=["POST"]),
+    Route("/api/projects/{project_id}/phase-runs/{run_id}/cancel", phase_run_cancel,
+          methods=["POST"]),
+    Route("/api/projects/{project_id}/phase-runs/{run_id}/accept", phase_run_accept,
+          methods=["POST"]),
+    Route("/api/projects/{project_id}/phase-runs/{run_id}/accept-preview", phase_run_accept_preview,
+          methods=["GET"]),
     Route("/api/projects/{project_id}/roles", list_roles, methods=["GET"]),
     Route("/api/projects/{project_id}/roles", create_role, methods=["POST"]),
     Route("/api/projects/{project_id}/roles/preview", preview_role, methods=["POST"]),
@@ -1765,9 +2050,37 @@ async def _token_guard(request: Request, call_next):
     return response
 
 
-def create_app(home=None, token=None):
+GOAL_WATCHDOG_SECONDS = 20
+
+
+def _goal_watchdog(bridge, stop):
+    """While the console runs, wake any live goal run whose workers all died and that has been quiet
+    for a while. It only wakes; it never recovers dead workers or answers anything a person must. A
+    console that is not running does nothing, which is why `goal run-recover` exists."""
+    while not stop.wait(GOAL_WATCHDOG_SECONDS):
+        try:
+            bridge.wake_stalled_goal_runs()
+        except Exception:
+            continue
+
+
+def create_app(home=None, token=None, goal_watchdog=False):
     app = Starlette(routes=ROUTES)
     app.state.bridge = CCCMCP(home)
+    if goal_watchdog:
+        import threading
+
+        stop = threading.Event()
+        threading.Thread(
+            target=_goal_watchdog, args=(app.state.bridge, stop), daemon=True,
+            name="goal-run-watchdog").start()
+        # Once at start: a console that was closed while a goal ran picks it up again, the same way
+        # `goal run-recover` would, but only waking, never recovering dead workers by itself.
+        try:
+            app.state.bridge.wake_stalled_goal_runs()
+        except Exception:
+            pass
+        app.state.goal_watchdog_stop = stop
     app.state.ui_token = token or secrets.token_urlsafe(32)
     app.state.connection_manager = ConnectionManager()
     app.state.provider_login_managers = {

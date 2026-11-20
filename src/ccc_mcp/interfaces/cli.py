@@ -6,6 +6,7 @@ import shlex
 import sqlite3
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Annotated
 
@@ -92,6 +93,15 @@ task_app = typer.Typer(
         "task --oneline 列出所有任务；task TASK-ID --oneline 列出该任务的流程。",
     ),
 )
+goal_app = typer.Typer(
+    no_args_is_help=True,
+    help=t(
+        "Goal 規劃與核准（Stage A）：建立需求、請 Delivery PM 規劃、審閱並核准計畫。"
+        "這裡不會啟動任何開發工作。",
+        "Goal planning and approval (Stage A): create a requirement, have the Delivery PM plan "
+        "it, review and approve the plan. Nothing here starts any development work.",
+    ),
+)
 clear_app = typer.Typer(
     no_args_is_help=True,
     help=t(
@@ -135,6 +145,7 @@ skill_app = typer.Typer(
 app.add_typer(project_app, name="project")
 app.add_typer(context_app, name="context")
 app.add_typer(task_app, name="task")
+app.add_typer(goal_app, name="goal")
 app.add_typer(clear_app, name="clear")
 app.add_typer(workspace_app, name="workspace", hidden=True)
 app.add_typer(config_app, name="config")
@@ -1859,13 +1870,334 @@ def task_cancel(ctx: typer.Context, task_id: str):
 @task_app.command(
     "recover",
     help=t(
-        "清除卡在 QUEUED/RUNNING、但沒有存活 worker 持有鎖的執行（worker 已崩潰或未啟動）。",
+        "清除卡在 QUEUED/RUNNING、但沒有存活 worker 持有鎖的執行（worker 已崩潰或未啟動），"
+        "並把執行者已被終止的 Host Test 記為「中斷」（不算通過，需重新執行）。",
         "Clear executions stuck QUEUED/RUNNING with no live worker holding their lock "
-        "(the worker crashed or never started).",
+        "(the worker crashed or never started), and record a host test whose runner was "
+        "killed as interrupted (never a pass; it must run again).",
     ),
 )
-def task_recover(ctx: typer.Context):
-    output(bridge(ctx).recover_workers(project_id(ctx)))
+def task_recover(
+    ctx: typer.Context,
+    confirm_host_tests_stopped: Annotated[
+        bool,
+        typer.Option(
+            "--confirm-host-tests-stopped",
+            help=t(
+                "我已確認沒有任何 Host Test 行程仍在執行：清除 ccc-mcp 無法自行證明已中斷的殘留"
+                "（舊版留下的旗標，或無法可靠上鎖的平台）。仍被持有的租約不會因此被忽略。",
+                "I have checked that no host test process is still running: clear a leftover "
+                "ccc-mcp cannot prove is dead (a flag set by an earlier version, or a platform "
+                "without reliable locks). A lease that is still held is never overridden.",
+            ),
+        ),
+    ] = False,
+):
+    output(bridge(ctx).recover_workers(project_id(ctx), confirm_host_tests_stopped))
+
+
+@goal_app.command("list", help=t("列出專案的 Goal。", "List the project's goals."))
+def goal_list(ctx: typer.Context):
+    output(bridge(ctx).list_goals(project_id(ctx)))
+
+
+@goal_app.command(
+    "create",
+    help=t(
+        "建立一個 Goal（只需提出一次）。--request-key 可讓重送不會建立第二個。",
+        "Create a goal (state the requirement once). --request-key makes a resend return the "
+        "same goal instead of a second one.",
+    ),
+)
+def goal_create(
+    ctx: typer.Context,
+    requirement: Annotated[str | None, typer.Argument()] = None,
+    file: Annotated[Path | None, typer.Option("--file", help="Read the requirement from a file")] = None,
+    title: Annotated[str | None, typer.Option("--title")] = None,
+    request_key: Annotated[str | None, typer.Option("--request-key")] = None,
+):
+    text = file.read_text(encoding="utf-8") if file else requirement
+    if not text:
+        raise BridgeError("Give the requirement as text or with --file")
+    output(bridge(ctx).create_goal(project_id(ctx), text, title, request_key))
+
+
+@goal_app.command("show", help=t("顯示 Goal、目前計畫與歷史。", "Show a goal, its plan and history."))
+def goal_show(ctx: typer.Context, goal_id: str):
+    output(bridge(ctx).get_goal(project_id(ctx), goal_id))
+
+
+@goal_app.command(
+    "plan",
+    help=t(
+        "請 Delivery PM（Codex 或 Claude Code CLI）規劃或依修改要求產生新版。每次執行只呼叫模型一次。",
+        "Ask the Delivery PM (a Codex or Claude Code CLI run) to plan, or to revise the plan from "
+        "a change request. Each call is exactly one model run.",
+    ),
+)
+def goal_plan(
+    ctx: typer.Context,
+    goal_id: str,
+    change: Annotated[str | None, typer.Option("--change", help="What to change in the plan")] = None,
+    provider: Annotated[str | None, typer.Option("--provider", help="codex or claude")] = None,
+    timeout: Annotated[int, typer.Option("--timeout")] = 300,
+    wait: Annotated[bool, typer.Option("--wait/--no-wait")] = True,
+):
+    service = bridge(ctx)
+    service.request_goal_plan(
+        project_id(ctx), goal_id, change, provider=provider, timeout=timeout)
+    output(
+        service.wait_for_planning(project_id(ctx), goal_id, timeout + 30)
+        if wait else service.get_goal(project_id(ctx), goal_id)
+    )
+
+
+@goal_app.command(
+    "cancel-plan", help=t("停止進行中的規劃。", "Stop the planning run in progress.")
+)
+def goal_cancel_plan(ctx: typer.Context, goal_id: str):
+    output(bridge(ctx).cancel_planning_run(project_id(ctx), goal_id))
+
+
+@goal_app.command(
+    "import",
+    help=t(
+        "匯入在別處寫好的計畫 JSON 作為新版（標示為手動，仍需核准）。",
+        "Import a plan written elsewhere as a new version (labelled manual; still needs approval).",
+    ),
+)
+def goal_import(
+    ctx: typer.Context,
+    goal_id: str,
+    file: Annotated[Path, typer.Option("--file")],
+    base_version: Annotated[int, typer.Option("--base-version", help="Current version, 0 if none")],
+    note: Annotated[str, typer.Option("--note")] = "",
+):
+    output(bridge(ctx).import_goal_plan(
+        project_id(ctx), goal_id, file.read_text(encoding="utf-8"), base_version, note))
+
+
+@goal_app.command(
+    "approve",
+    help=t(
+        "在本機終端機核准目前版本的計畫（需互動式終端機並輸入確認字串）。"
+        "核准不代表同意 commit、push、發佈、部署、提高權限或超出預算。",
+        "Approve the current plan version from this terminal (interactive terminal and a typed "
+        "phrase). Approving does not approve commit, push, release, deploy, wider access or a "
+        "larger budget.",
+    ),
+)
+def goal_approve(ctx: typer.Context, goal_id: str):
+    service = bridge(ctx)
+    preview = service.approval_preview(project_id(ctx), goal_id)
+    output(service.approve_goal_local(
+        project_id(ctx), goal_id, preview["version"], preview["sha256"]))
+
+
+@goal_app.command("cancel", help=t("取消 Goal（不可還原）。", "Cancel a goal (final)."))
+def goal_cancel(ctx: typer.Context, goal_id: str, reason: Annotated[str, typer.Option("--reason")] = ""):
+    output(bridge(ctx).cancel_goal(project_id(ctx), goal_id, reason))
+
+
+@goal_app.command(
+    "phase-start",
+    help=t(
+        "啟動已核准計畫中的一個 Phase（刻意啟動；完成後不會自動接續下一個 Phase）。"
+        "專案需已授權寫入並設定 test-command；預算（嘗試、派工、時間）由程式強制。",
+        "Start one phase of the approved plan, on purpose; it never continues to the next phase "
+        "by itself. The project must be authorized for writes and have a test command; the "
+        "budget (attempts, dispatches, time) is enforced in code.",
+    ),
+)
+def goal_phase_start(
+    ctx: typer.Context,
+    goal_id: str,
+    phase_id: str,
+    pm_provider: Annotated[str | None, typer.Option("--pm-provider", help="codex or claude")] = None,
+    wait: Annotated[bool, typer.Option("--wait/--no-wait", help="Stay until it stops")] = False,
+    timeout: Annotated[int, typer.Option("--timeout", help="Seconds to wait with --wait")] = 3600,
+):
+    service = bridge(ctx)
+    run = service.start_phase_run(project_id(ctx), goal_id, phase_id, pm_provider=pm_provider)
+    output(service.wait_for_phase_run(project_id(ctx), run["id"], timeout) if wait else run)
+
+
+@goal_app.command("phase-show", help=t("顯示一次 Phase 執行。", "Show a phase run."))
+def goal_phase_show(ctx: typer.Context, run_id: str):
+    output(bridge(ctx).get_phase_run(project_id(ctx), run_id))
+
+
+@goal_app.command("phase-pause", help=t("暫停 Phase 執行（不再開始新工作）。", "Pause a phase run."))
+def goal_phase_pause(ctx: typer.Context, run_id: str, reason: Annotated[str, typer.Option("--reason")] = ""):
+    output(bridge(ctx).pause_phase_run(project_id(ctx), run_id, reason))
+
+
+@goal_app.command(
+    "phase-resume",
+    help=t(
+        "恢復暫停或等待人工處理的 Phase 執行。不會增加預算；未證明安全的 Host Test 殘留仍會被拒絕，"
+        "除非你確認它們已停止。",
+        "Resume a paused or waiting phase run. Adds no budget; a host test that cannot be proven "
+        "gone is still refused unless you confirm it has stopped.",
+    ),
+)
+def goal_phase_resume(
+    ctx: typer.Context,
+    run_id: str,
+    note: Annotated[str, typer.Option("--note", help="Guidance for the Delivery PM")] = "",
+    acknowledge_protected: Annotated[bool, typer.Option("--acknowledge-protected-paths")] = False,
+    confirm_host_tests_stopped: Annotated[bool, typer.Option("--confirm-host-tests-stopped")] = False,
+):
+    output(bridge(ctx).resume_phase_run(
+        project_id(ctx), run_id, note, "protected-paths" if acknowledge_protected else None,
+        operator_confirmed=confirm_host_tests_stopped))
+
+
+@goal_app.command("phase-cancel", help=t("結束 Phase 執行並停止其 Task。", "End a phase run and stop its Task."))
+def goal_phase_cancel(ctx: typer.Context, run_id: str, reason: Annotated[str, typer.Option("--reason")] = ""):
+    output(bridge(ctx).cancel_phase_run(project_id(ctx), run_id, reason))
+
+
+@goal_app.command(
+    "phase-accept",
+    help=t(
+        "在本機終端機親自驗收無法由指令判斷的驗收條件（需互動式終端機並輸入確認字串）。",
+        "Accept, from this terminal, the criteria no command can judge (interactive terminal and a "
+        "typed phrase).",
+    ),
+)
+def goal_phase_accept(ctx: typer.Context, run_id: str):
+    output(bridge(ctx).accept_phase_local(project_id(ctx), run_id))
+
+
+@goal_app.command(
+    "phase-recover",
+    help=t(
+        "接手因行程中斷而停住的 Phase 執行：先依 Stage 0 的規則處理中斷的 worker 與 Host Test，"
+        "再從已保存的狀態繼續。不會重跑已完成的寫入工作。",
+        "Pick up phase runs whose process died: interrupted workers and host tests are dealt with "
+        "by the Stage 0 rules first, then the run continues from saved state. Finished writes "
+        "are never repeated.",
+    ),
+)
+def goal_phase_recover(
+    ctx: typer.Context,
+    confirm_host_tests_stopped: Annotated[bool, typer.Option("--confirm-host-tests-stopped")] = False,
+):
+    output(bridge(ctx).recover_phase_runs(project_id(ctx), confirm_host_tests_stopped))
+
+
+@goal_app.command(
+    "run",
+    help=t(
+        "啟動整個已核准的 Goal：依 Phase 相依關係逐一執行，每個 Phase 通過後自動交棒給下一個，"
+        "最後對整個專案做最終驗收。預算（嘗試、派工、時間）在全部 Phase 合計，由程式強制。"
+        "不會 Commit、Push 或 Release。",
+        "Start the whole approved goal: phases run one at a time in dependency order, each hands "
+        "over to the next when it passes, and the whole project is verified at the end. The budget "
+        "is counted over all phases and enforced in code. It never commits, pushes or releases.",
+    ),
+)
+def goal_run(
+    ctx: typer.Context,
+    goal_id: str,
+    pm_provider: Annotated[str | None, typer.Option("--pm-provider", help="codex or claude")] = None,
+    wait: Annotated[bool, typer.Option("--wait/--no-wait", help="Stay until it stops")] = False,
+    timeout: Annotated[int, typer.Option("--timeout", help="Seconds to wait with --wait")] = 7200,
+):
+    service = bridge(ctx)
+    started = service.start_goal_run(project_id(ctx), goal_id, pm_provider=pm_provider)
+    if not wait:
+        output(started)
+        return
+    deadline = time.monotonic() + timeout
+    while True:
+        current = service.get_goal_run(project_id(ctx), started["id"])
+        if current["status"] not in ("RUNNING", "VERIFYING") or time.monotonic() >= deadline:
+            output(current)
+            return
+        time.sleep(2)
+
+
+@goal_app.command("run-show", help=t("顯示 Goal 的執行狀態。", "Show a goal run."))
+def goal_run_show(ctx: typer.Context, run_id: str):
+    output(bridge(ctx).get_goal_run(project_id(ctx), run_id))
+
+
+@goal_app.command("run-pause", help=t("暫停整個 Goal（不再開始新工作）。", "Pause a goal run."))
+def goal_run_pause(ctx: typer.Context, run_id: str, reason: Annotated[str, typer.Option("--reason")] = ""):
+    output(bridge(ctx).pause_goal_run(project_id(ctx), run_id, reason))
+
+
+@goal_app.command(
+    "run-resume",
+    help=t(
+        "恢復暫停或等待人工處理的 Goal。不會增加預算；採用新版計畫前必須先核准該版本。",
+        "Resume a paused or waiting goal run. Adds no budget; a revised plan must be approved "
+        "first.",
+    ),
+)
+def goal_run_resume(
+    ctx: typer.Context,
+    run_id: str,
+    note: Annotated[str, typer.Option("--note", help="Guidance for the Delivery PM")] = "",
+    acknowledge_protected: Annotated[bool, typer.Option("--acknowledge-protected-paths")] = False,
+    confirm_host_tests_stopped: Annotated[bool, typer.Option("--confirm-host-tests-stopped")] = False,
+):
+    output(bridge(ctx).resume_goal_run(
+        project_id(ctx), run_id, note, "protected-paths" if acknowledge_protected else None,
+        operator_confirmed=confirm_host_tests_stopped))
+
+
+@goal_app.command("run-cancel", help=t("終止整個 Goal 執行並停止其 Task。", "Cancel a goal run (final)."))
+def goal_run_cancel(ctx: typer.Context, run_id: str, reason: Annotated[str, typer.Option("--reason")] = ""):
+    output(bridge(ctx).cancel_goal_run(project_id(ctx), run_id, reason))
+
+
+@goal_app.command(
+    "run-accept",
+    help=t(
+        "在本機終端機親自驗收最終結果（無法由指令判斷的最終條件，或需要你決定的偏差）。",
+        "Accept the final result from this terminal (the final criteria no command can judge, or "
+        "deviations that need your decision).",
+    ),
+)
+def goal_run_accept(ctx: typer.Context, run_id: str):
+    output(bridge(ctx).accept_goal_local(project_id(ctx), run_id))
+
+
+@goal_app.command(
+    "run-revise",
+    help=t(
+        "請 Delivery PM 為停住的 Goal 草擬修訂計畫。草稿是未核准的新版本；核准前不會改變任何執行。",
+        "Ask the Delivery PM to draft a revised plan for a goal run that stopped. The draft is a new "
+        "unapproved version; nothing changes until you approve it.",
+    ),
+)
+def goal_run_revise(
+    ctx: typer.Context,
+    run_id: str,
+    change: Annotated[str | None, typer.Option("--change", help="What should change")] = None,
+    provider: Annotated[str | None, typer.Option("--provider", help="codex or claude")] = None,
+):
+    output(bridge(ctx).draft_goal_revision(project_id(ctx), run_id, change, provider=provider))
+
+
+@goal_app.command(
+    "run-recover",
+    help=t(
+        "接手因所有行程中斷而停住的 Goal：先依 Stage 0 的規則處理中斷的 worker 與 Host Test，"
+        "再從已保存的狀態繼續。不會重跑已完成的 Phase，也不會重複建立 Task。",
+        "Pick up goal runs whose workers all died: interrupted workers and host tests are dealt "
+        "with by the Stage 0 rules first, then the run continues from saved state. Finished phases "
+        "are never run again and no Task is created twice.",
+    ),
+)
+def goal_run_recover(
+    ctx: typer.Context,
+    confirm_host_tests_stopped: Annotated[bool, typer.Option("--confirm-host-tests-stopped")] = False,
+):
+    output(bridge(ctx).recover_goal_runs(project_id(ctx), confirm_host_tests_stopped))
 
 
 @task_app.command(
@@ -2458,7 +2790,7 @@ def ui(
         )
 
     token = secrets.token_urlsafe(32)
-    web_app = create_app(bridge(ctx).home, token=token)
+    web_app = create_app(bridge(ctx).home, token=token, goal_watchdog=True)
     url = f"http://{host}:{chosen}/#token={token}"
     typer.echo(
         t(

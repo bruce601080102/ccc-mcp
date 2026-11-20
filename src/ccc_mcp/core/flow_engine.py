@@ -264,6 +264,20 @@ class FlowHub:
             result["test_evidence"] = evidence
             self.maybe_auto_evaluate(pointer["source_execution_id"], after_tests=True)
             notes.append(self._test_note(evidence))
+            if self._phase_run_of_task(project_id, task_id) and not (
+                evidence.get("executed_by_host") and evidence.get("passed")
+                and not evidence.get("no_tests_collected")
+            ):
+                # A phase run supervises this Task: tests that failed or verified nothing are not
+                # sent to a reviewer who would only repeat it. They stop here for the Delivery PM,
+                # through the same open-decision record a gate that ran out of rounds uses.
+                result.update(self._flow_escalate(
+                    project_id, task_id, flow, index,
+                    "The host test did not pass; the Delivery PM analyses it.",
+                    {"blocking": [], "verdict": "HOST_TEST"}, adapter, fake_scenario,
+                ))
+                self._clear_pending_dispatch(project_id, task_id)
+                return result
         elif role in GATE_ROLES:
             gate = self._flow_record_gate(project_id, task_id, index, role, source)
             result["gate"] = gate
@@ -369,7 +383,7 @@ class FlowHub:
                 )
             elif self._host_tests_unverified(project_id, task_id):
                 reason = (
-                    "The host-executed tests collected nothing or were blocked, so nothing about "
+                    "The host-executed tests collected nothing, were blocked or were interrupted, so nothing about "
                     "this change was verified; add tests that exercise it."
                 )
             if reason:
@@ -400,6 +414,14 @@ class FlowHub:
         )["n"]
 
     def _flow_gate_failed(self, project_id, task_id, flow, index, gate, adapter, fake_scenario):
+        if self._phase_run_of_task(project_id, task_id):
+            # A phase run supervises this Task: the Delivery PM, inside the run's attempt budget,
+            # decides what goes back to the developer, not the gate's own round counter.
+            return self._flow_escalate(
+                project_id, task_id, flow, index,
+                f"{gate['role']} did not pass the work: " + (gate.get("reason") or gate["verdict"]),
+                gate, adapter, fake_scenario,
+            )
         limit = self.get_project_settings(project_id)["review_gate"]["max_rounds"]
         target = bounce_index(flow["steps"], index)
         failed = self._flow_failed_rounds(project_id, task_id, index)

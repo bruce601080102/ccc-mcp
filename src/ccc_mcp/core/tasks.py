@@ -4,6 +4,7 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import uuid
 from contextlib import contextmanager, nullcontext
@@ -17,9 +18,20 @@ from ..adapters.storage import artifact, decode, event, now
 from ..infra.config import metadata_name, setting_env
 from ..infra.errors import BridgeError, PermissionDenied, VersionConflict
 from ..infra.security import canonical, digest, reject_secrets
+from ..infra.telemetry import INHERITED_FDS, PROCESS_OBSERVER
 from .approval import local_identity
 from .context import identifier
 from .flows import GATE_ROLES
+from .host_test_run import (
+    INTERRUPTED_REASON,
+    LEGACY_RESIDUE_NOTE,
+    HostTestBusy,
+    lease_reliability,
+    outcome_of,
+    owner_alive,
+    process_identity,
+    stop_process,
+)
 from .models import (
     AgentReport,
     ClarificationRequest,
@@ -41,6 +53,11 @@ from .roles import (
 # before it counts as an orphan. Measured on macOS (30 warm spawns, spawn -> RUNNING):
 # median 0.29 s, max 0.39 s. Re-measure on each platform before changing it.
 ORPHAN_GRACE_SECONDS = 5
+
+# Host-test runners alive in this very process, as (home, project, task). The OS file lease is the
+# real proof across processes; this set covers threads, where lock semantics differ by platform.
+_HOST_TEST_LOCAL = set()
+_HOST_TEST_LOCAL_LOCK = threading.Lock()
 
 
 def _utc_now():
@@ -789,6 +806,12 @@ class TaskHub:
                 and existing[-1]["state"] not in TERMINAL_TASK_STATES
                 and not self.task_control(project_id, existing[-1]["id"])["stop_requested"]
                 and not self.task_control(project_id, existing[-1]["id"])["paused"]
+                # A goal phase's Task has a fixed ID and a fixed requirement; it is never the
+                # workstream a later request is folded into.
+                and not self.store.one(
+                    "SELECT 1 FROM goal_phase_runs WHERE project_id=? AND task_id=?",
+                    (project_id, existing[-1]["id"]),
+                )
             )
             if reuse and self.context_sync_status(project_id)["pending_reports"]:
                 raise PermissionDenied(
@@ -1102,6 +1125,12 @@ class TaskHub:
             evidence = self._latest_test_result(project_id, task_id) or {}
             if evidence.get("runtime_blocked"):
                 return "revise", "Host verification is blocked by the project runtime: " + evidence["reason"]
+            if evidence.get("interrupted"):
+                return (
+                    "revise",
+                    "The last host test run was interrupted before it finished, so nothing "
+                    "about this change was verified; the host tests must run again.",
+                )
             return (
                 "revise",
                 "The host-executed test command collected zero tests, so nothing about this "
@@ -1877,6 +1906,11 @@ class TaskHub:
         with self.lock(project_id):
             self.task(project_id, task_id)
             self._require_task_runnable(project_id, task_id)
+            # A Task a goal's phase run supervises obeys the goal's declared budget (a no-op for
+            # every other Task).
+            self._phase_dispatch_gate(
+                project_id, task_id, role, report_schema, read_only, fallback_from
+            )
             if self.latest(project_id)["version"] != context_version:
                 raise VersionConflict("Dispatch Context Version is stale")
             project_settings = self.get_project_settings(project_id)
@@ -3092,56 +3126,353 @@ class TaskHub:
         recorded instead of silently skipping. A project that never explicitly configured
         Without `test_command`, changed Python test files are selected automatically;
         when none changed, the default is the full `python -m pytest -q` suite.
+
+        Exactly one runner may work on a task at a time, whichever entry point started it
+        (see host_test_session). If a previous run's runner was killed, that run is recorded
+        as interrupted (never as a pass) and these tests run from scratch, but only when
+        that can be proven safe; otherwise this refuses instead of running next to it.
         """
         from ..adapters.test_runner import (
             execute_test_command,
             record_test_evidence,
         )
 
+        with self.host_test_session(project_id, task_id) as outcome:
+            access = self.get_project_access(project_id)
+            if access["mode"] != "read-write":
+                result = record_test_evidence(
+                    self, project_id, task_id,
+                    {"executed_by_host": False,
+                     "reason": "Project is not continuously authorized; run project authorize"},
+                )
+            else:
+                command = self.get_project_settings(project_id).get("test_command")
+                result = execute_test_command(self, project_id, task_id, command, access["identity"])
+            outcome[0] = outcome_of(result)
+            return result
+
+    @contextmanager
+    def host_test_session(self, project_id, task_id, *, enforce_runnable=True):
+        """The single place a host test run starts and ends, for the automatic runner and the
+        manual `task test` command alike. Takes the lease, writes the ledger row and the task's
+        flag, lets the test process inherit the lease, and on the way out records how it ended.
+        The caller sets `outcome[0]` (see host_test_run.outcome_of); it stays "error" if the
+        body raises."""
+        with self._host_test_lease(project_id, task_id) as lease:
+            run_id = self._begin_host_test(project_id, task_id, enforce_runnable, lease.orphan)
+            outcome = ["error"]
+            observer = PROCESS_OBSERVER.set(self._host_test_child_recorder(run_id))
+            inherited = INHERITED_FDS.set((lease.fh.fileno(),) if os.name == "posix" else ())
+            try:
+                yield outcome
+            finally:
+                INHERITED_FDS.reset(inherited)
+                PROCESS_OBSERVER.reset(observer)
+                self._end_host_test(project_id, task_id, run_id, outcome[0])
+
+    @contextmanager
+    def _host_test_lease(self, project_id, task_id):
+        """The right to run this task's host tests; yields the held lock.
+
+        Raises HostTestBusy (the familiar "already running" error) when something holds it.
+        The test process inherits the lock, so it stays held while that process lives even if
+        the runner is killed. When the lock is held, the recorded runner is dead and the test
+        process it left behind is provably the recorded one, that process is stopped and the
+        lease taken. Whatever cannot be identified is left alone and the request is refused."""
+        key = (str(self.home), project_id, task_id)
+        with _HOST_TEST_LOCAL_LOCK:
+            if key in _HOST_TEST_LOCAL:
+                raise HostTestBusy()
+            _HOST_TEST_LOCAL.add(key)
+        lease = None
+        try:
+            folder = self.home / "locks"
+            folder.mkdir(exist_ok=True)
+            path = folder / f"host-test-{identifier(project_id)}-{identifier(task_id)}.lock"
+            lease = self._take_lease(path)
+            if lease is None:
+                reason, stopped = self._stop_orphaned_lease_holders(project_id, task_id, folder)
+                detail = reason or None
+                if reason is None:
+                    lease = self._take_lease(path)
+                    if lease is not None:
+                        lease.orphan = stopped
+                    detail = (
+                        "the runner is gone, but a test process it started still holds the "
+                        "lease and could not be identified; wait for it to exit or stop it"
+                    )
+                if lease is None:
+                    raise HostTestBusy(detail)
+            yield lease
+        finally:
+            if lease is not None:
+                lease.release()
+            with _HOST_TEST_LOCAL_LOCK:
+                _HOST_TEST_LOCAL.discard(key)
+
+    @staticmethod
+    def _take_lease(path):
+        lease = portalocker.Lock(path, timeout=0)
+        lease.orphan = "none"  # what was done to a dead runner's test process to get this lease
+        try:
+            lease.acquire()
+        except portalocker.exceptions.LockException:
+            return None
+        return lease
+
+    def _running_host_test_rows(self, project_id, task_id):
+        return self.store.all(
+            "SELECT * FROM host_test_runs WHERE project_id=? AND task_id=? AND status='RUNNING' "
+            "ORDER BY started, id",
+            (project_id, task_id),
+        )
+
+    def _stop_orphaned_lease_holders(self, project_id, task_id, folder):
+        """The lease is held. Returns (None, what was done) if that was cleared (the dead runner's
+        recorded test process was stopped), or (the reason it was not, "none"): a live runner
+        holds it (empty string), or nothing says whose it is."""
+        rows = self._running_host_test_rows(project_id, task_id)
+        if not rows or any(owner_alive(json.loads(row["owner"])) for row in rows):
+            return "", "none"  # a live runner, or a holder with no record: treat as running
+        if not lease_reliability(folder)[0]:
+            return "", "none"
+        stopped = "none"
+        for row in rows:
+            child = json.loads(row["child"]) if row["child"] else None
+            status = stop_process(child)
+            if status == "failed":
+                return (
+                    f"the runner is gone, but its test process (pid {child['pid']}) could not "
+                    "be stopped"
+                ), "none"
+            if status == "terminated":
+                stopped = status
+        return None, stopped
+
+    def _host_test_residue(self, project_id, task_id, conn=None):
+        """(flag set, RUNNING run rows) for a task. Called only while holding the lease, so
+        anything found here belongs to a runner that is no longer alive."""
+        run = (
+            (lambda q, a: conn.execute(q, a).fetchall()) if conn is not None
+            else self.store.all
+        )
+        flag = run(
+            "SELECT host_test_running FROM task_controls WHERE project_id=? AND task_id=?",
+            (project_id, task_id),
+        )
+        runs = run(
+            "SELECT * FROM host_test_runs WHERE project_id=? AND task_id=? AND status='RUNNING' "
+            "ORDER BY started, id",
+            (project_id, task_id),
+        )
+        return bool(flag and flag[0]["host_test_running"]), [dict(row) for row in runs]
+
+    def _require_provable_recovery(self, flag, runs, folder, operator_confirmed):
+        """Raise unless a leftover host-test flag can be shown to come from a dead runner. It can
+        when the lock is reliable here and the run has a ledger row. A flag with no row (set by an
+        earlier version, which neither held a lease nor kept a ledger) or a platform whose locks
+        prove nothing need an operator's confirmation: nothing here can tell them from a live
+        run."""
+        reliable, why = lease_reliability(folder)
+        if not reliable and not operator_confirmed:
+            raise BridgeError(
+                f"A host test was left running, but it cannot be recovered automatically: {why}. "
+                "After checking that no test process is still running, an operator can clear it "
+                "with `ccc-mcp task recover --confirm-host-tests-stopped`."
+            )
+        if flag and not runs and not operator_confirmed:
+            raise BridgeError(
+                "A host test was left running with no run record (an earlier ccc-mcp version set "
+                "it), so ccc-mcp cannot tell whether it is still running. After checking that no "
+                "test process is still running, an operator can clear it with "
+                "`ccc-mcp task recover --confirm-host-tests-stopped`."
+            )
+
+    @staticmethod
+    def _stop_host_test_orphans(runs):
+        """Stop the test process each dead run left behind. Refuses, rather than guesses, when one
+        cannot be stopped: rerunning next to a process that may still be writing is not safe."""
+        outcomes = []
+        for row in runs:
+            child = json.loads(row["child"]) if row["child"] else None
+            status = stop_process(child)
+            if status == "failed":
+                raise BridgeError(
+                    f"A host test process (pid {child and child.get('pid')}) left by an "
+                    "interrupted run could not be stopped. Stop it yourself, then retry."
+                )
+            outcomes.append(status)
+        for status in ("terminated", "not_running"):
+            if status in outcomes:
+                return status
+        return "none"
+
+    def _interrupt_host_test_runs(self, conn, project_id, task_id, runs, orphan, trigger):
+        """Write the evidence of an interrupted run and close its ledger rows, in the caller's
+        transaction. The evidence uses the usual TEST-RESULT.md format and is deliberately
+        neither a pass nor "executed": the earlier result it replaces as "latest" is not reused."""
+        detected = {"at": now(), "by": process_identity(os.getpid()), "trigger": trigger,
+                    "orphan": orphan}
+        if runs:
+            first = runs[0]
+            run_info = {
+                "run_id": first["id"], "started": first["started"],
+                "owner": json.loads(first["owner"]),
+                "child": json.loads(first["child"]) if first["child"] else None,
+            }
+        else:
+            run_info = {"legacy_residue": True, "note": LEGACY_RESIDUE_NOTE}
+        evidence = {
+            "passed": False, "executed_by_host": False, "interrupted": True,
+            "reason": INTERRUPTED_REASON, "interrupted_run": run_info, "detected": detected,
+        }
+        path = self.save_artifact(
+            conn, project_id, task_id, "TEST-RESULT.md", "TEST-" + uuid.uuid4().hex[:16],
+            "# Observed test result\n\n" + canonical(evidence) + "\n",
+        )
+        for row in runs:
+            conn.execute(
+                "UPDATE host_test_runs SET status='INTERRUPTED',finished=?,detail=? "
+                "WHERE id=? AND status='RUNNING'",
+                (now(), canonical({
+                    **(json.loads(row["detail"]) if row["detail"] else {}),  # keeps "recovers"
+                    "detected": detected, "orphan": orphan, "evidence": path,
+                }), row["id"]),
+            )
+        return runs[0]["id"] if runs else None
+
+    def _begin_host_test(self, project_id, task_id, enforce_runnable=True, orphan_hint="none"):
+        """Claim the task for a new run, first recording any dead run it finds. Returns run id."""
+        if enforce_runnable:
+            self._require_task_runnable(project_id, task_id)
+        flag, runs = self._host_test_residue(project_id, task_id)
+        orphan = "none"
+        if flag or runs:
+            self._require_provable_recovery(flag, runs, self.home / "locks", False)
+            orphan = self._stop_host_test_orphans(runs)
+            orphan = orphan_hint if orphan_hint == "terminated" else orphan
+        run_id = "HTRUN-" + uuid.uuid4().hex[:16]
+        recovered = None
         with self.store.transaction() as conn:
-            self._require_task_runnable(project_id, task_id, conn)
-            current = conn.execute(
-                "SELECT host_test_running FROM task_controls WHERE project_id=? AND task_id=?",
-                (project_id, task_id),
-            ).fetchone()
-            if current and current["host_test_running"]:
-                raise BridgeError("Host tests are already running for this task")
+            if enforce_runnable:
+                self._require_task_runnable(project_id, task_id, conn)
+            again_flag, again_runs = self._host_test_residue(project_id, task_id, conn)
+            if (again_flag, [r["id"] for r in again_runs]) != (flag, [r["id"] for r in runs]):
+                raise BridgeError("Host test state changed while recovering; try again")
+            if flag or runs:
+                recovered = self._interrupt_host_test_runs(
+                    conn, project_id, task_id, runs, orphan, "rerun"
+                )
+            conn.execute(
+                "INSERT INTO host_test_runs(id,project_id,task_id,owner,status,started,detail) "
+                "VALUES(?,?,?,?,'RUNNING',?,?)",
+                (run_id, project_id, task_id, canonical(process_identity(os.getpid())), now(),
+                 canonical({"recovers": recovered}) if recovered else None),
+            )
             conn.execute(
                 "INSERT INTO task_controls(project_id,task_id,host_test_running) VALUES(?,?,1) "
                 "ON CONFLICT(project_id,task_id) DO UPDATE SET host_test_running=1",
                 (project_id, task_id),
             )
-        try:
-            access = self.get_project_access(project_id)
-            if access["mode"] != "read-write":
-                return record_test_evidence(
-                    self, project_id, task_id,
-                    {"executed_by_host": False,
-                     "reason": "Project is not continuously authorized; run project authorize"},
+        if flag or runs:
+            self.sync_documents(project_id)
+        return run_id
+
+    def _host_test_child_recorder(self, run_id):
+        """Remember the process a run is waiting on, the moment it starts, so that if this
+        runner dies the leftover can be recognised (pid and start time) and stopped."""
+        def record(pid):
+            try:
+                child = process_identity(pid)
+                self.store.execute(
+                    "UPDATE host_test_runs SET child=? WHERE id=? AND status='RUNNING'",
+                    (canonical({"pid": child["pid"], "create_time": child["create_time"]}),
+                     run_id),
                 )
-            command = self.get_project_settings(project_id).get("test_command")
-            return execute_test_command(self, project_id, task_id, command, access["identity"])
-        finally:
-            stopped = False
-            with self.store.transaction() as conn:
-                conn.execute(
-                    "UPDATE task_controls SET host_test_running=0 WHERE project_id=? AND task_id=?",
-                    (project_id, task_id),
-                )
-                self._record_task_paused_if_settled(conn, project_id, task_id)
-                control = conn.execute(
-                    "SELECT stop_requested FROM task_controls WHERE project_id=? AND task_id=?",
-                    (project_id, task_id),
-                ).fetchone()
-                live = conn.execute(
-                    "SELECT 1 FROM agent_executions WHERE project_id=? AND task_id=? "
-                    "AND status IN ('QUEUED','RUNNING')", (project_id, task_id),
-                ).fetchone()
-                if control and control["stop_requested"] and not live:
-                    self._transition(conn, project_id, task_id, "CANCELLED", "Task stopped by user")
-                    stopped = True
-            if stopped:
-                self.sync_documents(project_id)
+            except Exception:
+                pass  # tracking is best effort; the lease, not this record, prevents overlap
+
+        return record
+
+    def _release_host_test(self, conn, project_id, task_id):
+        """Clear the task's host-test flag and settle what was waiting on it (a pause, a stop
+        request). Returns True when that finished a stop request."""
+        conn.execute(
+            "UPDATE task_controls SET host_test_running=0 WHERE project_id=? AND task_id=?",
+            (project_id, task_id),
+        )
+        self._record_task_paused_if_settled(conn, project_id, task_id)
+        control = conn.execute(
+            "SELECT stop_requested FROM task_controls WHERE project_id=? AND task_id=?",
+            (project_id, task_id),
+        ).fetchone()
+        live = conn.execute(
+            "SELECT 1 FROM agent_executions WHERE project_id=? AND task_id=? "
+            "AND status IN ('QUEUED','RUNNING')", (project_id, task_id),
+        ).fetchone()
+        if control and control["stop_requested"] and not live:
+            self._transition(conn, project_id, task_id, "CANCELLED", "Task stopped by user")
+            return True
+        return False
+
+    def _end_host_test(self, project_id, task_id, run_id, outcome):
+        with self.store.transaction() as conn:
+            row = conn.execute("SELECT detail FROM host_test_runs WHERE id=?", (run_id,)).fetchone()
+            detail = json.loads(row["detail"]) if row and row["detail"] else {}
+            closed = conn.execute(
+                "UPDATE host_test_runs SET status='FINISHED',finished=?,detail=? "
+                "WHERE id=? AND status='RUNNING'",
+                (now(), canonical({"outcome": outcome, **detail}), run_id),
+            ).rowcount
+            # A run someone else already closed no longer owns the task's flag.
+            stopped = self._release_host_test(conn, project_id, task_id) if closed else False
+        if stopped:
+            self.sync_documents(project_id)
+
+    def _recover_host_tests(self, project_id, operator_confirmed=False):
+        """Close the host-test runs whose runners died, without rerunning anything. A task whose
+        runner is alive, or that cannot be proven dead, is left exactly as it is and reported."""
+        recovered, refused = [], []
+        tasks = self.store.all(
+            "SELECT task_id FROM task_controls WHERE project_id=? AND host_test_running=1 "
+            "UNION SELECT task_id FROM host_test_runs WHERE project_id=? AND status='RUNNING'",
+            (project_id, project_id),
+        )
+        for item in tasks:
+            task_id = item["task_id"]
+            try:
+                with self._host_test_lease(project_id, task_id) as lease:
+                    flag, runs = self._host_test_residue(project_id, task_id)
+                    if not (flag or runs):
+                        continue
+                    try:
+                        self._require_provable_recovery(
+                            flag, runs, self.home / "locks", operator_confirmed
+                        )
+                        orphan = self._stop_host_test_orphans(runs)
+                        orphan = lease.orphan if lease.orphan == "terminated" else orphan
+                    except BridgeError as exc:
+                        refused.append({"task_id": task_id, "error": str(exc)})
+                        continue
+                    stopped = False
+                    with self.store.transaction() as conn:
+                        again_flag, again_runs = self._host_test_residue(project_id, task_id, conn)
+                        if (again_flag, [r["id"] for r in again_runs]) != (
+                            flag, [r["id"] for r in runs]
+                        ):
+                            continue
+                        run_id = self._interrupt_host_test_runs(
+                            conn, project_id, task_id, runs, orphan,
+                            "operator_confirmed" if operator_confirmed else "recover_workers",
+                        )
+                        stopped = self._release_host_test(conn, project_id, task_id)
+                    self.sync_documents(project_id)
+                    recovered.append({"task_id": task_id, "run_id": run_id, "orphan": orphan,
+                                      "task_cancelled": stopped})
+            except HostTestBusy as busy:
+                if busy.detail:  # a dead runner's process still holds it: say so
+                    refused.append({"task_id": task_id, "error": str(busy)})
+        return recovered, refused
 
     def _latest_test_result(self, project_id, task_id):
         root = self.project(project_id)["root"]
@@ -3175,6 +3506,7 @@ class TaskHub:
         result = self._latest_test_result(project_id, task_id)
         return bool(result and (
             result.get("runtime_blocked")
+            or result.get("interrupted")
             or (result.get("executed_by_host") and result.get("no_tests_collected"))
         ))
 
@@ -3562,9 +3894,9 @@ class TaskHub:
                 self.finish_execution(row["id"], error="Execution stopped by user", state="CANCELLED")
         return self.get_task_status(project_id, task_id)["brief"]["control"]
 
-    def recover_workers(self, project_id):
+    def recover_workers(self, project_id, operator_confirmed=False):
         self.project(project_id)
-        recovered = []
+        recovered, not_recovered = [], []
         rows = self.store.all(
             "SELECT * FROM agent_executions WHERE project_id=? AND status IN ('QUEUED','RUNNING')",
             (project_id,),
@@ -3586,6 +3918,17 @@ class TaskHub:
             lockfile = self.home / "locks" / f"{row['id']}.lock"
             try:
                 with portalocker.Lock(lockfile, timeout=0):
+                    # The worker is gone, but the CLI it started may not be, and a developer's CLI
+                    # writes files. It is stopped first (only the very process that was recorded);
+                    # if that cannot be done the run is left as it is, never marked finished, so
+                    # nothing can be dispatched beside a CLI that may still be writing.
+                    child = decode(row, "options")["options"].get("child")
+                    if stop_process(child) == "failed":
+                        not_recovered.append({
+                            "execution_id": row["id"],
+                            "reason": "Its provider CLI is still running and could not be stopped",
+                            "child": child})
+                        continue
                     self.finish_execution(
                         row["id"],
                         error="Interrupted worker: inspect worktree before explicit redispatch",
@@ -3594,7 +3937,14 @@ class TaskHub:
                     recovered.append(row["id"])
             except portalocker.exceptions.LockException:
                 pass
-        return {"interrupted_executions": recovered, "automatic_replay": False}
+        interrupted_tests, refused = self._recover_host_tests(project_id, operator_confirmed)
+        return {
+            "interrupted_executions": recovered,
+            **({"executions_not_recovered": not_recovered} if not_recovered else {}),
+            "interrupted_host_tests": interrupted_tests,
+            **({"host_tests_not_recovered": refused} if refused else {}),
+            "automatic_replay": False,
+        }
 
     def _record_clarification_result(self, conn, project_id, task_id, row, report, report_schema):
         """Meeting Mode's own, much smaller side-effect path: never touches Context,

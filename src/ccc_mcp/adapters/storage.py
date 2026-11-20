@@ -359,7 +359,268 @@ CREATE TRIGGER IF NOT EXISTS execution_prompts_no_update BEFORE UPDATE ON execut
  BEGIN SELECT RAISE(ABORT, 'Execution prompts are immutable'); END;
 CREATE TRIGGER IF NOT EXISTS execution_prompts_no_delete BEFORE DELETE ON execution_prompts
  BEGIN SELECT RAISE(ABORT, 'Execution prompts are immutable'); END;
+
+-- Host Test runs (core/host_test_run.py, used by TaskHub.run_configured_test_command). One row per
+-- run: who started it, which child process it spawned last, and how it ended. While it is RUNNING
+-- the runner's OS file lease is what proves it is alive, never this row or task_controls alone.
+-- FINISHED and INTERRUPTED are final. An INTERRUPTED row means the runner was found dead.
+CREATE TABLE IF NOT EXISTS host_test_runs (
+ id TEXT PRIMARY KEY, project_id TEXT NOT NULL, task_id TEXT NOT NULL,
+ owner TEXT NOT NULL, child TEXT,
+ status TEXT NOT NULL CHECK(status IN ('RUNNING','FINISHED','INTERRUPTED')),
+ started TEXT NOT NULL, finished TEXT, detail TEXT);
+CREATE INDEX IF NOT EXISTS idx_host_test_runs_task ON host_test_runs(project_id, task_id, started);
+CREATE TRIGGER IF NOT EXISTS host_test_runs_no_delete BEFORE DELETE ON host_test_runs
+ BEGIN SELECT RAISE(ABORT, 'Host test run history is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS host_test_runs_identity_fixed
+ BEFORE UPDATE OF id, project_id, task_id, owner, started ON host_test_runs
+ BEGIN SELECT RAISE(ABORT, 'Host test run history is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS host_test_runs_final_status
+ BEFORE UPDATE ON host_test_runs WHEN OLD.status != 'RUNNING'
+ BEGIN SELECT RAISE(ABORT, 'Host test run history is immutable'); END;
+
+-- Goals (core/goals.py, Stage A: planning and approval only; nothing here starts any work).
+-- SQLite is the only authority for a Goal. There is no Markdown projection and nothing is written to
+-- the shared Context, so there is no second copy that could disagree.
+--
+-- The head of a goal. Only the pointer to the newest plan version and the cancel mark can change; its
+-- identity and the requirement as the user wrote it never do. A goal's state (planning, awaiting
+-- approval, ready) is derived from the rows below and is never stored, so it cannot contradict them.
+CREATE TABLE IF NOT EXISTS goals (
+ project_id TEXT NOT NULL, id TEXT NOT NULL, title TEXT NOT NULL, requirement TEXT NOT NULL,
+ request_key TEXT, creator TEXT NOT NULL, current_version INTEGER NOT NULL DEFAULT 0,
+ cancelled TEXT, cancel_reason TEXT, created TEXT NOT NULL, updated TEXT NOT NULL,
+ PRIMARY KEY(project_id, id));
+CREATE UNIQUE INDEX IF NOT EXISTS idx_goals_request_key
+ ON goals(project_id, request_key) WHERE request_key IS NOT NULL;
+CREATE TRIGGER IF NOT EXISTS goals_no_delete BEFORE DELETE ON goals
+ BEGIN SELECT RAISE(ABORT, 'Goals cannot be deleted; cancel the goal instead'); END;
+CREATE TRIGGER IF NOT EXISTS goals_identity_fixed
+ BEFORE UPDATE OF project_id, id, title, requirement, request_key, creator, created ON goals
+ BEGIN SELECT RAISE(ABORT, 'A goal''s identity and requirement cannot change'); END;
+CREATE TRIGGER IF NOT EXISTS goals_version_forward_only
+ BEFORE UPDATE OF current_version ON goals WHEN NEW.current_version < OLD.current_version
+ BEGIN SELECT RAISE(ABORT, 'A goal''s plan version cannot go backwards'); END;
+CREATE TRIGGER IF NOT EXISTS goals_cancel_is_final
+ BEFORE UPDATE OF cancelled, cancel_reason ON goals WHEN OLD.cancelled IS NOT NULL
+ BEGIN SELECT RAISE(ABORT, 'A cancelled goal stays cancelled'); END;
+-- One immutable row per plan version. The hash is over the canonical plan, and it is what an approval binds to.
+CREATE TABLE IF NOT EXISTS goal_plan_versions (
+ project_id TEXT NOT NULL, goal_id TEXT NOT NULL, version INTEGER NOT NULL,
+ content TEXT NOT NULL, sha256 TEXT NOT NULL,
+ source TEXT NOT NULL CHECK(source IN ('provider','manual')), author TEXT NOT NULL,
+ based_on INTEGER NOT NULL, change_request TEXT, message TEXT, run_id TEXT, created TEXT NOT NULL,
+ PRIMARY KEY(project_id, goal_id, version));
+CREATE TRIGGER IF NOT EXISTS goal_plan_versions_no_update BEFORE UPDATE ON goal_plan_versions
+ BEGIN SELECT RAISE(ABORT, 'Goal plan versions are immutable'); END;
+CREATE TRIGGER IF NOT EXISTS goal_plan_versions_no_delete BEFORE DELETE ON goal_plan_versions
+ BEGIN SELECT RAISE(ABORT, 'Goal plan versions are immutable'); END;
+-- The phases of one version, one row each, written in the same transaction as the version.
+CREATE TABLE IF NOT EXISTS goal_plan_phases (
+ project_id TEXT NOT NULL, goal_id TEXT NOT NULL, version INTEGER NOT NULL,
+ phase_id TEXT NOT NULL, ordinal INTEGER NOT NULL, title TEXT NOT NULL,
+ depends_on TEXT NOT NULL, content TEXT NOT NULL,
+ PRIMARY KEY(project_id, goal_id, version, phase_id));
+CREATE TRIGGER IF NOT EXISTS goal_plan_phases_no_update BEFORE UPDATE ON goal_plan_phases
+ BEGIN SELECT RAISE(ABORT, 'Goal plan phases are immutable'); END;
+CREATE TRIGGER IF NOT EXISTS goal_plan_phases_no_delete BEFORE DELETE ON goal_plan_phases
+ BEGIN SELECT RAISE(ABORT, 'Goal plan phases are immutable'); END;
+-- A person's approval of one exact version and hash. A new version is never covered by an old row.
+CREATE TABLE IF NOT EXISTS goal_approvals (
+ id TEXT PRIMARY KEY, project_id TEXT NOT NULL, goal_id TEXT NOT NULL,
+ plan_version INTEGER NOT NULL, plan_sha256 TEXT NOT NULL, identity TEXT NOT NULL,
+ project_access TEXT NOT NULL, scope TEXT NOT NULL, created TEXT NOT NULL,
+ UNIQUE(project_id, goal_id, plan_version));
+CREATE TRIGGER IF NOT EXISTS goal_approvals_no_update BEFORE UPDATE ON goal_approvals
+ BEGIN SELECT RAISE(ABORT, 'Goal approvals are immutable'); END;
+CREATE TRIGGER IF NOT EXISTS goal_approvals_no_delete BEFORE DELETE ON goal_approvals
+ BEGIN SELECT RAISE(ABORT, 'Goal approvals are immutable'); END;
+CREATE TABLE IF NOT EXISTS goal_events (
+ seq INTEGER PRIMARY KEY AUTOINCREMENT, project_id TEXT NOT NULL, goal_id TEXT NOT NULL,
+ kind TEXT NOT NULL, actor TEXT NOT NULL, detail TEXT NOT NULL, created TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_goal_events_goal ON goal_events(project_id, goal_id, seq);
+CREATE TRIGGER IF NOT EXISTS goal_events_no_update BEFORE UPDATE ON goal_events
+ BEGIN SELECT RAISE(ABORT, 'Goal events are immutable'); END;
+CREATE TRIGGER IF NOT EXISTS goal_events_no_delete BEFORE DELETE ON goal_events
+ BEGIN SELECT RAISE(ABORT, 'Goal events are immutable'); END;
+-- One user-triggered Delivery PM call. A goal has at most one live run; a finished run never changes.
+CREATE TABLE IF NOT EXISTS goal_plan_runs (
+ id TEXT PRIMARY KEY, project_id TEXT NOT NULL, goal_id TEXT NOT NULL, seq INTEGER NOT NULL,
+ base_version INTEGER NOT NULL, request TEXT, provider TEXT NOT NULL, adapter TEXT NOT NULL,
+ settings TEXT NOT NULL, timeout INTEGER NOT NULL, fake_scenario TEXT,
+ status TEXT NOT NULL CHECK(status IN ('QUEUED','RUNNING','SUCCEEDED','FAILED','CANCELLED')),
+ failure_kind TEXT, error TEXT, result TEXT, result_version INTEGER, invocation TEXT, prompt_sha256 TEXT,
+ cancel_requested INTEGER NOT NULL DEFAULT 0, spawned_at TEXT, created TEXT NOT NULL,
+ started TEXT, finished TEXT, UNIQUE(project_id, goal_id, seq));
+CREATE UNIQUE INDEX IF NOT EXISTS one_live_goal_plan_run
+ ON goal_plan_runs(project_id, goal_id) WHERE status IN ('QUEUED','RUNNING');
+CREATE TRIGGER IF NOT EXISTS goal_plan_runs_no_delete BEFORE DELETE ON goal_plan_runs
+ BEGIN SELECT RAISE(ABORT, 'Goal planning history is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS goal_plan_runs_identity_fixed
+ BEFORE UPDATE OF id, project_id, goal_id, seq, base_version, request, provider, adapter, created
+ ON goal_plan_runs
+ BEGIN SELECT RAISE(ABORT, 'Goal planning history is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS goal_plan_runs_final_status
+ BEFORE UPDATE ON goal_plan_runs WHEN OLD.status IN ('SUCCEEDED','FAILED','CANCELLED')
+ BEGIN SELECT RAISE(ABORT, 'Goal planning history is immutable'); END;
+
+-- Phase runs (core/phase_runner.py, Stage B): one approved phase of one goal, run through the existing
+-- Task engine as one Task with a fixed ID. A phase has at most one run, so starting it twice can never
+-- create a second Task. Only the status columns change; what was approved and what was started
+-- (plan version and hash, the criteria, the Task, the budget) never does.
+CREATE TABLE IF NOT EXISTS goal_phase_runs (
+ id TEXT PRIMARY KEY, project_id TEXT NOT NULL, goal_id TEXT NOT NULL, phase_id TEXT NOT NULL,
+ plan_version INTEGER NOT NULL, plan_sha256 TEXT NOT NULL, approval_id TEXT NOT NULL,
+ task_id TEXT NOT NULL, workflow_id TEXT NOT NULL, requirement_sha256 TEXT NOT NULL,
+ adapter TEXT NOT NULL CHECK(adapter IN ('real','fake')), fake_scenario TEXT,
+ pm_settings TEXT NOT NULL, pm_timeout INTEGER NOT NULL, budget TEXT NOT NULL,
+ criteria TEXT NOT NULL, test_command TEXT NOT NULL,
+ status TEXT NOT NULL CHECK(status IN
+  ('STARTING','RUNNING','PAUSED','NEEDS_HUMAN','AWAITING_ACCEPTANCE','PASSED','EXHAUSTED','CANCELLED')),
+ reason TEXT, detail TEXT, resume_to TEXT,
+ wake_seq INTEGER NOT NULL DEFAULT 0, handled_seq INTEGER NOT NULL DEFAULT 0,
+ active_seconds REAL NOT NULL DEFAULT 0, active_since TEXT,
+ creator TEXT NOT NULL, created TEXT NOT NULL, updated TEXT NOT NULL, finished TEXT,
+ kind TEXT, synthetic TEXT, handoff TEXT, goal_run_id TEXT,
+ UNIQUE(project_id, goal_id, phase_id), UNIQUE(project_id, task_id));
+CREATE TRIGGER IF NOT EXISTS goal_phase_runs_no_delete BEFORE DELETE ON goal_phase_runs
+ BEGIN SELECT RAISE(ABORT, 'Phase run history is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS goal_phase_runs_identity_fixed
+ BEFORE UPDATE OF id, project_id, goal_id, phase_id, plan_version, plan_sha256, approval_id, task_id,
+  workflow_id, requirement_sha256, adapter, fake_scenario, pm_settings, pm_timeout, budget, criteria,
+  test_command, creator, created ON goal_phase_runs
+ BEGIN SELECT RAISE(ABORT, 'What a phase run was started with cannot change'); END;
+CREATE TRIGGER IF NOT EXISTS goal_phase_runs_final_status
+ BEFORE UPDATE ON goal_phase_runs WHEN OLD.status IN ('PASSED','EXHAUSTED','CANCELLED')
+ BEGIN SELECT RAISE(ABORT, 'A finished phase run stays finished'); END;
+-- One builder pass over the phase's Task. Attempt 1 is the first; each later one is a repair the
+-- Delivery PM asked for. Rows are opened and then closed once with what was observed.
+CREATE TABLE IF NOT EXISTS goal_phase_attempts (
+ id TEXT PRIMARY KEY, run_id TEXT NOT NULL, project_id TEXT NOT NULL, goal_id TEXT NOT NULL,
+ phase_id TEXT NOT NULL, number INTEGER NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('INITIAL','REPAIR')),
+ repair_id TEXT, status TEXT NOT NULL CHECK(status IN ('RUNNING','PASSED','FAILED','INTERRUPTED')),
+ outcome TEXT, evidence TEXT, started TEXT NOT NULL, finished TEXT,
+ UNIQUE(run_id, number));
+CREATE TRIGGER IF NOT EXISTS goal_phase_attempts_no_delete BEFORE DELETE ON goal_phase_attempts
+ BEGIN SELECT RAISE(ABORT, 'Phase attempt history is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS goal_phase_attempts_identity_fixed
+ BEFORE UPDATE OF id, run_id, project_id, goal_id, phase_id, number, kind, repair_id, started
+ ON goal_phase_attempts
+ BEGIN SELECT RAISE(ABORT, 'Phase attempt history is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS goal_phase_attempts_final_status
+ BEFORE UPDATE ON goal_phase_attempts WHEN OLD.status != 'RUNNING'
+ BEGIN SELECT RAISE(ABORT, 'Phase attempt history is immutable'); END;
+-- One Delivery PM analysis of a failed attempt, and what became of it. At most one is live per run.
+CREATE TABLE IF NOT EXISTS goal_phase_repairs (
+ id TEXT PRIMARY KEY, run_id TEXT NOT NULL, project_id TEXT NOT NULL, goal_id TEXT NOT NULL,
+ phase_id TEXT NOT NULL, seq INTEGER NOT NULL, after_attempt INTEGER NOT NULL,
+ status TEXT NOT NULL CHECK(status IN ('RUNNING','SUCCEEDED','FAILED','INTERRUPTED')),
+ failure_kind TEXT, error TEXT, input_sha256 TEXT NOT NULL, input_summary TEXT NOT NULL,
+ prompt_sha256 TEXT, spec TEXT, decision TEXT, message TEXT, restart_step INTEGER,
+ restart_execution_id TEXT, invocation TEXT, created TEXT NOT NULL, finished TEXT,
+ UNIQUE(run_id, seq));
+CREATE UNIQUE INDEX IF NOT EXISTS one_live_phase_repair
+ ON goal_phase_repairs(run_id) WHERE status = 'RUNNING';
+CREATE TRIGGER IF NOT EXISTS goal_phase_repairs_no_delete BEFORE DELETE ON goal_phase_repairs
+ BEGIN SELECT RAISE(ABORT, 'Phase repair history is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS goal_phase_repairs_identity_fixed
+ BEFORE UPDATE OF id, run_id, project_id, goal_id, phase_id, seq, after_attempt, input_sha256,
+  input_summary, created ON goal_phase_repairs
+ BEGIN SELECT RAISE(ABORT, 'Phase repair history is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS goal_phase_repairs_final_status
+ BEFORE UPDATE ON goal_phase_repairs WHEN OLD.status != 'RUNNING' AND NOT (
+  OLD.status = 'SUCCEEDED' AND OLD.restart_execution_id IS NULL AND NEW.restart_execution_id IS NOT NULL
+  AND NEW.status = 'SUCCEEDED' AND NEW.spec IS OLD.spec AND NEW.decision IS OLD.decision)
+ BEGIN SELECT RAISE(ABORT, 'Phase repair history is immutable'); END;
+
+-- Goal runs (core/goal_orchestrator.py, Stage C): the supervisor's durable record for one goal. A goal
+-- has at most one run, ever; the run starts phases one at a time, in dependency order, through the
+-- Stage B phase runner, then verifies the whole goal. What it was started with never changes. The only
+-- thing that may be re-pointed is the plan version, and only by a person (`goal_run_plan_adopted`).
+CREATE TABLE IF NOT EXISTS goal_runs (
+ id TEXT PRIMARY KEY, project_id TEXT NOT NULL, goal_id TEXT NOT NULL,
+ plan_version INTEGER NOT NULL, plan_sha256 TEXT NOT NULL, approval_id TEXT NOT NULL,
+ adapter TEXT NOT NULL CHECK(adapter IN ('real','fake')), fake_scenario TEXT,
+ pm_settings TEXT NOT NULL, pm_timeout INTEGER NOT NULL, test_command TEXT NOT NULL,
+ budget TEXT NOT NULL, base TEXT NOT NULL,
+ status TEXT NOT NULL CHECK(status IN
+  ('RUNNING','WAITING_USER','PAUSED','VERIFYING','PASSED','EXHAUSTED','FAILED','CANCELLED')),
+ reason TEXT, detail TEXT, resume_to TEXT,
+ wake_seq INTEGER NOT NULL DEFAULT 0, handled_seq INTEGER NOT NULL DEFAULT 0,
+ active_seconds REAL NOT NULL DEFAULT 0, active_since TEXT,
+ creator TEXT NOT NULL, created TEXT NOT NULL, updated TEXT NOT NULL, finished TEXT,
+ UNIQUE(project_id, goal_id));
+CREATE TRIGGER IF NOT EXISTS goal_runs_no_delete BEFORE DELETE ON goal_runs
+ BEGIN SELECT RAISE(ABORT, 'Goal run history is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS goal_runs_identity_fixed
+ BEFORE UPDATE OF id, project_id, goal_id, adapter, fake_scenario, pm_settings, pm_timeout,
+  test_command, budget, base, creator, created ON goal_runs
+ BEGIN SELECT RAISE(ABORT, 'What a goal run was started with cannot change'); END;
+CREATE TRIGGER IF NOT EXISTS goal_runs_final_status
+ BEFORE UPDATE ON goal_runs WHEN OLD.status IN ('PASSED','EXHAUSTED','FAILED','CANCELLED')
+ BEGIN SELECT RAISE(ABORT, 'A finished goal run stays finished'); END;
+-- What the supervisor recorded when a phase run passed: the Task, roles, providers, prompts, git state and
+-- the context handed to the phases that depend on it. Written once; never changed or deleted.
+CREATE TABLE IF NOT EXISTS goal_run_phases (
+ id TEXT PRIMARY KEY, goal_run_id TEXT NOT NULL, project_id TEXT NOT NULL, goal_id TEXT NOT NULL,
+ phase_id TEXT NOT NULL, phase_run_id TEXT NOT NULL, task_id TEXT NOT NULL,
+ kind TEXT NOT NULL CHECK(kind IN ('PLAN','INTEGRATION')),
+ evidence TEXT NOT NULL, evidence_sha256 TEXT NOT NULL, handoff TEXT NOT NULL,
+ handoff_sha256 TEXT NOT NULL, created TEXT NOT NULL,
+ UNIQUE(goal_run_id, phase_id));
+CREATE TRIGGER IF NOT EXISTS goal_run_phases_no_update BEFORE UPDATE ON goal_run_phases
+ BEGIN SELECT RAISE(ABORT, 'Goal run phase records are immutable'); END;
+CREATE TRIGGER IF NOT EXISTS goal_run_phases_no_delete BEFORE DELETE ON goal_run_phases
+ BEGIN SELECT RAISE(ABORT, 'Goal run phase records are immutable'); END;
+-- One final verification of the whole goal. At most one is live; a finished one never changes.
+CREATE TABLE IF NOT EXISTS goal_verifications (
+ id TEXT PRIMARY KEY, goal_run_id TEXT NOT NULL, project_id TEXT NOT NULL, goal_id TEXT NOT NULL,
+ seq INTEGER NOT NULL, anchor_task_id TEXT NOT NULL,
+ status TEXT NOT NULL CHECK(status IN ('RUNNING','PASSED','FAILED','NEEDS_PERSON','INTERRUPTED')),
+ outcome TEXT, evidence TEXT, started TEXT NOT NULL, finished TEXT,
+ UNIQUE(goal_run_id, seq));
+CREATE UNIQUE INDEX IF NOT EXISTS one_live_goal_verification
+ ON goal_verifications(goal_run_id) WHERE status = 'RUNNING';
+CREATE TRIGGER IF NOT EXISTS goal_verifications_no_delete BEFORE DELETE ON goal_verifications
+ BEGIN SELECT RAISE(ABORT, 'Goal verification history is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS goal_verifications_identity_fixed
+ BEFORE UPDATE OF id, goal_run_id, project_id, goal_id, seq, anchor_task_id, started
+ ON goal_verifications
+ BEGIN SELECT RAISE(ABORT, 'Goal verification history is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS goal_verifications_final_status
+ BEFORE UPDATE ON goal_verifications WHEN OLD.status != 'RUNNING'
+ BEGIN SELECT RAISE(ABORT, 'Goal verification history is immutable'); END;
 """
+
+# Like the role tables, project removal and history clearing manage this table's deletes.
+HOST_TEST_TABLES = ("host_test_runs",)
+HOST_TEST_NO_DELETE_TRIGGERS = ("host_test_runs_no_delete",)
+# Goals belong to a project, not to a task: removing the project removes them, clearing task history
+# does not touch them.
+GOAL_TABLES = (
+    "goal_verifications", "goal_run_phases", "goal_runs",
+    "goal_phase_repairs", "goal_phase_attempts", "goal_phase_runs",
+    "goal_plan_runs", "goal_events", "goal_approvals", "goal_plan_phases", "goal_plan_versions",
+    "goals",
+)
+GOAL_NO_DELETE_TRIGGERS = (
+    "goals_no_delete", "goal_plan_versions_no_delete", "goal_plan_phases_no_delete",
+    "goal_approvals_no_delete", "goal_events_no_delete", "goal_plan_runs_no_delete",
+    "goal_phase_runs_no_delete", "goal_phase_attempts_no_delete", "goal_phase_repairs_no_delete",
+    "goal_runs_no_delete", "goal_run_phases_no_delete", "goal_verifications_no_delete",
+)
+
+# Rows a step workflow (Standard, Full, ...) leaves behind, which reference the project and so used to
+# make removing such a project fail on a foreign key. Project removal archives the whole database first
+# and now deletes these as well; clearing task history is not changed.
+STEP_WORKFLOW_TABLES = (
+    "evaluations", "reputation_events", "flow_gate_results", "flow_escalations", "task_flows",
+    "task_deletions",
+)
+STEP_WORKFLOW_NO_DELETE_TRIGGERS = (
+    "evaluations_no_delete", "reputation_events_no_delete", "flow_gate_results_no_delete",
+    "flow_escalations_no_delete", "task_deletions_no_delete",
+)
 
 # Immutable-history triggers that project removal / history clearing must drop while they
 # delete (and restore afterwards), as they already do for the older history tables.
@@ -395,6 +656,9 @@ ADDED_COLUMNS = {
     "meeting_clarifications": (
         "asker_role_ref", "asker_step_id", "responder_role_ref", "responder_step_id",
     ),
+    # Stage C: how a phase run came about (a plan phase or an integration fix), the context it was
+    # handed, and the goal run that started it. NULL for runs started by hand in Stage B.
+    "goal_phase_runs": ("kind", "synthetic", "handoff", "goal_run_id"),
 }
 
 # Objects that refer to the added columns, so they can only be created once the columns exist.
@@ -421,6 +685,9 @@ AGENT_EXECUTION_IDENTITY_TRIGGER = (
     f"agent_executions BEGIN {_IDENTITY_CHECKS} END"
 )
 COLUMN_SCHEMA = f"""
+CREATE TRIGGER IF NOT EXISTS goal_phase_runs_binding_fixed
+ BEFORE UPDATE OF kind, synthetic, handoff, goal_run_id ON goal_phase_runs
+ BEGIN SELECT RAISE(ABORT, 'What a phase run was started with cannot change'); END;
 {AGENT_EXECUTION_IDENTITY_TRIGGER};
 CREATE TRIGGER IF NOT EXISTS agent_executions_role_identity_fixed
  BEFORE UPDATE OF role_ref, role_snapshot, step_id ON agent_executions

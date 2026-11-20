@@ -12,7 +12,15 @@ from pydantic import ValidationError
 
 from ..adapters.git import git
 from ..adapters.skills import available_skills
-from ..adapters.storage import ROLE_TASK_NO_DELETE_TRIGGERS, ROLE_TASK_TABLES, artifact, decode, now
+from ..adapters.storage import (
+    HOST_TEST_NO_DELETE_TRIGGERS,
+    HOST_TEST_TABLES,
+    ROLE_TASK_NO_DELETE_TRIGGERS,
+    ROLE_TASK_TABLES,
+    artifact,
+    decode,
+    now,
+)
 from ..infra.config import metadata_name
 from ..infra.errors import BridgeError, PermissionDenied, VersionConflict
 from ..infra.security import (
@@ -330,6 +338,15 @@ class ContextHub:
             (project_id,),
         ):
             raise BridgeError("Wait for or cancel the active execution before clearing history")
+        if self.store.one(
+            "SELECT 1 FROM goal_phase_runs WHERE project_id=? UNION ALL "
+            "SELECT 1 FROM goal_runs WHERE project_id=?", (project_id, project_id),
+        ):
+            # A phase run is the record of a Task (and its evidence) that clearing would delete.
+            raise BridgeError(
+                "This project has goal phase runs, whose Tasks and evidence clearing history would "
+                "delete. Cancel the goal's phases and remove the project instead, or keep the history"
+            )
         identity = confirm(
             _clear_history_description(project_id, project), f"CLEAR HISTORY {project_id}"
         )
@@ -428,18 +445,21 @@ class ContextHub:
             }
             try:
                 with self.store.transaction() as conn:
+                    task_history_triggers = (
+                        *ROLE_TASK_NO_DELETE_TRIGGERS, *HOST_TEST_NO_DELETE_TRIGGERS,
+                    )
                     role_trigger_sql = [
                         row[0] for row in conn.execute(
                             "SELECT sql FROM sqlite_master WHERE type='trigger' AND name IN "
-                            f"({','.join('?' for _ in ROLE_TASK_NO_DELETE_TRIGGERS)})",
-                            ROLE_TASK_NO_DELETE_TRIGGERS,
+                            f"({','.join('?' for _ in task_history_triggers)})",
+                            task_history_triggers,
                         )
                     ]
                     for trigger in (
                         "meeting_clarifications_no_delete",
                         "decisions_no_delete",
                         "context_no_delete",
-                        *ROLE_TASK_NO_DELETE_TRIGGERS,
+                        *task_history_triggers,
                     ):
                         conn.execute(f"DROP TRIGGER {trigger}")
                     for table in (
@@ -457,6 +477,7 @@ class ContextHub:
                         "context_versions",
                         "tasks",
                         *ROLE_TASK_TABLES,
+                        *HOST_TEST_TABLES,
                     ):
                         conn.execute(f"DELETE FROM {table} WHERE project_id=?", (project_id,))
                     conn.execute(

@@ -10,7 +10,7 @@ import tempfile
 import uuid
 from pathlib import Path
 
-from ..adapters.storage import ADDED_COLUMNS, now
+from ..adapters.storage import ADDED_COLUMNS, HOST_TEST_TABLES, now
 from ..infra.config import metadata_name
 from ..infra.errors import BridgeError
 from ..infra.security import canonical, digest, safe_path
@@ -88,7 +88,7 @@ def _columns(conn, table):
 
 def _check_schema(conn, project_id=None):
     known = (
-        set(TABLES) | set(ROLE_TABLES) | set(OMITTED_TABLES)
+        set(TABLES) | set(ROLE_TABLES) | set(OMITTED_TABLES) | set(HOST_TEST_TABLES)
         | {"projects", "project_deletions", "operator_settings"}
     )
     for (table,) in conn.execute("SELECT name FROM sqlite_master WHERE type='table'"):

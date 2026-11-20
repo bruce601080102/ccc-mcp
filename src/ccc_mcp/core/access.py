@@ -9,7 +9,17 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
-from ..adapters.storage import ROLE_NO_DELETE_TRIGGERS, ROLE_PROJECT_TABLES, now
+from ..adapters.storage import (
+    GOAL_NO_DELETE_TRIGGERS,
+    GOAL_TABLES,
+    HOST_TEST_NO_DELETE_TRIGGERS,
+    HOST_TEST_TABLES,
+    ROLE_NO_DELETE_TRIGGERS,
+    ROLE_PROJECT_TABLES,
+    STEP_WORKFLOW_NO_DELETE_TRIGGERS,
+    STEP_WORKFLOW_TABLES,
+    now,
+)
 from ..adapters.ui_groups import forget_project_group
 from ..infra.config import metadata_name
 from ..infra.errors import BridgeError, PermissionDenied, VersionConflict
@@ -223,6 +233,8 @@ class ProjectAccessHub:
                         "workspace_edits_no_delete", "workspace_batches_no_delete",
                         "context_no_delete", "decisions_no_delete",
                         "meeting_clarifications_no_delete", *ROLE_NO_DELETE_TRIGGERS,
+                        *HOST_TEST_NO_DELETE_TRIGGERS, *GOAL_NO_DELETE_TRIGGERS,
+                        *STEP_WORKFLOW_NO_DELETE_TRIGGERS,
                     )
                     trigger_sql = [
                         row[0] for row in conn.execute(
@@ -238,12 +250,13 @@ class ProjectAccessHub:
                         "(SELECT id FROM workspace_edits WHERE project_id=?)", (project_id,)
                     )
                     for table in (
+                        *STEP_WORKFLOW_TABLES,
                         "pending_dispatch", "meeting_clarifications", "approvals", "plans",
                         "task_events", "task_interventions", "task_controls",
                         "agent_executions", "artifacts", "decisions",
                         "context_patches", "context_versions", "tasks", "workspace_batches",
                         "workspace_edits", "project_access_events", "project_settings",
-                        *ROLE_PROJECT_TABLES,
+                        *ROLE_PROJECT_TABLES, *HOST_TEST_TABLES, *GOAL_TABLES,
                     ):
                         conn.execute(f"DELETE FROM {table} WHERE project_id=?", (project_id,))
                     conn.execute("DELETE FROM projects WHERE id=?", (project_id,))

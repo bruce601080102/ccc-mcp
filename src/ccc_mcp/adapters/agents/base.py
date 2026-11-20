@@ -10,6 +10,8 @@ from pathlib import Path
 
 import psutil
 
+from ...core.goal_plan import DeliveryPMReport
+from ...core.goal_repair import DeliveryPMRepair
 from ...core.models import (
     AgentReport,
     ClarificationRequest,
@@ -18,7 +20,13 @@ from ...core.models import (
 )
 from ...infra.errors import AgentCancelled, AgentProcessError, AgentTimeout, BridgeError
 from ...infra.security import canonical, redact
-from ...infra.telemetry import ACTIVE_AUDIT, process_finished, process_started, record_output
+from ...infra.telemetry import (
+    ACTIVE_AUDIT,
+    INHERITED_FDS,
+    process_finished,
+    process_started,
+    record_output,
+)
 
 
 def terminate_tree(process):
@@ -64,6 +72,7 @@ def run_process(argv, cwd, prompt, timeout, cancelled, env=None):
             env=env,
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
             start_new_session=os.name != "nt",
+            **({"pass_fds": INHERITED_FDS.get()} if os.name != "nt" and INHERITED_FDS.get() else {}),
         )
         process_started(argv, cwd, process.pid)
         job = None
@@ -299,6 +308,32 @@ def meeting_mode_policy(report_schema, language):
     return ""
 
 
+def delivery_pm_policy(report_schema, language):
+    """Tells a native CLI that a goal_plan run is a planning answer, not a delivery report."""
+    if report_schema == "goal_repair":
+        if language in {"zh-TW", "ch"}:
+            return (
+                "本次是 Delivery PM 對失敗嘗試的唯讀分析，不是 AgentReport。只能輸出要求的 "
+                "message 與 spec，不要輸出 context_updates，也不要修改任何檔案。\n\n"
+            )
+        return (
+            "This is a read-only Delivery PM analysis of a failed attempt, not an AgentReport. "
+            "Return only the requested message and spec; never context_updates, and change no "
+            "file.\n\n"
+        )
+    if report_schema != "goal_plan":
+        return ""
+    if language in {"zh-TW", "ch"}:
+        return (
+            "本次是 Delivery PM 的唯讀規劃，不是 AgentReport。只能輸出要求的 message 與 plan，"
+            "不要輸出 context_updates 或實作內容。\n\n"
+        )
+    return (
+        "This is a read-only Delivery PM planning answer, not an AgentReport. Return only the "
+        "requested message and plan; never context_updates or implementation work.\n\n"
+    )
+
+
 class BaseAgentAdapter(ABC):
     @abstractmethod
     def run(self, package, instruction, cwd, timeout, cancelled):
@@ -318,7 +353,7 @@ class BaseAgentAdapter(ABC):
         language = package.get("language")
         return operator_policy(language) + meeting_mode_policy(
             package.get("report_schema", "agent_report"), language
-        ) + canonical(
+        ) + delivery_pm_policy(package.get("report_schema", "agent_report"), language) + canonical(
             {"context_package": package, "instruction": instruction}
         )
 
@@ -331,6 +366,11 @@ REPORT_MODELS = {
     "agent_report": AgentReport,
     "clarification_request": ClarificationRequest,
     "clarification_response": ClarificationResponse,
+    # The Delivery PM's plan for a Goal (core/goals.py). Any schema other than agent_report is
+    # read-only for both CLI adapters, so a planning run can never change the repository.
+    "goal_plan": DeliveryPMReport,
+    # The Delivery PM's analysis of a failed phase attempt (core/phase_runner.py); read-only too.
+    "goal_repair": DeliveryPMRepair,
 }
 
 

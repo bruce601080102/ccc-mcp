@@ -6,11 +6,12 @@ import portalocker
 
 from .adapters.agents import ADAPTERS, FakeAgentAdapter
 from .adapters.git import git, tracked_snapshot, working_snapshot, worktree
+from .core.host_test_run import child_identity
 from .core.role_prompt import describe_sent
 from .core.roles import REVIEWER_ROLES, writes_files
 from .infra.errors import AgentCancelled, AgentTimeout, BridgeError
 from .infra.security import canonical, comment_check, redact, reject_secrets, same_text_content
-from .infra.telemetry import audit_scope, is_quota_error
+from .infra.telemetry import PROCESS_OBSERVER, audit_scope, is_quota_error
 from .service import CCCMCP
 
 
@@ -140,10 +141,24 @@ def run_execution(bridge, execution_id):
                         )
 
                 adapter.on_prompt = keep
-            with audit_scope(audit):
-                report = adapter.run(
-                    package, row["instruction"], cwd, options["timeout"], cancelled
-                )
+            def remember_child(pid):
+                # If this worker is killed, the CLI it started keeps running (and a developer's CLI
+                # keeps writing files). Recording it lets recovery find and stop that very process,
+                # by pid and start time, before anything can be dispatched again.
+                child = child_identity(pid)
+                if child:
+                    bridge.store.execute(
+                        "UPDATE agent_executions SET options=json_set(options,'$.child',json(?)) "
+                        "WHERE id=?", (canonical(child), execution_id))
+
+            observer = PROCESS_OBSERVER.set(remember_child)
+            try:
+                with audit_scope(audit):
+                    report = adapter.run(
+                        package, row["instruction"], cwd, options["timeout"], cancelled
+                    )
+            finally:
+                PROCESS_OBSERVER.reset(observer)
             reject_secrets(report)
             extras = {
                 "invocation": audit,
@@ -291,6 +306,9 @@ def run_execution(bridge, execution_id):
                             )[:500],
                         }
                 record_fallback_outcome(bridge, execution_id, fallback_info)
+        # Whatever happened, a phase run that supervises this Task wants to look at it now. A no-op
+        # for any other Task, and it never raises: the execution is already recorded.
+        bridge.notify_phase_runner(execution_id)
     finally:
         try:
             lease.release()

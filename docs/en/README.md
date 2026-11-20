@@ -16,5 +16,8 @@ Read these files in order. Steps 1–4 are the complete first-run path; later do
 12. [ChatGPT-only end-to-end evidence walkthrough](12-chatgpt-only-e2e-walkthrough.md)
 13. [Meeting Mode end-to-end walkthrough](13-meeting-mode-walkthrough.md)
 14. [Agent Studio: your own roles](14-agent-studio.md)
+15. [Goals: plan a whole requirement, then approve the plan](15-goal-planner.md)
+16. [Running one approved phase, with a repair loop](16-phase-runner.md)
+17. [Running a whole goal: from the approved plan to a verified result](17-goal-run.md)
 
 For the short introduction and copy-paste path, return to the repository [README](../../README.md). Traditional Chinese documentation is in [docs/ch](../ch/README.md).

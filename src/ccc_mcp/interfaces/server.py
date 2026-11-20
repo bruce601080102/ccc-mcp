@@ -1061,7 +1061,9 @@ def create_server(
         async def recover_workers(project_id: ProjectId) -> dict[str, Any]:
             """Clear executions stuck QUEUED/RUNNING with no live worker holding their lock
             (the worker crashed or never started); only touches executions that are provably
-            not running. Call this when get_task_status.brief.progress.orphaned is true; for
+            not running. It also closes a host-test run whose runner was killed (recorded as
+            interrupted, never as a pass; the tests must then run again). Call this when
+            get_task_status.brief.progress.orphaned is true or a task stays "running host tests"; for
             an interrupted advance_project use resume_pending_dispatch, and to abandon a task
             use cancel_task."""
             return await call(bridge.recover_workers, project_id)

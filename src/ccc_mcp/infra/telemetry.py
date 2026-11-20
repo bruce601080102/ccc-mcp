@@ -10,6 +10,12 @@ from .errors import BridgeError
 from .security import reject_secrets
 
 ACTIVE_AUDIT = ContextVar("ccc_mcp_audit", default=None)
+# Called with the pid of every process run_process spawns, right after it starts. A Host Test run
+# uses it to record which child it is waiting on, so a dead runner's child can be found again.
+PROCESS_OBSERVER = ContextVar("ccc_mcp_process_observer", default=None)
+# File descriptors run_process lets its child inherit (POSIX). A Host Test passes its lease here, so
+# the lease stays held for as long as the test process lives, even if the runner is killed.
+INHERITED_FDS = ContextVar("ccc_mcp_inherited_fds", default=())
 
 # Version of the normalised view built by canonical_usage(). Legacy `tokens` fields are
 # never rewritten; the normalised view is an additional, versioned reading of them.
@@ -558,6 +564,9 @@ def record_output(provider, stdout, stderr=""):
 
 
 def process_started(argv, cwd, pid):
+    observer = PROCESS_OBSERVER.get()
+    if observer is not None:
+        observer(pid)
     audit = ACTIVE_AUDIT.get()
     if audit is None:
         return

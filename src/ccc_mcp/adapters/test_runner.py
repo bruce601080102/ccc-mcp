@@ -449,6 +449,7 @@ def run_tests_local(bridge, project_id, task_id):
     # Every other local-approval call site in this codebase (core/tasks.py) already
     # follows this same local-import pattern for the identical reason.
     from ..core.approval import confirm_local
+    from ..core.host_test_run import outcome_of
 
     bridge.approved_plan(project_id, task_id)
     cwd = _implementation_workspace(bridge, project_id, task_id)
@@ -460,13 +461,20 @@ def run_tests_local(bridge, project_id, task_id):
         f"在 {cwd} 執行 {' '.join(command)}\n測試會執行儲存庫程式碼，請先審閱測試內容。",
         task_id,
     )
-    # Serialize with agent activity for this task using the project lock.
-    with bridge.lock(project_id):
-        live = bridge.store.one(
-            "SELECT 1 FROM agent_executions WHERE project_id=? AND task_id=? "
-            "AND status IN ('QUEUED','RUNNING')",
-            (project_id, task_id),
-        )
-        if live:
-            raise BridgeError("Wait for the active agent before running tests")
-        return execute_test_command(bridge, project_id, task_id, command, identity, cwd, selection)
+    # The same exclusion as the automatic run: one host test per task, whichever entry point
+    # started it. Unlike the automatic run this never refused a paused task, and still does not.
+    with bridge.host_test_session(project_id, task_id, enforce_runnable=False) as outcome:
+        # Serialize with agent activity for this task using the project lock.
+        with bridge.lock(project_id):
+            live = bridge.store.one(
+                "SELECT 1 FROM agent_executions WHERE project_id=? AND task_id=? "
+                "AND status IN ('QUEUED','RUNNING')",
+                (project_id, task_id),
+            )
+            if live:
+                raise BridgeError("Wait for the active agent before running tests")
+            result = execute_test_command(
+                bridge, project_id, task_id, command, identity, cwd, selection
+            )
+        outcome[0] = outcome_of(result)
+        return result

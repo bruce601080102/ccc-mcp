@@ -234,6 +234,7 @@
     dashboard: `<svg class="icon" viewBox="0 0 16 16"><path d="M2 13.5h12M3.5 11V8M7.5 11V4M11.5 11V6"/><path d="M3.5 8h2v3h-2zM7.5 4h2v7h-2zM11.5 6h2v5h-2z"/></svg>`,
     overview: `<svg class="icon" viewBox="0 0 16 16"><path d="M2 8.5 8 3l6 5.5"/><path d="M3.5 7.5V13a.5.5 0 0 0 .5.5h3v-4h2v4h3a.5.5 0 0 0 .5-.5V7.5"/></svg>`,
     tasks: `<svg class="icon" viewBox="0 0 16 16"><path d="M3 4.5h10M3 8h10M3 11.5h6"/></svg>`,
+    goals: `<svg class="icon" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5"/><circle cx="8" cy="8" r="2.2"/></svg>`,
     settings: `<svg class="icon" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.1"/><path d="M8 2v1.6M8 12.4V14M13.3 5.3l-1.3.8M4 9.9l-1.3.8M14 8h-1.6M3.6 8H2M13.3 10.7l-1.3-.8M4 6.1l-1.3-.8"/></svg>`,
     context: `<svg class="icon" viewBox="0 0 16 16"><path d="M4 1.8h5.5L12.3 4.5V14a.5.5 0 0 1-.5.5h-7.8a.5.5 0 0 1-.5-.5V2.3a.5.5 0 0 1 .5-.5Z"/><path d="M6 8h4M6 10.3h4"/></svg>`,
     skills: `<svg class="icon" viewBox="0 0 16 16"><path d="M5.7 2.3a1.3 1.3 0 0 1 2.6 0c0 .5-.3.8-.3 1.3 0 .4.3.7.7.7h1.6a.7.7 0 0 1 .7.7v1.6c0 .4.3.7.7.7.5 0 .8-.3 1.3-.3a1.3 1.3 0 0 1 0 2.6c-.5 0-.8-.3-1.3-.3-.4 0-.7.3-.7.7v1.6a.7.7 0 0 1-.7.7H8.7c-.4 0-.7-.3-.7-.7 0-.5.3-.8.3-1.3a1.3 1.3 0 0 0-2.6 0c0 .5.3.8.3 1.3 0 .4-.3.7-.7.7H3.7a.7.7 0 0 1-.7-.7v-1.6c0-.4-.3-.7-.7-.7-.5 0-.8.3-1.3.3a1.3 1.3 0 0 1 0-2.6c.5 0 .8.3 1.3.3.4 0 .7-.3.7-.7V5c0-.4.3-.7.7-.7h1.6c.4 0 .7-.3.7-.7 0-.5-.3-.8-.3-1.3Z"/></svg>`,
@@ -319,6 +320,7 @@
       <div class="nav-group-label">${esc(currentProjectId)}</div>
       <a class="nav-item ${currentRoute.view === "overview" ? "active" : ""}" href="#/p/${p}/overview">${ICON.overview}Overview</a>
       <a class="nav-item ${currentRoute.view === "tasks" ? "active" : ""}" href="#/p/${p}/tasks">${ICON.tasks}Tasks</a>
+      <a class="nav-item ${currentRoute.view === "goals" ? "active" : ""}" href="#/p/${p}/goals">${ICON.goals}Goals</a>
       <a class="nav-item ${currentRoute.view === "settings" ? "active" : ""}" href="#/p/${p}/settings">${ICON.settings}Settings</a>
       <a class="nav-item ${currentRoute.view === "roles" ? "active" : ""}" href="#/p/${p}/roles">${ICON.studio}Role Studio</a>
       <a class="nav-item ${currentRoute.view === "context" ? "active" : ""}" href="#/p/${p}/context">${ICON.context}Context</a>
@@ -4523,6 +4525,11 @@ tests/test_clamp.py::test_clamp_upper_bound PASSED
     paintMain();
   }
 
+  const goalsView = window.cccGoals({
+    api, esc, UI, layout, navTo, toast, showModal, parseRoute, stale, getGen: () => renderGen,
+    trackTimer, whenHtml, loadingView, errorView,
+  });
+
   function route() {
     renderGen += 1;
     captureTokenFromHash();
@@ -4535,6 +4542,8 @@ tests/test_clamp.py::test_clamp_upper_bound PASSED
     if (r.view === "global-skills") return renderGlobalSkills();
     if (r.view === "dashboard") return renderDashboard();
     if (!r.project) return renderProjects();
+    if (r.view === "goals" && r.sub) return goalsView.renderGoalDetail();
+    if (r.view === "goals") return goalsView.renderGoals();
     if (r.view === "tasks" && r.sub) return renderTaskDetail();
     if (r.view === "tasks") return renderTasksList();
     if (r.view === "settings") return renderSettings();
