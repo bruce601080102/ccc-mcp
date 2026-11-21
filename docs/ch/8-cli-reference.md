@@ -25,7 +25,7 @@ ccc-mcp project export 專案ID --out 專案備份.json
 ccc-mcp project import 專案備份.json --path /新電腦/專案資料夾
 ```
 
-Web 控制台也可在專案總覽按「匯出備份」，再到「所有專案」按「匯入備份」。備份包含這個專案的角色／工作流等設定、Context 版本、任務對話、執行報告、審查與測試紀錄；不含 Git 儲存庫、原始碼、受管理 worktree、全域 Skills、Tunnel 憑證、每次執行完整的 provider 文字或已安裝 MCP 伺服器。自訂角色（Agent Studio）會以版本 2 的備份一併匯出，舊版會拒絕讀它；匯入的每個角色在有人於控制台確認之前都是未確認狀態（見 [Agent Studio](14-agent-studio.md#8-匯出匯入與信任確認)）。匯入不覆蓋既有註冊或 `.ccc-mcp`，新裝置上的寫入授權一律重設為唯讀，未完成任務會先暫停。備份可能含需求、報告、存取稽核與程式片段，請當成專案資料保管。
+Web 控制台也可在專案總覽按「匯出備份」，再到「專案」按「匯入備份」。備份包含這個專案的角色／工作流等設定、Context 版本、任務對話、執行報告、審查與測試紀錄；不含 Git 儲存庫、原始碼、受管理 worktree、全域 Skills、Tunnel 憑證、每次執行完整的 provider 文字或已安裝 MCP 伺服器。已存在的自訂角色會以版本 2 的備份一併匯出，舊版會拒絕讀它。控制台已不再建立或確認角色，所以匯入的角色會維持未確認、不會被使用。匯入不覆蓋既有註冊或 `.ccc-mcp`，新裝置上的寫入授權一律重設為唯讀，未完成任務會先暫停。備份可能含需求、報告、存取稽核與程式片段，請當成專案資料保管。
 
 授權後固定走 Agent／Context 證據鏈，不需選模式。ChatGPT 對一般修改需求呼叫 `start_project_request`，後端會派出設定的 SA；上一個任務未結束時沿用它，已完成、取消或駁回時建立下一個 TASK 編號；PM 以 `advance_project` 提交有來源的 ContextPatch 後，系統自動派出 SD/RD、REVIEW 並完成本輪。實作 Agent 在原專案寫檔；MCP 不提供直接寫檔捷徑。
 
@@ -89,13 +89,6 @@ ccc-mcp --project demo-app config role SD/RD chatgpt
 ccc-mcp --project demo-app config role REVIEW chatgpt
 ```
 
-替角色（含 `PM`）取聊天室顯示名稱；不填名稱就恢復預設（角色縮寫）。名稱最多 24 字，只影響顯示，不影響流程：
-
-```text
-ccc-mcp --project demo-app config role-name SA 小分析
-ccc-mcp --project demo-app config role-name SA
-```
-
 `ccc-mcp --project demo-app config show` 會回報目前的 `profile`（`chatgpt-only`／`best-model`／`custom`）；要切回最佳模型工作流，執行 `ccc-mcp --project demo-app config profile best-model`——這個 `best-model` 會依本機實際裝了哪些 CLI 動態決定（兩個都裝＝原本的 Codex/Claude 分工；只裝一個＝全部角色用那一個；一個都沒裝會直接拒絕），不是固定寫死的組合。
 
 `config meeting-mode on|off [--min-rounds N] [--max-rounds N] [--escalation ask-user|auto-pm]` 開關[第 4 步](4-workflow.md#5a-meeting-modesdrd-動工前先問一輪預設關閉)描述的 SD/RD↔SA 澄清對話，預設關閉，`max_rounds` 硬上限 5，`--escalation` 預設為 `ask-user`。解決升級給 PM 的澄清沒有對應 CLI 指令（`resolve_clarification` 是給 PM／ChatGPT 呼叫的 MCP 工具）——跟 `advance_project`／`propose_context_patch`／`commit_context_patch` 一樣都沒有 CLI 版本。
@@ -103,17 +96,10 @@ ccc-mcp --project demo-app config role-name SA
 ## 評估引擎指令
 
 ```text
-ccc-mcp --project demo-app config evaluation-engine on|off [--auto-evaluate|--manual-only]
-ccc-mcp --project demo-app task evaluate [TASK_ID] [--role ROLE] [--task-type 標籤] [--force]
-ccc-mcp --project demo-app task evaluations [TASK_ID] [--role ROLE]
-ccc-mcp --project demo-app task reevaluate TASK_ID EXECUTION_ID [--task-type 標籤]
-ccc-mcp reputation [--agent PROVIDER] [--role ROLE] [--task-type 標籤]
-ccc-mcp validate-scoring CASES.jsonl [--labels REPORT.json] [--rows]
 ```
 
 `config workflow ID`（`classic`、`standard`、`full` 或自訂的）選擇新任務使用的工作流；`config workflows` 列出可用的工作流，`config workflow-save --steps SA,SD,RD,REVIEW [--name 名稱] [--id flow-2]` 建立或修改自己的，`config workflow-delete ID` 刪除，`config workflow-selection fixed|pm|auto` 決定誰來挑新任務的工作流（見[自訂工作流](4-workflow.md#自訂工作流以及誰來挑)）。`config review-gate [--ar normal|strict|extreme] [--max-rounds 1-5] [--escalation ask-user|auto-pm]` 設定審查關卡的力道，說明見[步驟 4](4-workflow.md#工作流與審查關卡)。省略的 `review-gate` 選項維持原值。關卡決定要用 MCP 工具 `resolve_flow_gate` 或任務頁面，CLI 沒有對應指令。
 
-`config evaluation-engine` 預設關閉；開啟後 `task evaluate` 會對這個任務每個角色最新一次成功執行做一次證據導向評分（純規則運算，不呼叫 LLM），已評過的執行預設會跳過，加 `--force` 才會強制重新評估（保留舊版本，不覆蓋）。`task evaluations` 是唯讀列表，含每次重新評估保留的舊版本。`task reevaluate` 強制重新評估一個指定的 `EXECUTION_ID`（用 `task evaluations` 查）。`reputation` 唯讀、跨所有專案，依 agent／模型／角色／任務類型統計 Beta-Bernoulli 可靠度，只計入已驗證的 `PASSED`／`FAILED`；樣本數太少時 `low_sample` 會是 `true`，`REVIEW` 角色另外附上 `review_precision`（`review_recall` 永遠是 `null`，因為沒有完整缺陷真值集合可以老實算出 Recall）。`quality_score`／`evidence_coverage` 的確切公式見[技術參考](10-technical-reference.md#評估引擎)。`validate-scoring` 不需要專案：讀入已記錄的案例，與 SWE-bench 風格的 resolved／unresolved 標準答案比對（AUROC、各及格線準確率、誤判通過清單），說明見[技術參考](10-technical-reference.md#用標準答案檢驗評分)。
 
 ## 現在輪到誰、下一步該貼什麼？
 

@@ -1,2 +1,0 @@
-339/339 checks passed
-exit 0

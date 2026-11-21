@@ -94,7 +94,6 @@ Use a context budget for long-running projects:
 ```bash
 ccc-mcp --project hello-demo config context-budget 150000
 ccc-mcp --project hello-demo config context-budget --clear
-ccc-mcp --project hello-demo config prompt SA
 ```
 
 ccc-mcp first omits optional Skill bodies and then compresses older verified history. It never silently truncates current reports, invariants, or cited evidence; dispatch is rejected if the package remains too large.

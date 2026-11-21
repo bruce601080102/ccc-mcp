@@ -1,2 +1,0 @@
-FREEZE CHECK PASSED
-freeze exit 0

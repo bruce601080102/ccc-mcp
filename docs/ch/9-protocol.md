@@ -7,7 +7,7 @@
 **算**：
 
 - 所有 MCP 工具的回傳值（`bootstrap_project`、`get_context`、`get_task_status`、`get_task_result` 等）。
-- CLI 指令經由 `output()`（[interfaces/cli.py](../src/ccc_mcp/interfaces/cli.py)）印出的 JSON，也就是絕大多數指令——例如 `ccc-mcp task status`、`ccc-mcp context show`。
+- CLI 指令經由 `output()`（[interfaces/cli.py](../../src/ccc_mcp/interfaces/cli.py)）印出的 JSON，也就是絕大多數指令——例如 `ccc-mcp task status`、`ccc-mcp context show`。
 - `docs/schema/*.json`：下面列的三個核心形狀的正式 JSON Schema。
 
 **不算**（可以隨時改，不保證相容）：
@@ -24,17 +24,17 @@
 "protocol_version": "1"
 ```
 
-只有在下面三個 schema 有不相容變更（刪欄位、改型別、改語意）時才會升版；新增可省略的欄位不算破壞性變更，不會升版。對應的常數是 [`core/models.py`](../src/ccc_mcp/core/models.py) 的 `PROTOCOL_VERSION`。
+只有在下面三個 schema 有不相容變更（刪欄位、改型別、改語意）時才會升版；新增可省略的欄位不算破壞性變更，不會升版。對應的常數是 [`core/models.py`](../../src/ccc_mcp/core/models.py) 的 `PROTOCOL_VERSION`。
 
 ## 核心 Schema
 
 | 檔案 | 對應 Pydantic model | 用途 |
 |---|---|---|
-| [`schema/agent-report.json`](schema/agent-report.json) | `AgentReport` | Codex／Claude／ChatGPT 每次執行完回報的結構，`get_task_result` 裡每筆 execution 的 `result.report` 就是這個形狀。 |
-| [`schema/context-snapshot.json`](schema/context-snapshot.json) | `ContextSnapshot` | 專案目前共用 Context 的完整內容，`get_context`／`bootstrap_project` 的 `working_context` 欄位。 |
-| [`schema/context-patch.json`](schema/context-patch.json) | `ContextPatch` | PM 提交 Context 變更時的格式，`propose_context_patch` 工具的輸入。 |
+| [`schema/agent-report.json`](../schema/agent-report.json) | `AgentReport` | Codex／Claude／ChatGPT 每次執行完回報的結構，`get_task_result` 裡每筆 execution 的 `result.report` 就是這個形狀。 |
+| [`schema/context-snapshot.json`](../schema/context-snapshot.json) | `ContextSnapshot` | 專案目前共用 Context 的完整內容，`get_context`／`bootstrap_project` 的 `working_context` 欄位。 |
+| [`schema/context-patch.json`](../schema/context-patch.json) | `ContextPatch` | PM 提交 Context 變更時的格式，`propose_context_patch` 工具的輸入。 |
 
-這三份檔案不是手寫的，是從 [`core/models.py`](../src/ccc_mcp/core/models.py) 的 Pydantic model 直接產生，跟 ccc-mcp 內部實際驗證資料用的是同一份定義。改了對應的 model 之後，重新產生：
+這三份檔案不是手寫的，是從 [`core/models.py`](../../src/ccc_mcp/core/models.py) 的 Pydantic model 直接產生，跟 ccc-mcp 內部實際驗證資料用的是同一份定義。改了對應的 model 之後，重新產生：
 
 ```bash
 ccc-mcp schema export docs/schema

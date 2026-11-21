@@ -131,7 +131,7 @@ Agent 成功回報時，ccc-mcp 會在同一交易中保存不可變原始報告
 3. `propose_context_patch` 驗證版本、來源雜湊、必要欄位、不可遺失資訊，回傳 diff。
 4. `commit_context_patch` 再次驗證並提交。
 
-JSON Patch 範例見 [examples/context-patch.json](../examples/context-patch.json)：
+JSON Patch 範例見 [examples/context-patch.json](../../examples/context-patch.json)：
 
 ```powershell
 ccc-mcp context source .ccc-mcp/tasks/TASK-0001/executions/EXEC-實際ID/SA-REPORT.md
@@ -210,33 +210,6 @@ Codex 依角色使用 `read-only` 或 `workspace-write` sandbox 與 JSON Schema�
 此 MVP 的信任邊界是**同一個受信任本機操作者**。它不是能抵禦同 OS 帳戶惡意程序的人工身分驗證系統：持有同帳戶 shell/資料庫權限的程序仍可模擬終端或改 DB。多使用者部署應使用獨立操作者帳戶、ACL、外部核准服務或硬體簽章。Worktree 與 CLI 工具限制亦不等於完整 OS 沙箱；要防範惡意 Repository，應在隔離 VM/容器中執行真實 Agent 與測試，不提供主機憑證或資料庫寫入權限。
 
 其他已實作控制包括路徑註冊、traversal/symlink/junction 拒絕、受管檔案鎖、日誌遮罩及常見秘密字串拒絕。秘密偵測為啟發式，無法保證識別任意格式的憑證。Python 註解使用 tokenize 精確比較文字與數量；其他變動檔案保守標示需人工確認，狀態 BLOCKED。程式不自動 push、merge 或 deploy，也不自動將整個 Repository 傳給 ChatGPT。
-
-## 評估引擎
-
-`config evaluation-engine on` 開啟選用的評分功能：讀取一次執行已經保存下來的證據——host 實際跑出的測試結果、這次執行的 diff、`ruff` 靜態檢查——算出兩個數字，過程**不額外呼叫任何 LLM**：
-
-- `quality_score`（品質分數）：只對「真的有證據」的子項目（`test`／`requirement`／`code_quality`／`security`／`review`）取加權平均，權重用該角色設定的值，且只在這些「有證據」的項目之間重新正規化。沒有證據的子項目是 `null`，直接從平均裡排除，絕不當成 0 分或滿分。
-- `evidence_coverage`（證據覆蓋率）：有證據的那些維度，權重加總除以該角色定義的全部權重加總。回答的是「這個角色的評分項目裡，我們實際查得到證據的佔多少」，跟那些有證據的項目分數高低無關。
-
-舉例：SA 的權重設定是 `{requirement: 0.70, review: 0.30}`，而 SA 的 `review` 子項目設計上永遠是 `null`——目前沒有任何一種 `CONFIRMED` 的分歧類型能歸咎到 SA，硬給一個分數就是捏造。假設 `requirement = 100`，`quality_score = 100`（唯一有證據的那個維度本身的加權平均），但 `evidence_coverage = 0.70`（總權重 1.00 裡只有 0.70），即使品質分數滿分，也只代表查到了 70% 的全貌。
-
-`task_status`（`PASSED`／`TASK_FAILED`／`NEEDS_VERIFICATION`／`INSUFFICIENT_EVIDENCE`）由另一組固定硬規則判斷，加權分數永遠蓋不過它——驗收測試沒過、測試套件根本沒執行、或整體證據覆蓋率太薄，都不可能判成 `PASSED`。`task evaluate`／`task evaluations`／`task reevaluate` 跟網頁控制台的任務頁都用這套結果；`reputation` 另外跨所有專案，依 agent／模型／角色／任務類型算 Beta-Bernoulli 可靠度，樣本數太少時會明確顯示不確定範圍。
-
-### 用標準答案檢驗評分
-
-`ccc-mcp validate-scoring CASES.jsonl [--labels REPORT.json] [--rows]` 回答「分數高是不是真的代表有解決」。`CASES.jsonl` 每行是 ccc-mcp 實際觀察到的一次執行（`instance_id`、Agent 的 `diff`、host 跑的 `test_result`、Agent 的 `report`，可選 `acceptance` 與 ruff 格式的 `static_findings`）；標準答案取自每筆的 `resolved` 欄位，或用 `--labels` 指定 SWE-bench 評測結果（`resolved_ids`／`unresolved_ids`）。它走和正式流程相同的特徵與評分程式，輸出 AUROC（0.5 等於擲硬幣）、各及格線的準確率與精確率，以及「誤判通過」清單：`task_status` 是 `PASSED` 但實際沒解決的案例。純規則運算、不呼叫 LLM、不需要專案。有評分的案例少於 30 筆，或任一類少於 5 筆時，只會標示為冒煙測試，不下結論。產生案例（用 ccc-mcp 去跑 SWE-bench 題目）是另一步，這個工具只負責評判給它的資料。 要從真實執行建立 `CASES.jsonl`，用 `ccc-mcp --project NAME task export-cases [TASK_ID...] [--out cases.jsonl]`：唯讀，每個已完成實作的任務匯出一筆，`instance_id` 取自任務需求文字裡的 SWE-bench 編號（找不到就用任務編號），不含標準答案。
-
-目前已知會被它抓出的弱點與處理：唯一通過的測試是 Agent 自己新寫的（`astropy__astropy-13398` 那種情況）時，過去會拿 100 分。現在對 SD/RD 角色，這種情況的 `test` 子項最高 70 分，所以 `quality_score` 會下降；但其他維度都乾淨時仍可能是 `PASSED`，`validate-scoring` 會繼續把它列為誤判通過。
-
-完全沒有 diff 的實作回合永遠不會是 `PASSED`（會變成 `NEEDS_VERIFICATION`），它的綠燈測試也拿不到 `test` 分數，因為修改之前就已經全綠的測試，無法說明這次做了什麼。
-
-**第一次實測（玩具題庫，不是真的 Agent）。**`tests/toybench.py` 用 6 個單一函式的小任務產生 30 筆案例，每題都有修補看不到的隱藏測試：正確、正確且附自己的測試、錯誤但可見測試全過、錯誤且附一個會過的自寫測試、以及改壞的修補。結果：AUROC 0.67，12 筆「錯誤但可見測試全過」的修補全部被判 `PASSED`（`PASSED` 之中誤判率 50%）；改壞的修補一律 `FAILED`，分數也低於所有正確的修補。也就是說，只靠本機可見測試能抓出「改壞」，但分不出「錯誤卻全綠」和「正確」；自寫測試上限在這份資料上沒有改變 AUROC。修補是手寫的，所以測的是評分規則，不是真實 Agent 會犯哪些錯。
-
-### 與單一 Agent 比較 token 成本
-
-`ccc-mcp compare-tokens CCC.jsonl DIRECT.jsonl [--ccc-labels R.json] [--direct-labels R.json]` 比較 ccc-mcp 與單一 Agent 直接做同一批任務。兩邊各是一個 JSONL，欄位為 `instance_id`、`tokens_total`、`resolved`；ccc-mcp 那邊由 `task export-cases` 產生（`tokens_total` 是 CLI 回報的 input + output token，另有 `usage_complete`）。主要指標是「每解決一題花的 token」：所有花掉的 token（含失敗的嘗試）除以解決題數，並列出各自的解決率，因為便宜必須是建立在仍然做得出來之上。兩邊共同題目少於 20 題時，結論只會標示為冒煙測試。
-
-**限制：**只有原生 CLI 的回合（Codex、Claude Code）會回報 token 用量。ChatGPT 網頁／MCP 的回合不會呼叫本機 CLI，所以沒有用量；含這類回合的任務會匯出 `usage_complete: false`，結論也會警告 ccc-mcp 的成本被低估。因此純 ChatGPT-only 的執行無法用這個方法量測。
 
 ## 交付範圍
 

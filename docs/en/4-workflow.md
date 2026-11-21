@@ -42,7 +42,7 @@ See [reliability and security](7-reliability-and-security.md) for test gates, qu
 
 ## Workflows and review gates
 
-A new task runs the workflow the project selected when the task starts (`config workflow classic|full`, or Settings → Workflow). A task keeps that workflow for its whole life; changing the setting later never moves work in flight.
+A new task runs the workflow the project selected when the task starts (`config workflow classic|full`, or the team card on the project's page). A task keeps that workflow for its whole life; changing the setting later never moves work in flight.
 
 | Workflow | Steps |
 |---|---|
@@ -62,7 +62,7 @@ Each gate verdict is stored (`flow_gate_results`) and a gate's failed rounds are
 
 For work that is not software there are nine more roles, shown by what they do instead of an abbreviation: `PA` personal assistant, `RS` researcher, `AN` analyst, `PL` planner, `CS` consultant, `WR` writer, `ED` editor, `VC` fact checker and `RV` reviewer (the strict reviewer is the existing `AR`). PA, RS, AN, PL, CS, WR and ED **produce**: each hands over a document (saved as `PA-DOCUMENT.md`, `RS-DOCUMENT.md`, ...) that every later step reads. VC and RV are **gates** that send work back to the nearest earlier producer, like the software reviewers. None of them ever changes files, and their answers are written in plain language in the language of the request.
 
-Four team templates are built in, listed under "Everyday teams" in Settings → Workflow:
+Four team templates are built in, listed under "Everyday teams" in the workflow list of the team card on the project's page:
 
 | Template | Steps | For |
 |---|---|---|
@@ -73,17 +73,20 @@ Four team templates are built in, listed under "Everyday teams" in Settings → 
 
 Pick one with `config workflow life`, or let `config workflow-selection auto` choose from the request (trip, budget, proposal, article, "should I..." and similar words; anything that mentions code stays on a software workflow). You can mix any roles in your own workflow, and the first step may be any producer, so `PA → WR → ED` is a valid "letter" workflow. The task page shows an everyday task's documents on its Results tab, newest first, and hides the diff and test cards, which only apply when a step changes code.
 
-**Providers.** The everyday roles default to ChatGPT, not Codex or Claude Code: the CLI agents here can only read the project folder, so a researcher or fact checker running on them cannot look anything up. With ChatGPT each step is done by the ChatGPT conversation itself, which can browse. When ChatGPT hands in its report with `submit_agent_report`, the backend records it in Context and dispatches the next step itself (`auto_advanced: true` in the reply), so ChatGPT does not call `advance_project` and no PM round sits between steps. The same applies to the read-only specialists SR, AR, SEC, QA and SW when they sit in a workflow, so a team that mixes in an adversarial reviewer does not stop at it; SA, SD/RD and REVIEW still get their PM round. The workflow still waits for the PM when the task is paused, when the project has no write authorization, or when the step belongs to a software workflow. A role can still be pointed at Codex or Claude Code in Settings → Roles when its job needs no outside information (for example WR or ED working from the researcher's notes).
+Chapter 14 ([the AI team, your own workflows and your own roles](14-ai-team-and-roles.md)) describes the team card, custom roles and how a task keeps its team.
 
-**Ability charts.** Every role scores 0–5 on six abilities: research, reasoning, planning, creation, verification and risk sense. Settings shows each role's chart, every workflow card shows the combined chart and a team power (the sum, out of 30), and the workflow editor redraws it as you change steps. A team's score on an ability is its strongest member's score, plus 0.5 for every other member who scores 3 or more (at most 5); a role used twice counts once. Abilities nobody on the team is good at (1 or less) are listed as weak spots. On a task's Results tab the chart grows as steps finish, with the whole team drawn as a dashed outline. The numbers live in `core/roles.py` (`ROLE_STATS`) and come with `list_workflows`/the workflow catalog as `stats`.
+**Goals need a developer step.** A Goal phase is accepted on host-run tests of what a developer changed, and a failed step is repaired by sending the work back to that developer. So a phase can run only on a workflow that has an `RD` or `SD/RD` step: Classic, Standard, Full and your own workflows that include one. The everyday teams (`life`, `business`, `content`, `decision`) write reports and never change files, so they cannot run a phase; they still run ordinary tasks. A plan that names such a team (or says `default` while one is selected) is refused when it is stored, with the reason, instead of failing after you approve it. The Team card shows this on the team's own page, and the planner is told which workflows can run a phase.
+
+**Providers.** The everyday roles default to ChatGPT, not Codex or Claude Code: the CLI agents here can only read the project folder, so a researcher or fact checker running on them cannot look anything up. With ChatGPT each step is done by the ChatGPT conversation itself, which can browse. When ChatGPT hands in its report with `submit_agent_report`, the backend records it in Context and dispatches the next step itself (`auto_advanced: true` in the reply), so ChatGPT does not call `advance_project` and no PM round sits between steps. The same applies to the read-only specialists SR, AR, SEC, QA and SW when they sit in a workflow, so a team that mixes in an adversarial reviewer does not stop at it; SA, SD/RD and REVIEW still get their PM round. The workflow still waits for the PM when the task is paused, when the project has no write authorization, or when the step belongs to a software workflow. A role can still be pointed at Codex or Claude Code on the team card (its **Advanced** button) when its job needs no outside information (for example WR or ED working from the researcher's notes).
+
 
 ### The specification writer (SW)
 
-SW turns what the discussion concluded (the requirement, SA's analysis, SD's design, and what the reviewers raised and how it was settled) into one specification written for an AI to implement from: purpose and non-goals, a glossary, decisions with their reasons and the alternatives rejected, numbered testable requirements (`REQ-001`, MUST/SHOULD/MAY), exact interfaces and data shapes, Given/When/Then acceptance criteria, and open questions listed rather than guessed. The document is saved as `SPEC.md` (the report itself as `SW-REPORT.md`) and handed to SD, RD and every reviewer that runs after it; the console shows it on the task's Results tab. SW only reads the repository; it never changes files. It is a producer, so a gate after it sends work back to it. No built-in workflow includes SW yet: add it in Settings → Workflow, for example `SA → AR → SR → SW → RD → CR`, so the spec is written after the discussion has settled.
+SW turns what the discussion concluded (the requirement, SA's analysis, SD's design, and what the reviewers raised and how it was settled) into one specification written for an AI to implement from: purpose and non-goals, a glossary, decisions with their reasons and the alternatives rejected, numbered testable requirements (`REQ-001`, MUST/SHOULD/MAY), exact interfaces and data shapes, Given/When/Then acceptance criteria, and open questions listed rather than guessed. The document is saved as `SPEC.md` (the report itself as `SW-REPORT.md`) and handed to SD, RD and every reviewer that runs after it; the console shows it on the task's Results tab. SW only reads the repository; it never changes files. It is a producer, so a gate after it sends work back to it. No built-in workflow includes SW yet: add it with **New workflow** on the team card, for example `SA → AR → SR → SW → RD → CR`, so the spec is written after the discussion has settled.
 
 ### Your own workflows, and who picks one
 
-Settings → Workflow (or `config workflow-save --steps SD,AR,RD,REVIEW [--name N]`) lets you build a workflow from any ordered list of roles, up to 12 steps. The first step must make something (SA, SD, RD or SD/RD) so a reviewer always has something to judge and a producer to send work back to. A workflow you save is named `工作流 2`, then `工作流 3` (`Workflow 2`, `Workflow 3` when the project language is English), and you can rename it; the two built-in workflows cannot be changed, only copied. A project holds at most 20 of its own. Deleting one never disturbs a task already running it, and if it was the selected workflow new tasks go back to `classic`.
+The team card on the project's page, with **New workflow** (or `config workflow-save --steps SD,AR,RD,REVIEW [--name N]`) lets you build a workflow from any ordered list of roles, up to 12 steps. The first step must make something (SA, SD, RD or SD/RD) so a reviewer always has something to judge and a producer to send work back to. A workflow you save is named `工作流 2`, then `工作流 3` (`Workflow 2`, `Workflow 3` when the project language is English), and you can rename it; the two built-in workflows cannot be changed, only copied. A project holds at most 20 of its own. Deleting one never disturbs a task already running it, and if it was the selected workflow new tasks go back to `classic`.
 
 A workflow with no SA, for example `SD → AR → RD → CR`, uses your requirement and acceptance criteria as the approved plan, so the PM goes straight to SD.
 
@@ -92,14 +95,14 @@ A workflow with no SA, for example `SD → AR → RD → CR`, uses your requirem
 | Mode | Behaviour |
 |---|---|
 | `fixed` (default) | Always the selected workflow. |
-| `pm` | ChatGPT calls `list_workflows`, chooses the best fit per task and passes its id as `workflow` to `start_project_request`; with no choice the selected workflow runs. |
+| `pm` | Kept for existing projects: it now behaves like `fixed`, because ChatGPT no longer has a tool for choosing a workflow. |
 | `auto` | ccc-mcp picks from the task text. Security work (login, password, token, permission, payment…) needs a workflow with SEC; a large or risky change (refactor, migrate, architecture, schema…) needs SD and AR; a small edit (typo, rename, docs…) gets the shortest workflow; anything else keeps the selected one. Among workflows that qualify the shortest wins. |
 
-The chosen workflow, how it was chosen and why are stored with the task (`task status` → `brief.workflow`). A `workflow` argument is ignored unless the mode is `pm`.
+The chosen workflow, how it was chosen and why are stored with the task (`task status` → `brief.workflow`).
 
 ## Task detail 2.0: conversation and user intervention
 
-The local UI now opens each task on a work conversation. It rebuilds events from existing `task_events`, `agent_executions`, and saved per-run `TEST-RESULT.md` evidence, then includes persisted user interventions. Older tasks need no migration. Agent summaries come from saved reports; a test is described as verified only when the host actually ran it. Results and Technical record retain the original reports, diff, evaluation, Context, and handoff.
+The local UI now opens each task on a work conversation. It rebuilds events from existing `task_events`, `agent_executions`, and saved per-run `TEST-RESULT.md` evidence, then includes persisted user interventions. Older tasks need no migration. Agent summaries come from saved reports; a test is described as verified only when the host actually ran it. Results and Technical record retain the original reports, diff, Context, and handoff.
 
 Pause persists a dispatch gate. A queued worker waits for resume; an already running agent or host test may settle at a safe point, shown as **Pausing** until then. Resume releases the gate and reuses the same queued execution. When the next step belongs to PM or an interactive ChatGPT role, the UI shows the saved handoff; it cannot launch ChatGPT itself.
 

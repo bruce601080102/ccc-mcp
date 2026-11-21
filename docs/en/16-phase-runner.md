@@ -1,10 +1,10 @@
-# 16. Running one approved phase, with a repair loop
+# 16. A phase and its repair loop
 
-Once a goal's plan is approved you can run **one phase** of it. The phase becomes one ordinary Task in the existing workflow engine (your Agent Studio roles and providers, the Review Gate, the host test). When the host test or a review fails, the **Delivery PM** reads the evidence and writes a structured repair; the developer role is sent back with it; the host tests run again. You no longer copy answers between ChatGPT, Codex and Claude.
+Each phase of an approved goal is run as one ordinary Task in the existing workflow engine (the project's providers, the Review Gate, the host test). You do not start phases one by one: starting the goal ([chapter 17](17-goal-run.md)) runs them in dependency order. When the host test or a review fails, the **Delivery PM** reads the evidence and writes a structured repair; the developer role is sent back with it; the host tests run again. You no longer copy answers between ChatGPT, Codex and Claude.
 
-**Started by hand, it stops after the phase.** The next phase is not started for you; to have all phases run, start the whole goal instead ([chapter 17](17-goal-run.md)). There is no resident process: a short process wakes when something finished, acts, and exits.
+There is no resident process: a short process wakes when something finished, acts, and exits.
 
-Use it from the goal's page in the console (**Run this phase**) or with `ccc-mcp goal phase-start GOAL-0001 P1 [--wait]`. Chinese: [docs/ch/16-phase-runner.md](../ch/16-phase-runner.md).
+Watch it from the goal's page under **Tasks**, or with `ccc-mcp goal phase-show`. Chinese: [docs/ch/16-phase-runner.md](../ch/16-phase-runner.md).
 
 ## What has to be true first
 
@@ -12,7 +12,7 @@ Use it from the goal's page in the console (**Run this phase**) or with `ccc-mcp
 * Every phase it depends on has **passed**, and no other phase is open.
 * The project is **authorized for writes** (`ccc-mcp project authorize`). Approving a goal does not authorize anything on the project, and the Task's own plan approval is the existing rule: project authorization authorizes it, a goal approval does not.
 * The project has an **explicitly configured test command**. The host runs that command and nothing else. A command written in a plan is never run; a `host_test` criterion counts as verified only when it is that very command, and every other criterion needs a person to accept it.
-* The workflow is a step workflow (for example Standard) with a developer step, and no role needs a ChatGPT browser tab. Classic is refused: it cannot hand a failed step back.
+* The saved workflow has a developer step (a plan naming a team without one is refused when it is stored, so this is rechecked here rather than first discovered here), and every role uses a local CLI. A phase using the Classic roster runs its steps through the same resumable engine as other phases.
 
 ## What happens
 
@@ -67,5 +67,5 @@ State is in SQLite (`goal_phase_runs`, `goal_phase_attempts`, `goal_phase_repair
 * A leftover Delivery PM CLI process after a killed worker is read-only and ends by its own timeout; it is not stopped for you.
 * The protected-path list is a guard against the obvious ways of making a test pass, not a sandbox. Review the diff.
 * Wall-clock time keeps running if the machine sleeps while a run is working.
-* The Classic workflow, and projects that need a ChatGPT browser role, are not supported by phase runs.
+* A phase cannot run unattended with a role assigned to ChatGPT in the browser.
 * The ID of a finished phase cannot be run again in the same goal (a rerun needs a new goal).

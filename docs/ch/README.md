@@ -15,9 +15,12 @@
 11. [架構規格](11-architecture-spec.md)
 12. [ChatGPT-only 真人端對端驗收範例](12-chatgpt-only-e2e-walkthrough.md)
 13. [Meeting Mode 端對端走查](13-meeting-mode-walkthrough.md)
-14. [Agent Studio：建立你自己的角色](14-agent-studio.md)
-15. [Goal：規劃完整需求並核准計畫](15-goal-planner.md)
-16. [執行一個已核准的 Phase，含自動修正迴圈](16-phase-runner.md)
+14. [AI 團隊、自訂工作流與自訂角色](14-ai-team-and-roles.md)
+
+目標（第 15–17 章，建立在第 14 章之上）：
+
+15. [任務與目標：對 ChatGPT 說，在同一處觀看](15-goal-planner.md)
+16. [Phase 與它的自動修正迴圈](16-phase-runner.md)
 17. [執行整個 Goal：從核准的計畫到通過驗證的結果](17-goal-run.md)
 
 想快速判斷本專案是否適合你，先看[繁體中文 README](../../README_ZH.md)。英文版在 [docs/en](../en/README.md)。

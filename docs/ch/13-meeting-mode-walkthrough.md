@@ -91,7 +91,7 @@ ccc-mcp --project meeting-mode-demo task status
 ## 6. 讀取完整的澄清紀錄
 
 ```bash
-ccc-mcp --project meeting-mode-demo task meeting      # 易讀、不截斷的 SA／SD 對話紀錄
+ccc-mcp --project meeting-mode-demo task status       # 易讀、不截斷的 SA／SD 對話紀錄
 ccc-mcp --project meeting-mode-demo task status
 ccc-mcp --project meeting-mode-demo task show
 ```

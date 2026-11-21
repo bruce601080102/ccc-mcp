@@ -15,7 +15,7 @@ ccc-mcp --project my-project config show
 
 對一般修改需求，ChatGPT 使用 MCP 的 `start_project_request(project_id, requirement, acceptance?)`。後端會立即派出設定好的 SA：上一個任務還沒結束時沿用它（同一個 TASK 內的新一輪），上一個任務已完成、取消或駁回時，改建立下一個編號（TASK-0002、TASK-0003…）。SA 結果以 execution ID 與原始報告保存；PM 核對證據後用 `advance_project` 提交 ContextPatch 與實作計畫，後端會自動派 SD/RD。實作結果經 PM 用同一工具整理後，後端自動派 REVIEW；REVIEW 結果整理後自動完成本輪。未整理報告時，後端拒絕下一角色派工。計畫由既有專案授權自動承接。`write_workspace` 不提供給 MCP，已授權專案也會在服務層拒絕直接寫檔。
 
-CLI 不存在、登入失敗或 Agent 執行失敗時，不會假裝成功或改成 ChatGPT 直接寫檔。可讀 `get_task_status`、`get_task_result`、`get_task_usage` 與 `bootstrap_project.context_sync` 查看真實進度及證據。`QUEUED` 只表示已排入，不表示模型完成；成功報告與原始檔案證據才算執行。
+CLI 不存在、登入失敗或 Agent 執行失敗時，不會假裝成功或改成 ChatGPT 直接寫檔。可讀 `get_task_status`、`get_task_result` 與 `bootstrap_project.context_sync` 查看真實進度及證據（用量見 CLI 的 `task usage`）。`QUEUED` 只表示已排入，不表示模型完成；成功報告與原始檔案證據才算執行。
 
 ## 程式語言與執行環境版本
 

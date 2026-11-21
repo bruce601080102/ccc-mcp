@@ -1,6 +1,6 @@
 # 17. Running a whole goal: from the approved plan to a verified result
 
-Once a goal's plan is approved you can run **the whole goal** with one start. The goal run starts the phases for you, one at a time, in the order their dependencies allow. Each phase is run the way [chapter 16](16-phase-runner.md) describes (an ordinary Task in the existing workflow engine, your Agent Studio roles and providers, the Review Gate, the host test, the Delivery PM's repair loop). When a phase passes, the goal run writes down what happened, hands the next phase what it needs, and starts it. When every phase has passed, the **whole project is tested again** before the goal is called done.
+Once a goal's plan is approved you can run **the whole goal** with one start. The goal run starts the phases for you, one at a time, in the order their dependencies allow. Each phase is run the way [chapter 16](16-phase-runner.md) describes (an ordinary Task in the existing workflow engine, the role and provider snapshots saved with the plan, the Review Gate, the host test, the Delivery PM's repair loop). When a phase passes, the goal run writes down what happened, hands the next phase what it needs, and starts it. When every phase has passed, the **whole project is tested again** before the goal is called done.
 
 You no longer copy prompts, paste results back, or create the next Task by hand.
 
@@ -77,7 +77,7 @@ Pause stops new work from starting (a step already running finishes, and what it
 
 ## What it will not do
 
-Commit, push, reset, rebase, release, deploy or publish. Widen a provider's permissions. Use an untrusted Agent Studio role or snapshot. Accept an incompatible contract change. Change the requirement or the acceptance criteria. Run a command a model or a plan supplied. Go over a limit. Approve a plan.
+Commit, push, reset, rebase, release, deploy or publish. Widen a provider's permissions. Use an untrusted custom-role snapshot. Accept an incompatible contract change. Change the requirement or the acceptance criteria. Run a command a model or a plan supplied. Go over a limit. Approve a plan.
 
 ## Known limits
 
@@ -86,6 +86,6 @@ Commit, push, reset, rebase, release, deploy or publish. Widen a provider's perm
 * Without a console or `goal run-recover`, a run whose every process died waits.
 * A goal has at most one run. A run that ended (passed, exhausted, failed or stopped) cannot be started again; a run that is waiting for you can be resumed. A finished phase cannot be run again in the same goal, and the integration fix is limited to one per plan version.
 * Time is wall-clock: if the supervisor is killed while the final verification runs, that time keeps counting until the run is picked up again.
-* Classic workflow and ChatGPT-in-a-browser roles are not supported by phase or goal runs.
+* Roles assigned to ChatGPT in the browser require an interactive task. Automated phase and goal runs need local CLI providers.
 * The protected-path list and the final checks are guards, not a sandbox: read the diff.
 * `clear_project_history` and project-bundle export are refused for projects with goal runs.

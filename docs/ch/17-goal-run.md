@@ -1,6 +1,6 @@
 # 17. 執行整個 Goal：從核准的計畫到通過驗證的結果
 
-Goal 的計畫核准後，你可以一次啟動來**執行整個 Goal**。Goal 執行會依相依關係允許的順序，一次一個替你啟動各個 Phase。每個 Phase 的執行方式如[第 16 章](16-phase-runner.md)所述（既有 Workflow 引擎裡的一個普通 Task、你的 Agent Studio 角色與 Provider、Review Gate、Host Test、Delivery PM 的修正迴圈）。某個 Phase 通過後，Goal 執行會把經過記錄下來、把下一個 Phase 需要的脈絡交給它、再啟動它。所有 Phase 都通過後，**會對整個專案重新測試**，才算 Goal 完成。
+Goal 的計畫核准後，你可以一次啟動來**執行整個 Goal**。Goal 執行會依相依關係允許的順序，一次一個替你啟動各個 Phase。每個 Phase 的執行方式如[第 16 章](16-phase-runner.md)所述（既有 Workflow 引擎裡的一個普通 Task、計畫保存的角色與服務設定快照、Review Gate、Host Test、Delivery PM 的修正迴圈）。某個 Phase 通過後，Goal 執行會把經過記錄下來、把下一個 Phase 需要的脈絡交給它、再啟動它。所有 Phase 都通過後，**會對整個專案重新測試**，才算 Goal 完成。
 
 你不必再複製 Prompt、貼回結果，也不必手動建立下一階段的 Task。
 
@@ -77,7 +77,7 @@ Goal 可以**不經任何人確認就通過**，但只限每個條件都由主�
 
 ## 它不會做的事
 
-Commit、Push、Reset、Rebase、Release、Deploy 或 Publish。放寬 Provider 的權限。使用不受信任的 Agent Studio 角色或快照。接受不相容的契約變更。修改需求或驗收條件。執行模型或計畫提供的指令。超過任何上限。核准計畫。
+Commit、Push、Reset、Rebase、Release、Deploy 或 Publish。放寬 Provider 的權限。使用不受信任的自訂角色快照。接受不相容的契約變更。修改需求或驗收條件。執行模型或計畫提供的指令。超過任何上限。核准計畫。
 
 ## 已知限制
 
@@ -86,6 +86,6 @@ Commit、Push、Reset、Rebase、Release、Deploy 或 Publish。放寬 Provider 
 * 沒有控制台也沒有 `goal run-recover` 時，所有行程都中止的執行會一直等待。
 * 一個 Goal 最多只有一次執行。已結束（通過、用盡上限、失敗或被停止）的執行不能再啟動；等待你處理的執行可以恢復。已結束的 Phase 不能在同一個 Goal 再跑，整合修正每個計畫版本最多一次。
 * 時間是牆上時鐘：最終驗證進行中監督者被殺掉的話，那段時間在執行被重新接手前仍會持續計算。
-* Phase／Goal 執行不支援 Classic Workflow，也不支援由瀏覽器中 ChatGPT 擔任的角色。
+* 由瀏覽器中的 ChatGPT 擔任的角色需要互動式任務。自動執行階段或目標時，每個角色皆須使用本機 CLI。
 * 受保護路徑清單與最終檢查是防護，不是沙箱：請看 diff。
 * 有 Goal 執行的專案，`clear_project_history` 與專案打包匯出會被拒絕。

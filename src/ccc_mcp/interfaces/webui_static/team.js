@@ -458,7 +458,7 @@ window.cccTeam = function (ctx) {
     const bases = Object.keys(ROLE_LABEL);
     const initial = def.runtime || {};
     const overlay = dialog(existing ? "Edit role" : "New role", `
-      <label class="field">${T("Name")}<input type="text" id="role-name" maxlength="40" value="${esc(def.name)}" placeholder="${esc(UI.translate("For example: Payments reviewer"))}" /></label>
+      <label class="field">${T("Name")}<input type="text" id="role-name" maxlength="24" value="${esc(def.name)}" placeholder="${esc(UI.translate("For example: Payments reviewer"))}" /></label>
       <label class="field">${T("It works like")}<select id="role-base" ${existing ? "disabled" : ""}>${bases.map((b) => `<option value="${b}"${(existing ? existing.base_role : "REVIEW") === b ? " selected" : ""}>${esc(roleLabel(b))} (${b})</option>`).join("")}</select></label>
       <p class="hint">${T("What a role may do (for example whether it can change files) comes from the role it works like, in ccc-mcp's own code. Nothing written below can widen it.")}</p>
       <label class="field">${T("Instructions")}<textarea id="role-text" rows="7" maxlength="16000" placeholder="${T("Tell this role what to focus on, what to avoid, and what its findings should contain.")}">${esc(text)}</textarea></label>

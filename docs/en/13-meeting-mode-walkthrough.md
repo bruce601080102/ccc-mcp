@@ -91,7 +91,7 @@ From here the task proceeds exactly like any other: `task handoff`/`task status`
 ## 6. Read the full clarification record
 
 ```bash
-ccc-mcp --project meeting-mode-demo task meeting      # readable, unclipped SA/SD transcript
+ccc-mcp --project meeting-mode-demo task status       # readable, unclipped SA/SD transcript
 ccc-mcp --project meeting-mode-demo task status
 ccc-mcp --project meeting-mode-demo task show
 ```

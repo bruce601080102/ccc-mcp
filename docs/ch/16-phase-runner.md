@@ -1,10 +1,10 @@
-# 16. 執行一個已核准的 Phase，含自動修正迴圈
+# 16. Phase 與它的自動修正迴圈
 
-Goal 的計畫核准後，你可以執行其中**一個 Phase**。這個 Phase 會變成現有工作流引擎裡的一個一般 Task（你的 Agent Studio 角色與 Provider、Review Gate、Host Test 都照舊）。當 Host Test 或審查失敗，**Delivery PM** 會讀取證據並寫出結構化的修正規格；開發者角色帶著它被送回去重做；Host Test 再跑一次。你不必再把回覆在 ChatGPT、Codex、Claude 之間手動轉貼。
+已核准 Goal 的每個 Phase 都以現有工作流引擎裡的一個一般 Task 執行（專案的 Provider、Review Gate、Host Test 都照舊）。你不必逐個啟動 Phase：啟動整個 Goal（[第 17 章](17-goal-run.md)）會依相依順序執行。當 Host Test 或審查失敗，**Delivery PM** 會讀取證據並寫出結構化的修正規格；開發者角色帶著它被送回去重做；Host Test 再跑一次。你不必再把回覆在 ChatGPT、Codex、Claude 之間手動轉貼。
 
-**手動啟動的 Phase 完成就停。** 不會替你開始下一個 Phase；要讓所有 Phase 依序執行，請改為啟動整個 Goal（[第 17 章](17-goal-run.md)）。沒有常駐行程：有事發生時才會喚醒一個短暫的行程，處理完就結束。
+沒有常駐行程：有事發生時才會喚醒一個短暫的行程，處理完就結束。
 
-在主控台的 Goal 頁面使用（**執行這個 Phase**），或用 `ccc-mcp goal phase-start GOAL-0001 P1 [--wait]`。英文版：[docs/en/16-phase-runner.md](../en/16-phase-runner.md)。
+在**任務**頁的 Goal 中觀看，或用 `ccc-mcp goal phase-show`。英文版：[docs/en/16-phase-runner.md](../en/16-phase-runner.md)。
 
 ## 開始之前必須成立的條件
 
@@ -12,7 +12,7 @@ Goal 的計畫核准後，你可以執行其中**一個 Phase**。這個 Phase �
 * 它依賴的 Phase 都**已通過**，而且沒有其他 Phase 還開著。
 * 專案已**授權寫入**（`ccc-mcp project authorize`）。核准 Goal 不等於授權專案；Task 自己的計畫核准仍是現有規則：由專案授權代為核准，Goal 核准不能取代。
 * 專案有**明確設定的測試指令**。主機只執行這個指令。計畫裡寫的指令一律不會被執行；`host_test` 條件只有在指令與它完全相同時才算被驗證，其餘條件都需要人工驗收。
-* 工作流需是含開發者步驟的步驟式工作流（例如 Standard），且沒有角色需要 ChatGPT 瀏覽器分頁。Classic 會被拒絕：它無法把失敗的步驟交回去。
+* 計畫保存的工作流需包含開發者（指定沒有開發者的團隊的計畫，在儲存時就會被拒絕，所以這裡只是再檢查一次，而不是第一次才發現），且每個角色皆使用本機 CLI。經典團隊在目標階段會使用和其他團隊相同的可恢復步驟流程。
 
 ## 過程
 
@@ -67,5 +67,5 @@ Goal 的計畫核准後，你可以執行其中**一個 Phase**。這個 Phase �
 * worker 被強制終止後殘留的 Delivery PM CLI 行程是唯讀的，會在自己的逾時後結束；不會替你停止它。
 * 受保護路徑清單是擋住明顯作弊方式的護欄，不是沙箱。請檢視 diff。
 * 若機器在執行工作時休眠，牆鐘時間仍會繼續計算。
-* Phase 執行不支援 Classic 工作流，也不支援需要 ChatGPT 瀏覽器角色的專案。
+* 需要在瀏覽器使用 ChatGPT 的角色無法無人值守地執行階段。
 * 同一個 Goal 中已結束的 Phase 不能再次執行（重跑需要新的 Goal）。

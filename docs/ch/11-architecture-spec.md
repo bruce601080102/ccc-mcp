@@ -754,42 +754,18 @@ ccc-mcp serve
 
 # 十四、專案結構
 
-建議：
+目前的實際結構（早期版本的建議結構已不適用）：
 
 ```text
 ccc-mcp/
 ├── pyproject.toml
-├── README.md
-├── .env.example
-├── src/
-│   └── ccc_mcp/
-│       ├── main.py
-│       ├── server.py
-│       ├── cli.py
-│       ├── config.py
-│       │
-│       ├── context/
-│       │   ├── manager.py
-│       │   ├── optimizer.py
-│       │   ├── validator.py
-│       │   ├── versioning.py
-│       │   ├── bootstrap.py
-│       │   └── package_builder.py
-│       │
-│       ├── agents/
-│       │   ├── base.py
-│       │   ├── codex.py
-│       │   ├── claude.py
-│       │   └── fake.py
-│       │
-│       ├── orchestration/
-│       ├── tasks/
-│       ├── storage/
-│       ├── security/
-│       ├── git/
-│       ├── models/
-│       └── mcp_tools/
-│
+├── src/ccc_mcp/
+│   ├── service.py        # CCCMCP：把各個 *Hub 組成同一個應用服務
+│   ├── worker.py         # 代理執行的 worker（另有 goal_worker、phase_worker、goal_run_worker）
+│   ├── core/             # 各個 *Hub：tasks、flows、context、goals、phase_runner、custom_roles…
+│   ├── adapters/         # git、storage（SQLite）、test_runner、agents/（codex、claude、fake）…
+│   ├── infra/            # config、errors、security、telemetry
+│   └── interfaces/       # cli.py、server.py（MCP）、web.py 與 webui_static/
 ├── tests/
 └── examples/
 ```

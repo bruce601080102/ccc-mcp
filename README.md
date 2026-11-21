@@ -15,15 +15,16 @@ ccc-mcp is a local MCP server, CLI and web console. It connects ChatGPT, and opt
 
 **For example,** you type *"Build a member management system."* A workflow of analyst, designer and reviewers can turn that into login methods, roles and permissions, a data model, error cases, acceptance criteria and open questions before any code is written ([walk-through](#an-ai-team-that-sharpens-the-requirement)). That walk-through is an illustration, not a recorded run, and the result is not guaranteed to be complete. A [real recorded run](#a-recorded-run) of the same kind, on a small demo project, is further down.
 
-**Three things that set it apart:**
+**What sets it apart:**
 
 - **Structured shared Context, not chat summaries.** A project holds tasks, and each task has a versioned Approved Plan with a SHA-256 hash and an approval record. The shared Context is versioned too and changes only through cited patches. Agent claims, host evidence and live Git state are kept apart. [Details](#structured-shared-context)
 - **A specialist team that refines the request.** An analyst, a designer, adversarial and specification reviewers and a specification writer take turns. Review gates send work back, Meeting Mode asks clarifying questions first, and you choose the roles, their order, the strictness and the retry limit. [Details](#an-ai-team-that-sharpens-the-requirement)
-- **Evidence first, then a score.** The host runs the tests and records the Git diff and static analysis. A rule-based quality score and an evidence coverage figure are computed from that, and the Preview checklist shows which of your requirements are confirmed. The score is not an AI accuracy rate. [Details](#an-explainable-quality-score)
+- **Evidence first.** The host runs the tests and records the Git diff. What counts as done comes from that evidence, never from an AI's own report. [Details](#host-evidence-and-strict-review)
+- **From one request to a verified result.** For work with several steps, a Delivery PM plans phases, you approve that exact plan, and each phase runs through the team with host tests and bounded repairs. [Details](#goals-one-request-many-verified-phases)
 
-![Task meeting room: the request, the analyst's reply, and the controls to send a correction or ask a chosen role to redo its step](docs/assets/readme/chat-en.png)
+![Task meeting room: the saved conversation of a phase, the step bar SA, SD, RD, CR, and the controls to send a correction or ask a chosen role to redo its step](docs/assets/readme/chat-en.png)
 
-*The task meeting room (released feature), showing the request, the analyst's reply, and the controls for sending a correction or asking a chosen role to redo its step. The task text is Chinese because the demo task was written in Chinese.*
+*The task meeting room as it looks in the source tree (Next release): the step bar, the saved conversation and the controls for sending a correction or asking a chosen role to redo its step. The meeting room itself is in 0.4.0; this screenshot shows the newer design. The data is a demo project driven by a scripted CLI, not a real model.*
 
 **Get started with the released PyPI version:**
 
@@ -38,18 +39,18 @@ ccc-mcp ui
 
 | Capability | What it gives you | Status |
 | --- | --- | --- |
-| [Structured shared Context](#structured-shared-context) | Versioned Context, Approved Plans with hashes, and a handoff package that labels every fact by source | Released |
-| [AI specialist team](#an-ai-team-that-sharpens-the-requirement) | 19 roles, 7 built-in workflows, your own workflows, Meeting Mode, review gates | Released (Meeting Mode is opt-in) |
-| [Meeting-room view](#the-meeting-room) | Each role's messages, the running history, the current blocker, and controls to pause, stop, correct or redo | Released |
-| [Explainable quality score](#an-explainable-quality-score) | Rule-based score, evidence coverage, status, history and re-evaluation | Released (opt-in) |
-| Requirement checklist and scorecard | Each requirement shown as Confirmed, Not met or Not confirmed yet | Preview |
-| [Host evidence and strict review](#host-evidence-and-strict-review) | Host-run tests, Git diff, evidence-based review gates | Released |
-| [Hand-over across chats and agents](#hand-over-across-chats-and-agents) | New ChatGPT chat, continuation prompt, quota fallback | Released |
-| [Web console and your own team](#web-console) | Projects, roles, workflows, tasks, results, Context, Skills and MCP tools | Released |
+| [Structured shared Context](#structured-shared-context) | Versioned Context, Approved Plans with hashes, and a handoff package that labels every fact by source | In 0.4.0 |
+| [AI specialist team](#an-ai-team-that-sharpens-the-requirement) | 19 roles, 7 built-in workflows, your own workflows, Meeting Mode, review gates | In 0.4.0 (Meeting Mode is opt-in) |
+| [Meeting-room view](#the-meeting-room) | Each role's messages, the running history, the current blocker, and controls to pause, stop, correct or redo | In 0.4.0 |
+| [Host evidence and strict review](#host-evidence-and-strict-review) | Host-run tests, Git diff, evidence-based review gates | In 0.4.0 |
+| [Hand-over across chats and agents](#hand-over-across-chats-and-agents) | New ChatGPT chat, continuation prompt, quota fallback | In 0.4.0 |
+| [Goals](#goals-one-request-many-verified-phases) | Plan, approve, then run several phases in dependency order with host tests and a bounded repair loop | Next release |
+| [Ask ChatGPT, track it in one place](#web-console) | Start work from ChatGPT (`start_goal`, `get_work_overview`, ...), grouped Goals and tasks, approval and live status in one Tasks page | Next release |
+| [Your own roles](#an-ai-team-that-sharpens-the-requirement) | Write a role's instructions on top of a built-in role; what it may do stays decided by code | Next release |
 
 ## Quick start
 
-This section describes the released PyPI version. Features marked Preview are not in it.
+Steps 1-4 work on the published 0.4.0 and on this source tree. Features marked *Next release* are only in the source tree (`pip install -e .` from a clone); see [Release status](#release-status).
 
 1. **Install and open the console.** Installing and starting the console uses a terminal; most of the work after that happens in the browser.
 
@@ -60,7 +61,7 @@ This section describes the released PyPI version. Features marked Preview are no
 
    The console runs on `127.0.0.1` only and prints its address with a one-time token.
 
-2. **Add a project.** In **All projects**, create a project or add an existing folder. From the terminal:
+2. **Add a project.** In **Projects**, create a project or add an existing folder. From the terminal:
 
    ```bash
    ccc-mcp project create hello-demo --write
@@ -69,7 +70,7 @@ This section describes the released PyPI version. Features marked Preview are no
 
    `--write` asks for local confirmation and lets ccc-mcp change that project and run its test command. Read [Create and authorize a first project](docs/en/3-first-project.md) before enabling it on a folder you care about.
 
-3. **Connect ChatGPT.** Create a Tunnel in the OpenAI Platform, then connect it on the console's **Connect** page or run `ccc-mcp connect tunnel_your_id` and enter the runtime API key at the hidden prompt. See [Connect ChatGPT](docs/en/2-connect-chatgpt.md).
+3. **Connect ChatGPT.** Create a Tunnel in the OpenAI Platform, then connect it on the console's **Settings** page or run `ccc-mcp connect tunnel_your_id` and enter the runtime API key at the hidden prompt. See [Connect ChatGPT](docs/en/2-connect-chatgpt.md).
 
 4. **Start a task.** Describe the change to ChatGPT in the connected conversation. From the terminal, `task create` records a requirement and its acceptance criteria:
 
@@ -77,7 +78,7 @@ This section describes the released PyPI version. Features marked Preview are no
    ccc-mcp --project hello-demo task create "Add a hello function" --acceptance "Running it prints Hello"
    ```
 
-5. **Follow it.** Open the task in **Tasks** to see the meeting room, the Results tab and the evaluation.
+5. **Follow it.** Open the task in **Tasks** to see the meeting room, the Results tab and the host test evidence. Multi-step work you ask ChatGPT for appears there as one group.
 
 **Costs and limits, in four separate parts:**
 
@@ -142,11 +143,11 @@ This is not a model's memory. It is the recorded state of the project: what was 
 
 You often start with one rough sentence. The point of a team is to find what that sentence leaves out before code is written.
 
-**The roles.** There are 19 roles. For software: analyst (SA), designer (SD), developer (RD), combined designer and developer (SD/RD), code reviewer (CR), specification reviewer (SR), adversarial reviewer (AR), security reviewer (SEC), QA, and specification writer (SW). For everyday work: assistant, researcher, analyst, planner, consultant, writer, editor, fact checker and reviewer. Each role has a name and avatar you can change, and reports in its own words.
+**The roles.** There are 19 built-in roles. For software: analyst (SA), designer (SD), developer (RD), combined designer and developer (SD/RD), code reviewer (CR), specification reviewer (SR), adversarial reviewer (AR), security reviewer (SEC), QA, and specification writer (SW). For everyday work: assistant, researcher, analyst, planner, consultant, writer, editor, fact checker and reviewer. Each role has a name and avatar and reports in its own words. You can also write your own roles (see below).
 
-![Workflow settings: built-in software and everyday workflows with their step order and declared ability charts](docs/assets/readme/workflow-en.png)
+![AI team and workflow card: the chosen workflow, its roles in running order with the AI tool for each, and Advanced buttons that keep model and effort out of the way](docs/assets/readme/workflow-en.png)
 
-*The workflow settings page. The ability charts and "Team power" are **declared** settings, not measured results.*
+*The AI team and workflow card on a project's page. Choosing a workflow lists exactly that workflow's roles, in running order, with the AI tool for each. Model, effort, quota fallback and review gates stay folded under Advanced until you open them.*
 
 **An illustration.** Suppose you type *"Build a member management system"* and run a custom workflow `SA → SD → AR → SR → SW`. The table shows what each step might contribute. It is an illustration of the design, not a recorded run, and a real run can miss things.
 
@@ -164,7 +165,7 @@ Add `RD → CR → QA` after it and the same team goes on to build and check the
 
 **Review gates.** The adversarial reviewer has Normal, Strict and Extreme strictness. A finding can block only if it cites evidence and reaches that strictness. A `[blocker]` goes to the PM; lesser findings send the work back to the producer. Rounds are capped between 1 and 5, after which you or the PM decide.
 
-**Make it yours.** Build a workflow of up to 12 steps from any roles (up to 20 per project), set who picks the workflow for a new task (fixed, the PM, or automatic by the task text), and give each role its own provider, model and effort. The specification writer is not in a built-in workflow yet; add it in **Settings → Workflow**. The everyday teams run on ChatGPT, so they can browse, and when ChatGPT plays a step the next one starts as soon as its report is handed in.
+**Make it yours.** Build a workflow of up to 12 steps from any roles (up to 20 per project), reorder or remove steps, and set who picks the workflow for a new task (fixed, the PM, or automatic by the task text). Give each role its own AI tool, model and effort. Write your own roles too: a name, a built-in role it works like, and your instructions. The built-in role decides everything code enforces (whether it may change files, how its report is judged), so no wording in your instructions can widen what it may do. Role versions are append-only, a task keeps the exact role versions it started with, and an imported role stays off until you confirm it in the local console. The specification writer is not in a built-in workflow; add it with **New workflow** on the team card. The everyday teams run on ChatGPT, so they can browse, and when ChatGPT plays a step the next one starts as soon as its report is handed in.
 
 ### A recorded run
 
@@ -181,6 +182,29 @@ A real run, recorded around 5 November 2026 on a small local demo project, `hell
 
 **How to read this run.** It is an analysis-only task, so no review step asked for a revision and no gate sent work back; it shows the hand-over from role to role, not a rejection loop. Five of the six steps ran in one ChatGPT conversation and SW ran through the Codex CLI, so these are separate role reports, not independent models' opinions. No code was written and no test was run, and the specification describes a design, not a working API. The raw records sit in a local demo project that is not published in this repository, the original reports are in Chinese, and the table above is a paraphrase of them.
 
+## Goals: one request, many verified phases
+
+For work that needs more than one step, ChatGPT starts a **Goal** instead of a single task. A Goal turns a request into phases, runs them, and stops only when it is finished or needs you.
+
+1. **Ask.** `start_goal` creates the Goal once. A retry returns the same Goal, and a request that looks like an open Goal comes back as a question, never started twice.
+2. **Plan.** A Delivery PM (a read-only Codex or Claude Code run, or a plan ChatGPT writes) proposes phases: what each delivers, what it depends on, its acceptance criteria and which team it uses. The plan is checked before it is stored. Unknown fields, dependency cycles, shell strings and unsafe commands are refused, and so is a team that cannot run a phase (see below).
+3. **Approve.** You approve exactly that plan version, bound to its hash. Only a person at this machine can approve. It does not approve commit, push, release, wider access or a larger budget.
+4. **Run.** The goal run walks the phases in dependency order. Each phase is an ordinary task in the workflow engine, with the roles, AI tools and instructions saved when the plan was written. The host runs your configured test command.
+5. **Repair.** When a test or review fails, the Delivery PM reads the evidence and sends a structured repair back to the developer, inside limits on attempts, dispatches and time. A phase that runs out of limits, or needs a decision, stops the goal and says why in plain words.
+6. **Accept.** After the last phase a final verification runs on the whole project, and you accept the goal.
+
+![Goal page: a finished goal with its approved plan, two phases, each accepted on the project's test command](docs/assets/readme/goal-en.png)
+
+*A goal that passed its final verification, with the approved plan above its phases. Demo project with a scripted CLI standing in for Codex and Claude Code; no real model was used.*
+
+**What it needs.** A read-write project, an explicit test command, and Codex or Claude Code for every role in the team (a ChatGPT browser role needs a person, so it cannot run unattended). The team must have a developer step (`RD` or `SD/RD`): a phase is accepted on host-run tests of what a developer changed, and a failure is repaired by sending it back to that developer. The everyday teams (life, business, content, decision) write reports and never change files, so they cannot run a phase. They still run ordinary tasks, and a plan that names one is refused when it is stored, with the reason.
+
+**Who keeps it moving.** Short worker processes wake on each change; there is no resident daemon. Closing the browser changes nothing. If every process dies, the run continues when the console starts or you run `ccc-mcp goal run-recover`.
+
+**How far this has been tested.** With scripted Codex and Claude CLIs driving the real worker processes, Git and a real test run. A recorded end-to-end run with real models is not yet part of this repository.
+
+Details: [Tasks and Goals](docs/en/15-goal-planner.md), [a phase and its repair loop](docs/en/16-phase-runner.md), [running a whole goal](docs/en/17-goal-run.md).
+
 ## The meeting room
 
 The task page opens as a conversation, not a log file.
@@ -190,81 +214,16 @@ The task page opens as a conversation, not a log file.
 - **You can intervene.** Pause, resume or stop the task, send a correction, or ask a chosen role to redo its step. That role runs again with your note, and every step after it runs again.
 - **The history is kept.** A timeline lists the request, each execution, each host test result and your interventions.
 
-## An explainable quality score
-
-Five different things appear in ccc-mcp. Do not read one as another.
-
-| | What it is | Where it comes from |
-| --- | --- | --- |
-| **A. Ability chart** | The abilities a role is *set up* to have: research, reasoning, planning, creation, verification, risk sense, each 0 to 5. | Declared in **Settings**. Not measured, and not part of any score. |
-| **B. Quality score** | A weighted, rule-based estimate of how good the evidence we have looks. | Computed from host tests, the diff, static analysis and review results. Released, opt-in. |
-| **C. Evidence coverage** | How much of that estimate rests on evidence: the weight of the sub-scores that had evidence, out of the role's total weight. | Computed together with the score. Released, opt-in. |
-| **D. Task status** | `PASSED`, `FAILED`, `NEEDS_VERIFICATION` or `INSUFFICIENT_EVIDENCE`. | Decided by hard rules, separately from the score. Released, opt-in. |
-| **E. Requirement checklist** | How many of your requirements are confirmed by recorded evidence. | Checked against the evidence on the Results page. **Preview.** |
-
-The quality score is not an AI accuracy rate. It does not say the code is correct.
-
-**How the score is computed.** The engine is off by default. Turn it on with `ccc-mcp config evaluation-engine on`, then run `task evaluate`, or add `--auto-evaluate` to score after each successful role run. It is plain arithmetic on saved evidence and makes no model call.
-
-Two numbers come out:
-
-- `quality_score` is the weighted average of only the sub-scores that have real evidence, using the role's weights, re-normalized over those. A sub-score with no evidence is *missing*, not zero and not perfect.
-- `evidence_coverage` is the total weight of the sub-scores that had evidence, divided by the role's total weight. It says how much of the judgment rested on evidence.
-
-| Sub-score | Weight (SD/RD) | How it is computed |
-| --- | --- | --- |
-| `test` | 0.40 | Pass rate of the host-run tests. Counted only if the round changed something; capped at 70 when the only passing tests were written by the agent itself. |
-| `requirement` | 0.25 | Share of acceptance items with at least one of their words found anywhere in the agent's saved report. This is a keyword match. A hit does not mean the requirement is met. |
-| `code_quality` | 0.15 | 100 minus 10 for each `ruff` finding in the changed Python files. |
-| `security` | 0.10 | `ruff`'s bandit-style `S` rules on the changed Python files: 100 with no findings, otherwise 100 minus 50 for each. No findings means this one scanner found nothing, not that the code is secure. |
-| `review` | 0.10 | 100, or 40 if the reviewer asked for a revision. Missing if there was no review. |
-
-`code_quality` and `security` are missing if `ruff` is not installed on the host or no Python file changed. Missing lowers evidence coverage and is never counted as a pass.
-
-**Rules differ by role.** The weights above are for SD, RD and SD/RD. SA is scored 70% on `requirement` and 30% on `review`, and its `review` is never filled. REVIEW has its own profile: `test` asks whether its "no revision needed" verdict held up against the host tests, `requirement` is the same keyword match on its findings, and `review` is the share of its findings that were verified. `code_quality` and `security` do not apply to REVIEW, so they are left out of its coverage rather than counted as missing. Weights can be changed per role.
-
-**A worked example,** computed with the real scoring code on made-up inputs, not from a recorded task. An SD/RD round has green host tests, two `ruff` findings, and half of the acceptance wording matched:
-
-| | test | requirement | code_quality | security | review | Quality score | Evidence coverage |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| Tests ran | 100 | 50 | 80 | 100 | none | **82.78** | **90%** |
-| Same round, tests never ran | none | 50 | 80 | 100 | none | **69.0** | **50%** |
-
-A score can look healthy while coverage is low. The analyst is the clearest case: its `review` sub-score is never filled, so a perfect `requirement` score still gives a quality score of 100 with only 70% coverage. Read the two numbers together.
-
-**Status is decided separately,** by hard rules that a high score cannot override.
-
-- **SD, RD and SD/RD.** If the host could not run the tests, `INSUFFICIENT_EVIDENCE`. A failing host test run, a failing newly added test or any security finding is `FAILED`. No host test run, no tests collected, or no change at all is `NEEDS_VERIFICATION`. Otherwise `PASSED`.
-- **SA.** `PASSED` when at least 80% of the acceptance items matched a word in its report, otherwise `NEEDS_VERIFICATION`. That is a keyword match only, so an SA `PASSED` does not mean the analysis is right.
-- **REVIEW.** `FAILED` when it said no revision was needed but the host tests failed or collected nothing.
-- **Thin evidence.** A result that would be `PASSED` becomes `INSUFFICIENT_EVIDENCE` when coverage is below 60%.
-
-**Where you can see it.** The task page shows each evaluation with its score, coverage, status, the sub-scores and their weights, a version number and what triggered it. `task evaluations` lists the history and `task reevaluate` re-scores a task from the saved evidence. The released scorer covers the SA, SD, RD, SD/RD and REVIEW roles; other roles are not scored.
-
-**What it cannot do.** The AUROC of 0.67 comes from a toy benchmark of 30 hand-written patches over six one-function tasks, not from real agents. In it, host-visible tests caught broken work but could not tell wrong-but-green work from correct work: all 12 wrong-but-green patches were scored `PASSED`, so half of the `PASSED` results were wrong. Read the number as a statement about these rules on that toy set, not as a measure of how often a real `PASSED` is right. `ccc-mcp validate-scoring` lets you test the score against ground truth on your own cases. See the [Technical reference](docs/en/10-technical-reference.md#evaluation-engine).
-
-### The Results page (Preview)
-
-![Preview: Results page of a finished task, with the requirement checklist and the saved quality score](docs/assets/readme/results-en.png)
-
-*Preview, from the current vNext candidate build. The released PyPI version does not have this page yet.*
-
-The Preview Results page puts the saved score beside a checklist of your requirements. Each requirement is **Confirmed** only when recorded evidence meets a rule that matches it, such as a passing test tied to it. It is **Not met** when evidence contradicts that one requirement, which does not mean the whole task failed, and **Not confirmed yet** when evidence is missing or a person must check. A text match or an agent's "done" never confirms anything.
-
-One recorded acceptance run (TASK-0001, a local project) shows why both views exist. The host ran `python3.14 -m unittest -q` and 2 tests passed. The saved quality score was **89 out of 100**, yet **2 of 4 requirements** were confirmed. The `multiply` function is in the code but no test is tied to it yet, and the "keep unchanged" requirement needs a person. The saved score is kept as it was when the task finished, while the checklist is checked again against current records. During that run the PM steps were advanced by hand, so it was not a fully unattended workflow, and its raw records are not published in this repository.
-
 ## Host evidence and strict review
 
 An agent saying it is finished is not evidence.
 
 - **Host-run tests.** After a developer step, the configured test command runs on the host, not inside the agent's report. The outcome and its record appear on the Results tab.
-- **Git diff.** Each step that may change files saves its diff with the task. The per-file viewer is Preview.
-- **Static analysis.** `ruff` findings feed the `code_quality` and `security` sub-scores.
+- **Git diff.** Each step that may change files saves its diff with the task.
 - **Agent report and host result are kept apart.** The task view never collapses them into one "success": the agent's claim and the host's verdict are shown separately. If a reviewer says "no revision needed" but the host tests failed or collected nothing, the host evidence overrides it and the work goes back to the developer.
 - **Review gates with limits.** A gate that fails sends work back to its producer a limited number of times, then hands the decision to you or the PM. Findings without evidence are discarded.
-- **Different states for different situations.** Evidence supports it (`PASSED`), evidence contradicts it (`FAILED`), there is not enough evidence (`INSUFFICIENT_EVIDENCE`), or the host has not verified it yet (`NEEDS_VERIFICATION`).
 
-A passing test run does not prove every requirement is correct, and not every natural-language requirement can be checked automatically. Requirements without a matching check stay pending, for a person to confirm.
+A passing test run does not prove every requirement is correct, and not every natural-language requirement can be checked by a command. Criteria no command can judge stay for a person to accept.
 
 ## Hand-over across chats and agents
 
@@ -308,25 +267,21 @@ The console runs in the same process as the CLI and MCP server, with no separate
 
 | Page | What you can do |
 | --- | --- |
-| **Command center** | Track task activity, blockers and agent evaluation history. Optionally enable Claude quota sync, which reads the official remaining percentages from Claude Code's status line. Account-wide token totals are shown separately and cannot be attributed to one project. |
-| **All projects** | Create projects, add folders, organize groups, import or export a project backup and manage write access. |
-| **Settings** | Set the profile, providers and roles (name, avatar, model, effort, quota fallback), workflows and review gates, report language, test command and Meeting Mode. |
-| **Tasks** | Open a task: the meeting room, the Results tab, evaluations, the technical record and the handoff panel. |
-| **Context** | Inspect the shared Context and its versions. |
-| **Connect** | Connect ChatGPT with a Tunnel ID and runtime API key, and inspect status and logs. Stored keys are never returned to the browser. |
-| **Global Skills** | Choose local Claude Code or Codex Skills to install for every project and role. |
-| **Skills & MCP** | View shared Skills; discover, install and manage local stdio MCP servers and their tools for one project. |
-| **Documentation** | Read the bundled English and Traditional Chinese guides. |
+| **Tasks** | Every piece of work in one place. Multi-step work is a group with its steps; one-off tasks stand alone. See who is working, progress, and whether it needs you; open a task for the meeting room, host test evidence and diff. Describe new work here, or just tell ChatGPT. The page updates in place and never reloads. |
+| **Projects** | Add or create projects, import or export a backup, grant or revoke write access, and set the AI tools, test command and language. |
+| **Settings** | Connect ChatGPT with a Tunnel ID and runtime API key, and install or sign in to the Codex and Claude Code tools. Stored keys are never returned to the browser. |
 
-Claude quota sync is opt-in. It adds a small wrapper to Claude Code's user `statusLine` setting, keeps any existing status line, and stores only reported percentages, reset times and the observation time. It does not call Claude's model or read login credentials. Disabling it restores the previous setting. See [reliability and security](docs/en/7-reliability-and-security.md#web-console).
+![Tasks page: a goal waiting for approval with its two phases, a finished goal with its progress, and a single task](docs/assets/readme/tasks-en.png)
 
-If you only use ChatGPT, select the `chatgpt-only` profile in **Settings**, or run `ccc-mcp --project hello-demo config profile chatgpt-only`. Native Codex and Claude Code roles need `ccc-mcp setup all` and their own sign-in. The CLI works on the same project data; see the [CLI reference](docs/en/8-cli-reference.md) for every command.
+*The Tasks page: groups (a goal and its phases) and single tasks in one list, with what needs you at the top. Demo data.*
+
+If you only use ChatGPT, choose the `chatgpt-only` profile in the project's settings, or run `ccc-mcp --project hello-demo config profile chatgpt-only`. Native Codex and Claude Code roles need `ccc-mcp setup all` and their own sign-in. The CLI works on the same project data; see the [CLI reference](docs/en/8-cli-reference.md) for every command.
 
 ## Release status
 
-This README covers two different states. Check which one you have before following a command. It was checked against the published ccc-mcp 0.4.0 wheel on PyPI on 2026-11-19, and against the vNext candidate build.
+This README describes the source tree. Not everything in it is in a published release, so check which one you have before following a command. The published 0.4.0 was last compared with this README on 2026-11-19; the custom roles and Goals work was added after that date and has not been published.
 
-| Capability | PyPI release (`pip install ccc-mcp`) | vNext Preview (not published) |
+| Capability | PyPI 0.4.0 (`pip install ccc-mcp`) | Next release (this source tree) |
 | --- | --- | --- |
 | Roles, workflows, review gates, custom workflows | Yes | Yes |
 | Meeting Mode (opt-in) | Yes | Yes |
@@ -335,19 +290,16 @@ This README covers two different states. Check which one you have before followi
 | Continuation prompt (`task continue --target`) and handoff panel | Yes | Yes |
 | Quota fallback (`--quota-fallback`) | Yes | Yes |
 | Host test evidence on the Results tab | Yes | Yes |
-| Quality score, evidence coverage and evaluation history (opt-in) | Yes | Yes |
-| Skills, MCP tools and Claude quota sync | Yes | Yes |
-| Per-file diff viewer | No | Preview |
-| Requirement checklist and scorecard | No | Preview |
-| Acceptance Contract, created with each task | No | Preview |
-| Evidence rules: Confirmed, Not met, Not confirmed yet | No | Preview |
-| A bot that runs a workflow without a ChatGPT conversation | No | No (roadmap) |
+| Skills (`ccc-mcp skill install`) | Yes | Yes |
+| Your own roles (instructions on a built-in role, pinned per task) | No | Yes |
+| Goals: plan, approval, phases, repair loop, whole-goal run | No | Yes |
+| ChatGPT tools `get_work_overview`, `get_goal`, `request_goal_approval`, `start_goal`, `plan_goal`, `control_goal` | No | Yes |
+| One Tasks page (groups and single tasks), three-page console, in-place updates | No | Yes |
+| Recovery of a host test left running by a killed process | No | Yes |
+| Quality score and sub-scores, usage dashboards, built-in docs viewer, installed-MCP proxy, Claude quota sync | Described in earlier READMEs | Removed |
+| A bot that runs a single task without a ChatGPT conversation | No | No (roadmap) |
 
-The vNext Preview is a local build of the next release. It is verified in one repository only, its version number is not decided, and nothing in it has been published.
-
-**Installing from source does not give you the Preview.** `pip install -e .` from a clone of GitHub `main` gives you the same code as the 0.4.0 release. On 2026-11-19 the only differences between `main` and the `v0.4.0` tag were the README files and the version string, which still reads 0.3.1 in `main` because Release does not edit `main`. The Preview exists only in a local candidate build that is not pushed or published, so it cannot be installed from this repository yet.
-
-How this was checked: the published 0.4.0 wheel, the `v0.4.0` tag and `main` were compared, and the Preview names (`acceptance_contract`, `scorecard`, `evidence_verifier`) appear only in the candidate source.
+**Installing from source.** `pip install -e .` from a clone installs the code in your working tree, which is where the *Next release* column applies. The version string in the source reads 0.3.1 because Release does not edit it; the version of the next release is chosen by whoever starts Release.
 
 ## Proof: three selected SWE-bench Verified cases
 
@@ -363,7 +315,7 @@ Using **ChatGPT-only**, ccc-mcp resolved three selected [SWE-bench Verified](htt
 
 ## Watch the demo
 
-**An earlier recording of the console (1080p, 60 fps, with audio, 63 seconds).** It was made before the current Results page, so it does not show the checklist or the scorecard.
+**An earlier recording of the console (1080p, 60 fps, with audio, 63 seconds).** It was made before the Tasks page and Goals, so it does not show them.
 
 https://github.com/user-attachments/assets/eb7512b3-7f67-4a2e-aa7a-9e4b06a9a7d2
 
@@ -389,6 +341,9 @@ Read the numbered documents in order for a full setup. The two language trees us
 | 6 | Install and use skills |
 | 7 | Understand reliability and security boundaries |
 | 8–11 | CLI reference, public protocol, technical reference and architecture |
+| 12–13 | ChatGPT-only walk-through and Meeting Mode walk-through |
+| 14 | The AI team, your own workflows and your own roles |
+| 15–17 | Tasks and Goals, a phase and its repair loop, running a whole goal |
 
 - [Traditional Chinese README](README_ZH.md)
 - [English documentation index](docs/en/README.md)
@@ -397,14 +352,15 @@ Read the numbered documents in order for a full setup. The two language trees us
 
 > These are goals, not features you can use today. There is no release date.
 
-**A bot that runs a workflow on its own.** Today a ChatGPT conversation plays the project manager and drives the workflow. Codex and Claude Code can take individual roles, but a ChatGPT chat still starts and steers the task.
+**A bot that runs a workflow on its own.** Goals already run phases without a ChatGPT conversation, using Codex or Claude Code for every role. A single task and any role played by ChatGPT in a browser are still driven by a ChatGPT conversation.
 
-The next goal is a bot-style entry that needs no ChatGPT conversation: connect Codex, Claude or another model directly and chain them into a workflow the way you compose one today. The role flow and its gates, the chat room, the declared ability charts, and evidence from the host's own test runs are meant to carry over unchanged.
+The next goals are a recorded end-to-end Goal run with real models, and a bot-style entry that needs no ChatGPT conversation for single tasks either: connect Codex, Claude or another model directly and chain them into a workflow the way you compose one today. The role flow and its gates, the chat room and evidence from the host's own test runs are meant to carry over unchanged.
 
 ## Development
 
 ```bash
-python3.11 -m pytest -q
+python3.11 -m pytest -q                                    # full acceptance run
+python3.11 -m pytest -q -m "not integration and not real_agents"   # fast core suite
 ```
 
 The repository requires Python 3.11 or newer. Real-agent tests are opt-in because they need locally installed, signed-in CLIs; see the [installation guide](docs/en/1-install-and-sign-in.md).

@@ -134,7 +134,7 @@ ccc-mcp --project my-project config meeting-mode on --min-rounds 1 --max-rounds 
 
 `task status`/`task handoff` 的 `clarification.gate` 用來證明關卡有跑過：SD/RD 的唯讀實作前檢查派工之前是 `null`，之後會顯示 `status`、`outcome`（`question_asked` 或 `no_blocking_question`）與 SD/RD 自己的 `rationale`——所以「檢查過、沒有問題要問」和「Meeting Mode 根本沒跑」可以區分。`clarification.triggered` 只有在 SD/RD 真的問出一個阻斷性問題後才會是 `true`——光是 `meeting_mode.enabled` 為 `true` 並不算。每一次 `wait_for_task`/`start_project_request`/`advance_project`/`dispatch_agent` 的回應（`workflow.handoff.clarification`）都帶著這個欄位，所以已連線的 ChatGPT 對話應該在關卡真正觸發時主動告知操作者，並從 `clarification.history` 摘要 SA/SD 的來回內容，而不是等任務完成才提一句。
 
-`--escalation` 決定 SA/SD 討論未果（`pm_decision_required`）時由誰決定：`ask_user`（預設）要求 ChatGPT 把問題與 SA 的建議呈現給真人操作者，等待其在對話中的實際回覆後才能呼叫 `resolve_clarification`——此時 `workflow.must_continue_in_this_turn` 會是 `false`，確認這是真正需要停下來的情況。`auto_pm` 則允許 ChatGPT 在同一輪以 PM 身分立即自行判斷決定（`must_continue_in_this_turn` 為 `true`），之後仍應把決定內容與理由告知操作者。這項設定是透過指令引導、而非程式碼強制執行——ccc-mcp 無法從後端驗證「是否真的詢問了真人」——詳見[可靠性與安全邊界](7-reliability-and-security.md#meeting-mode)的完整保證範圍。
+`--escalation` 決定 SA/SD 討論未果（`pm_decision_required`）時由誰決定：`ask_user`（預設）要求 ChatGPT 把問題與 SA 的建議呈現給真人操作者，等待其在對話中的實際回覆後才能呼叫 `resolve_clarification`——此時 `workflow.must_continue_in_this_turn` 會是 `false`，確認這是真正需要停下來的情況。`auto_pm` 則允許 ChatGPT 在同一輪以 PM 身分立即自行判斷決定（`must_continue_in_this_turn` 為 `true`），之後仍應把決定內容與理由告知操作者。這項設定是透過指令引導、而非程式碼強制執行——ccc-mcp 無法從後端驗證「是否真的詢問了真人」——詳見[可靠性與安全邊界](7-reliability-and-security.md#9-meeting-modesdrd-動工前的澄清對話三個保證)的完整保證範圍。
 
 ## 6. 全新 Session
 
@@ -146,7 +146,7 @@ ccc-mcp --project my-project config meeting-mode on --min-rounds 1 --max-rounds 
 
 ## 工作流與審查關卡
 
-新任務使用「任務開始當下」專案所選的工作流（`config workflow classic|full`，或設定 → 工作流）。任務一旦開始就固定使用該工作流，之後改設定不會影響進行中的任務。
+新任務使用「任務開始當下」專案所選的工作流（`config workflow classic|full`，或專案頁的團隊卡片）。任務一旦開始就固定使用該工作流，之後改設定不會影響進行中的任務。
 
 | 工作流 | 步驟 |
 |---|---|
@@ -166,7 +166,7 @@ ccc-mcp --project my-project config meeting-mode on --min-rounds 1 --max-rounds 
 
 給「不是寫程式」的工作另有九個角色，介面用「做什麼」當名稱而不是縮寫：`PA` 個人助理、`RS` 研究員、`AN` 分析師、`PL` 規劃師、`CS` 顧問、`WR` 撰稿人、`ED` 編輯、`VC` 事實查核員、`RV` 審查員（超級嚴格審查員就是原本的 `AR`）。PA、RS、AN、PL、CS、WR、ED 是**產出**步驟：各自交出一份文件（存成 `PA-DOCUMENT.md`、`RS-DOCUMENT.md`…），後面每一步都會讀到。VC 與 RV 是**關卡**，發現問題時退回它前面最近的產出步驟，和軟體審查者一樣。它們都不會改任何檔案，回答用白話、並用需求所用的語言。
 
-內建四個團隊模板，在設定 → 工作流的「日常團隊」底下：
+內建四個團隊模板，在專案頁團隊卡片的工作流清單「日常團隊」底下：
 
 | 模板 | 步驟 | 適合 |
 |---|---|---|
@@ -177,17 +177,20 @@ ccc-mcp --project my-project config meeting-mode on --min-rounds 1 --max-rounds 
 
 用 `config workflow life` 選一個，或用 `config workflow-selection auto` 讓系統依需求挑（旅遊、預算、企劃、文章、「該不該…」等字眼；只要提到程式就維持軟體工作流）。自訂工作流可以混用任何角色，第一步可以是任一個產出角色，所以 `PA → WR → ED` 也是合法的「寫信」流程。日常任務的文件會顯示在任務頁的「成果」頁籤（最新的在上面），並隱藏只有改程式才有意義的 diff 與測試卡片。
 
-**Provider。** 日常角色預設用 ChatGPT，而不是 Codex 或 Claude Code：這裡的 CLI Agent 只能讀專案資料夾，研究員或事實查核員跑在上面查不到任何東西。用 ChatGPT 時，每一步由 ChatGPT 對話本身完成（它能上網）；ChatGPT 用 `submit_agent_report` 交出報告後，系統會自動寫入 Context 並派出下一步（回應的 `auto_advanced` 為 `true`），不必再呼叫 `advance_project`，所以步驟之間不會多出一輪 PM 整理。流程中的唯讀專家 SR、AR、SEC、QA、SW 也一樣，所以混入對抗審查員的團隊不會卡在那一步；SA、SD/RD 與 REVIEW 仍保留 PM 整理。若任務被暫停、專案沒有寫入授權，或這一步是軟體流程的角色，仍然停下來等 PM。若某個角色的工作不需要外部資訊（例如根據研究員筆記工作的 WR、ED），仍可在設定 → 角色把它改成 Codex 或 Claude Code。
+第 14 章（[AI 團隊、自訂工作流與自訂角色](14-ai-team-and-roles.md)）說明團隊卡片、自訂角色，以及任務如何保留它的團隊。
 
-**能力圖。** 每個角色在六項能力上各有 0 到 5 分：研究、分析、規劃、創作、查核、風險。設定頁會顯示每個角色的能力圖；每張工作流卡片顯示整支隊伍合併後的能力圖與戰力（六項分數加總，滿分 30）；工作流編輯器會隨著你調整步驟即時重畫。隊伍在某項能力的分數＝最強成員的分數，其他每位在這項有 3 分以上的成員再加 0.5（最高 5 分）；同一個角色出現多次只算一次。全隊在某項都只有 1 分以下，就會列為「沒人擅長」的弱項。任務的「成果」頁籤上，能力圖會隨著步驟完成逐漸長大，虛線是整支隊伍的完整輪廓。分數定義在 `core/roles.py` 的 `ROLE_STATS`，並以 `stats` 欄位隨工作流目錄（`list_workflows`）回傳。
+**目標需要開發者步驟。** 目標的一個階段，是靠主機對開發者所改內容跑的測試來驗收；步驟失敗時，也是把工作退回給開發者修正。因此階段只能在含有 `RD` 或 `SD/RD` 步驟的工作流上執行：Classic、Standard、Full，以及你自訂且包含開發步驟的工作流。日常團隊（`life`、`business`、`content`、`decision`）只寫報告、不改檔案，不能執行階段，但仍可執行一般任務。若計畫指定了這類團隊（或在選用其中之一時寫 `default`），計畫在儲存時就會被拒絕並說明原因，不會等到你核准後才失敗。團隊卡片會在該團隊頁面顯示這項限制，規劃者也會被告知哪些工作流能執行階段。
+
+**Provider。** 日常角色預設用 ChatGPT，而不是 Codex 或 Claude Code：這裡的 CLI Agent 只能讀專案資料夾，研究員或事實查核員跑在上面查不到任何東西。用 ChatGPT 時，每一步由 ChatGPT 對話本身完成（它能上網）；ChatGPT 用 `submit_agent_report` 交出報告後，系統會自動寫入 Context 並派出下一步（回應的 `auto_advanced` 為 `true`），不必再呼叫 `advance_project`，所以步驟之間不會多出一輪 PM 整理。流程中的唯讀專家 SR、AR、SEC、QA、SW 也一樣，所以混入對抗審查員的團隊不會卡在那一步；SA、SD/RD 與 REVIEW 仍保留 PM 整理。若任務被暫停、專案沒有寫入授權，或這一步是軟體流程的角色，仍然停下來等 PM。若某個角色的工作不需要外部資訊（例如根據研究員筆記工作的 WR、ED），仍可在專案頁團隊卡片的「進階」把它改成 Codex 或 Claude Code。
+
 
 ### 規格寫手（SW）
 
-SW 把討論得出的結論（需求、SA 的分析、SD 的設計，以及審查者提出的問題與解決方式）整理成一份「讓 AI 讀得懂、能照著實作」的規格書：目的與不做的事、名詞表、每個決定及其理由與被否決的替代方案、編號且可測試的需求（`REQ-001`，用 MUST/SHOULD/MAY）、精確的介面與資料格式、Given/When/Then 驗收條件，以及未解決的疑問（列出來，不亂猜）。文件存成 `SPEC.md`（報告本身是 `SW-REPORT.md`），之後的 SD、RD 和所有審查者都會拿到；控制台在任務的「執行成果」頁會顯示它。SW 只讀專案，不會改檔案。它是產出步驟，所以排在它後面的關卡退回時會退給它。目前沒有內建工作流包含 SW：到設定 → 工作流自己加，例如 `SA → AR → SR → SW → RD → CR`，讓規格在討論定案之後才寫。
+SW 把討論得出的結論（需求、SA 的分析、SD 的設計，以及審查者提出的問題與解決方式）整理成一份「讓 AI 讀得懂、能照著實作」的規格書：目的與不做的事、名詞表、每個決定及其理由與被否決的替代方案、編號且可測試的需求（`REQ-001`，用 MUST/SHOULD/MAY）、精確的介面與資料格式、Given/When/Then 驗收條件，以及未解決的疑問（列出來，不亂猜）。文件存成 `SPEC.md`（報告本身是 `SW-REPORT.md`），之後的 SD、RD 和所有審查者都會拿到；控制台在任務的「執行成果」頁會顯示它。SW 只讀專案，不會改檔案。它是產出步驟，所以排在它後面的關卡退回時會退給它。目前沒有內建工作流包含 SW：到專案頁的團隊卡片按「新增工作流」自己加，例如 `SA → AR → SR → SW → RD → CR`，讓規格在討論定案之後才寫。
 
 ### 自訂工作流，以及誰來挑
 
-設定 → 工作流（或 `config workflow-save --steps SD,AR,RD,REVIEW [--name 名稱]`）可以用任意角色順序組出自己的工作流，最多 12 步。第一步必須是會產出東西的角色（SA、SD、RD 或 SD/RD），這樣審查者才有東西可審、也有人可以退回。存下來的工作流會自動命名為「工作流 2」「工作流 3」…（專案語言為英文時是 `Workflow 2`），之後可以改名；兩條內建工作流不能修改，只能另存一份。一個專案最多 20 條自訂工作流。刪除工作流不會影響正在跑它的任務；如果刪的是目前選的那條，新任務改回 `classic`。
+專案頁的團隊卡片，按「新增工作流」（或 `config workflow-save --steps SD,AR,RD,REVIEW [--name 名稱]`）可以用任意角色順序組出自己的工作流，最多 12 步。第一步必須是會產出東西的角色（SA、SD、RD 或 SD/RD），這樣審查者才有東西可審、也有人可以退回。存下來的工作流會自動命名為「工作流 2」「工作流 3」…（專案語言為英文時是 `Workflow 2`），之後可以改名；兩條內建工作流不能修改，只能另存一份。一個專案最多 20 條自訂工作流。刪除工作流不會影響正在跑它的任務；如果刪的是目前選的那條，新任務改回 `classic`。
 
 沒有 SA 的工作流（例如 `SD → AR → RD → CR`）會直接拿你的需求與驗收條件當作核准的計畫，PM 一開始就直接對 SD。
 
@@ -196,7 +199,7 @@ SW 把討論得出的結論（需求、SA 的分析、SD 的設計，以及審�
 | 模式 | 行為 |
 |---|---|
 | `fixed`（預設） | 固定用選定的那條。 |
-| `pm` | ChatGPT 先呼叫 `list_workflows`，依任務挑最合適的，並把 id 當作 `workflow` 傳給 `start_project_request`；沒挑就用選定的那條。 |
+| `pm` | 為既有專案保留：現在等同 `fixed`，因為 ChatGPT 已沒有挑選工作流的工具。 |
 | `auto` | ccc-mcp 依任務文字自動挑。安全相關（登入、密碼、token、權限、付款…）需要含 SEC 的工作流；大型或有風險的改動（重構、遷移、架構、schema…）需要 SD 與 AR；小修改（錯字、改名、文件…）用最短的；其他維持選定的那條。符合條件的裡面選步驟最少的。 |
 
 選了哪條、怎麼選的、為什麼，都會和任務一起保存（`task status` → `brief.workflow`）。只有 `pm` 模式才會採用 `workflow` 參數，其他模式會忽略。
