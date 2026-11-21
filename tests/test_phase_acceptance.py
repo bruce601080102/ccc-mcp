@@ -222,7 +222,10 @@ def test_the_whole_repair_runs_through_real_worker_processes_with_nobody_driving
 
     bridge, _ = slug
     del bridge.spawn_phase_worker            # back to the real spawn (the fixture silenced it)
-    del bridge.spawn_worker                  # and the real worker spawn (the shared fixture's no-op)
+    # and the real worker spawn (the shared fixture's no-op). `monkeypatch.delattr`, not `del`: the
+    # fixture patched it with monkeypatch, and pytest 9.2 undoes that by deleting the instance
+    # entry, which a plain `del` here would already have removed.
+    monkeypatch.delattr(bridge, "spawn_worker")
     _, log = install_fake_cli(
         tmp_path, monkeypatch, initial=[{"file": "app.py", "content": BUGGY}], pm_fix=FIX)
     goal = make_ready_goal(bridge, PYTEST)

@@ -41,7 +41,7 @@ Repository = "https://github.com/bruce601080102/ccc-mcp"
 Issues = "https://github.com/bruce601080102/ccc-mcp/issues"
 
 [project.optional-dependencies]
-dev = ["pytest>=8,<10", "pytest-asyncio>=1,<2", "pytest-xdist>=3.6,<4", "httpx>=0.28,<1", "ruff>=0.13,<1", "packaging>=24", "PyYAML>=6"]
+dev = ["pytest>=8,<10", "pytest-asyncio>=1,<2", "pytest-xdist>=3.6,<4", "httpx>=0.28,<1", "aiohttp>=3.9,<4", "ruff>=0.13,<1", "packaging>=24", "PyYAML>=6"]
 
 [project.scripts]
 ccc-mcp = "ccc_mcp.interfaces.cli:main"

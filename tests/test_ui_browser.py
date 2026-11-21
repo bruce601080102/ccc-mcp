@@ -14,7 +14,9 @@ import time
 
 import pytest
 import uvicorn
-from browser_driver import Browser, find_chrome, free_port
+
+pytest.importorskip("aiohttp", reason="the browser driver needs aiohttp (pip install -e '.[dev]')")
+from browser_driver import Browser, find_chrome, free_port  # noqa: E402
 from test_goal_planner import good_plan
 
 from ccc_mcp.interfaces.web import create_app

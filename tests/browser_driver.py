@@ -47,11 +47,15 @@ class Browser:
     def __init__(self, chrome):
         self.port = free_port()
         self.profile = tempfile.mkdtemp(prefix="ccc-chrome-")
+        # GitHub-hosted Linux runners restrict the user namespaces Chrome's sandbox needs and have a
+        # small /dev/shm; the browser only opens this program's own local pages there.
+        ci_flags = ["--no-sandbox", "--disable-dev-shm-usage"] if os.environ.get("CI") else []
         self.process = subprocess.Popen(
             [chrome, "--headless=new", f"--remote-debugging-port={self.port}",
              f"--user-data-dir={self.profile}", "--no-first-run", "--no-default-browser-check",
              "--disable-gpu", "--window-size=1280,900", "--disable-background-timer-throttling",
-             "--disable-renderer-backgrounding", "--disable-backgrounding-occluded-windows", "about:blank"],
+             "--disable-renderer-backgrounding", "--disable-backgrounding-occluded-windows",
+             *ci_flags, "about:blank"],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self.loop = asyncio.new_event_loop()
         self.thread = threading.Thread(target=self.loop.run_forever, daemon=True)
