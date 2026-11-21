@@ -1,11 +1,11 @@
-// Goals: state a requirement once, have the Delivery PM plan it, review the plan, approve it, then run
-// the whole goal (goalrun.js) or one approved phase at a time (phases.js). Nothing here starts work by
-// itself: approving a plan starts nothing, and a person starts the goal (or a phase). Everything that comes from the server is put into the
-// page through esc(), or as an element's value, never as raw markup.
+// One piece of work in detail (a Goal): the request, the plan, approval, the run and its steps. It lives
+// under Tasks. Nothing here starts work by itself: approving a plan starts nothing, and a person (or
+// ChatGPT, once the plan is approved) starts it. The page updates in place and never reloads.
+// Everything that comes from the server is put into the page through esc(), or as an element's value.
 window.cccGoals = function (ctx) {
   "use strict";
-  const { api, esc, UI, layout, navTo, toast, showModal, parseRoute, stale, getGen, trackTimer,
-    whenHtml, loadingView, errorView } = ctx;
+  const { api, esc, UI, layout, navTo, toast, showModal, parseRoute, stale, getGen, livePoll,
+    morphContent, whenHtml, loadingView, errorView } = ctx;
   const T = (text) => esc(UI.translate(text));
   const phasesUi = window.cccPhases(ctx);
   const goalRunUi = window.cccGoalRun(ctx);
@@ -46,64 +46,6 @@ window.cccGoals = function (ctx) {
     return `<span class="pill ${tone}">${T(label)}</span>`;
   }
 
-  function newKey() {
-    try { return "ui-" + crypto.randomUUID().replace(/-/g, ""); }
-    catch (e) { return "ui-" + Math.random().toString(16).slice(2) + Date.now().toString(16); }
-  }
-
-  // ---- the list --------------------------------------------------------------------------
-
-  async function renderGoals() {
-    const gen = getGen();
-    const project = parseRoute().project;
-    layout(loadingView());
-    let goals;
-    try { goals = await api(base(project)); }
-    catch (err) { if (!stale(gen)) errorView(err); return; }
-    if (stale(gen)) return;
-    layout(`
-      <div class="title-row"><div><h1>${T("Goals")}</h1><div class="sub">${esc(project)}</div></div></div>
-      <section class="goal-new">
-        <label for="goal-text">${T("What do you want delivered?")}</label>
-        <textarea id="goal-text" rows="5" maxlength="20000" placeholder="${esc(UI.translate("Describe the whole requirement once. A Delivery PM will plan it in phases."))}"></textarea>
-        <div class="goal-new-actions">
-          <button class="btn primary" id="goal-create" type="button">${T("Create goal")}</button>
-          <span class="hint">${T("Creating a goal does not start any work or call a model.")}</span>
-        </div>
-      </section>
-      ${goals.length ? `
-        <table class="task-table goal-table">
-          <thead><tr><th>${T("Goal")}</th><th>${T("State")}</th><th>${T("Plan")}</th><th>${T("Created")}</th></tr></thead>
-          <tbody>${goals.map((goal) => `
-            <tr data-goal="${esc(goal.id)}" tabindex="0">
-              <td><strong>${esc(goal.title)}</strong><div class="muted mono">${esc(goal.id)}</div></td>
-              <td>${statePill(goal.state)}</td>
-              <td>${goal.current_version ? `v${esc(goal.current_version)}` : "—"}</td>
-              <td>${whenHtml(goal.created)}</td>
-            </tr>`).join("")}</tbody>
-        </table>` : `<div class="empty">${T("No goals yet. Describe what you want delivered above.")}</div>`}
-    `);
-    UI.localize(document.getElementById("sheet"));
-    // One key per page render: pressing the button twice (or a retry after a lost reply) can
-    // only ever create one goal.
-    const requestKey = newKey();
-    document.getElementById("goal-create").addEventListener("click", async (event) => {
-      const text = document.getElementById("goal-text").value;
-      event.target.disabled = true;
-      try {
-        const goal = await api(base(project), { method: "POST", body: { requirement: text, request_key: requestKey } });
-        navTo(`/p/${encodeURIComponent(project)}/goals/${encodeURIComponent(goal.id)}`);
-      } catch (err) { toast(err.message, true); event.target.disabled = false; }
-    });
-    const open = (id) => navTo(`/p/${encodeURIComponent(project)}/goals/${encodeURIComponent(id)}`);
-    document.querySelectorAll("tr[data-goal]").forEach((row) => {
-      row.addEventListener("click", () => open(row.dataset.goal));
-      row.addEventListener("keydown", (event) => {
-        if (event.target === row && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); open(row.dataset.goal); }
-      });
-    });
-  }
-
   // ---- the plan ----------------------------------------------------------------------------
 
   function criterionHtml(criterion) {
@@ -140,8 +82,8 @@ window.cccGoals = function (ctx) {
             <p>${esc(phase.scope)}</p>
             <h4>${T("Delivers")}</h4>${listHtml(phase.outputs)}
             <h4>${T("Accepted when")}</h4><ul class="goal-criteria">${phase.acceptance.map(criterionHtml).join("")}</ul>
-            <div class="muted">${T("Workflow")}: <span class="mono">${esc(phase.workflow)}</span>${phase.provider_hint ? ` · ${T("Suggested provider")}: ${esc(phase.provider_hint)}` : ""}</div>
-            ${phasesUi.startHtml(goal, phase)}
+            <div class="muted">${T("Workflow")}: <span data-no-i18n>${esc(plan.teams?.[phase.workflow]?.builtin
+                ? UI.translate(plan.teams[phase.workflow].name) : plan.teams?.[phase.workflow]?.name || phase.workflow)}</span>${phase.provider_hint ? ` · ${T("Suggested provider")}: ${esc(phase.provider_hint)}` : ""}</div>
           </li>`).join("")}</ol>
         <h3>${T("The whole goal is accepted when")}</h3>
         <ul class="goal-criteria">${body.final_acceptance.map(criterionHtml).join("")}</ul>
@@ -159,7 +101,7 @@ window.cccGoals = function (ctx) {
   function post(who, name, bodyHtml, when, tone) {
     const user = who === "user";
     return `<article class="chat-post ${user ? "is-user" : ""} ${tone === "error" ? "has-error" : ""}">
-      <div class="chat-avatar goal-avatar" aria-hidden="true" data-no-i18n>${user ? "You" : "PM"}</div>
+      <div class="chat-avatar goal-avatar" aria-hidden="true" data-no-i18n>${user ? T("You") : "PM"}</div>
       <div class="chat-post-body"><div class="chat-post-meta"><strong data-no-i18n>${esc(name)}</strong>${when ? `<time>${whenHtml(when)}</time>` : ""}</div>
       <div class="chat-bubble">${bodyHtml}</div></div></article>`;
   }
@@ -180,11 +122,11 @@ window.cccGoals = function (ctx) {
       const manual = d.source === "manual";
       const who = manual ? UI.translate("Imported plan") : UI.translate("Delivery PM");
       return post("pm", who,
-        `${d.message ? `<p>${esc(d.message)}</p>` : ""}<p class="muted">${T("Version")} ${esc(d.version)} · ${esc(d.phases)} ${T("phases")}${manual ? ` · ${T("written outside ccc-mcp, not by the Delivery PM")}` : ""}</p>`,
+        `${d.message ? `<p>${esc(UI.translate(d.message))}</p>` : ""}<p class="muted">${T("Version")} ${esc(d.version)} · ${esc(d.phases)} ${T("phases")}${manual ? ` · ${T("written outside ccc-mcp, not by the Delivery PM")}` : ""}</p>`,
         event.created);
     }
     if (event.kind === "plan_run_failed") {
-      return notice(`${T(FAILURE[d.failure_kind] || FAILURE.ERROR)} <span class="muted">${esc(d.error || "")}</span>`, event.created, true);
+      return notice(`${T(FAILURE[d.failure_kind] || FAILURE.ERROR)} <span class="muted">${d.error ? esc(UI.error(d.error)) : ""}</span>`, event.created, true);
     }
     if (event.kind === "plan_run_cancelled") return notice(T("Planning was stopped."), event.created);
     if (event.kind === "approved") {
@@ -258,11 +200,11 @@ window.cccGoals = function (ctx) {
     catch (err) { if (!stale(gen)) errorView(err); return; }
     if (stale(gen)) return;
 
-    const draw = () => {
-      layout(`
+    const pageHtml = () => `
         <div class="title-row"><div>
-          <a class="muted" href="#/p/${encodeURIComponent(project)}/goals">${T("All goals")}</a>
-          <h1>${esc(goal.title)} ${statePill(goal.state)}</h1>
+          <a class="muted" href="#/p/${encodeURIComponent(project)}/tasks">${T("All tasks")}</a>
+          <h1><span data-no-i18n>${esc(goal.title)}</span> ${statePill(goal.state)}
+            <button type="button" class="btn small quiet" id="goal-rename">${T("Rename")}</button></h1>
           <div class="sub">${T(goal.next_action)}</div></div></div>
         <section class="chat-thread goal-thread" aria-label="${esc(UI.translate("Conversation"))}">${goal.events.map(eventHtml).join("")}</section>
         ${goal.plan ? planHtml(goal.plan, goal) : ""}
@@ -271,10 +213,14 @@ window.cccGoals = function (ctx) {
         ${actionsHtml(goal)}
         ${versionsHtml(goal)}
         ${advancedHtml(goal)}
-      `);
-      UI.localize(document.getElementById("sheet"));
+      `;
+    // The first paint builds the page; every later one patches it in place, so what the person is
+    // typing, reading or has open stays exactly as it is.
+    let painted = false;
+    const draw = () => {
+      if (painted) morphContent(pageHtml());
+      else { layout(pageHtml()); painted = true; }
       bind();
-      startPoll();
     };
 
     const reload = async () => {
@@ -288,9 +234,15 @@ window.cccGoals = function (ctx) {
     };
 
     function bind() {
-      const on = (id, handler) => { const el = document.getElementById(id); if (el) el.addEventListener("click", handler); };
-      phasesUi.bind(document.getElementById("sheet"), { goal, project, reload, runs });
-      goalRunUi.bind(document.getElementById("sheet"), { goal, project, reload });
+      const on = (id, handler) => { const el = document.getElementById(id); if (el) el.onclick = handler; };
+      const sheet = document.getElementById("sheet");
+      phasesUi.bind(sheet, { goal, project, reload, runs });
+      goalRunUi.bind(sheet, { goal, project, reload });
+      on("goal-rename", () => showModal({
+        title: "Rename this work", body: "Only the name changes. The request and the plan stay as they were.",
+        fields: [{ label: UI.translate("Name"), value: goal.title }], confirmLabel: "Rename",
+        onSubmit: async ([title]) => { await api(`${path}/rename`, { method: "POST", body: { title } }); await reload(); },
+      }));
       on("goal-plan", () => call("/plan"));
       on("goal-revise", () => {
         const text = document.getElementById("goal-change").value.trim();
@@ -302,42 +254,40 @@ window.cccGoals = function (ctx) {
         const challenge = "APPROVE " + goal.id + " v" + goal.plan.version;
         showModal({
           title: "Approve this plan",
-          body: "You are approving exactly this version of the plan. It does not approve commit, push, release, deploy, wider access, a larger budget or an untrusted role. Nothing starts by approving: you start the goal (or a phase) yourself.",
-          fields: [{ label: `${UI.translate("Type")} ${challenge} ${UI.translate("to confirm")}`, placeholder: challenge }],
+          body: "You are approving exactly this version of the plan. It does not approve commit, push, release, deploy, wider access, a larger budget or an untrusted role. It starts work only if you tick the box below.",
+          fields: [{ label: `${UI.translate("Type")} ${challenge} ${UI.translate("to confirm")}`, placeholder: challenge },
+            { type: "checkbox", label: UI.translate("Start working right after approving"), checked: true }],
           confirmLabel: "Approve",
-          onSubmit: async ([typed]) => {
+          onSubmit: async ([typed, startNow]) => {
             if (typed !== challenge) throw new Error(UI.translate("Confirmation text did not match."));
             await api(`${path}/approve`, { method: "POST", body: { version: goal.plan.version, sha256: goal.plan.sha256, confirm: typed } });
             toast("Plan approved.");
+            if (startNow && !goal.goal_run) {
+              // The person chose this here, in the same act; approving alone still starts nothing.
+              try { await api(`/projects/${encodeURIComponent(project)}/goals/${encodeURIComponent(goal.id)}/run`, { method: "POST", body: {} }); toast("Started."); }
+              catch (err) { toast(err.message, true); }
+            }
             await reload();
           },
         });
       });
       on("goal-cancel", () => {
         showModal({
-          title: "Cancel this goal", body: "A cancelled goal cannot be reopened. Its history is kept.",
-          fields: [{ label: UI.translate("Reason (optional)"), placeholder: "" }], confirmLabel: "Cancel goal", danger: true,
+          title: "Cancel this work", body: "Cancelled work cannot be reopened. Its history is kept.",
+          fields: [{ label: UI.translate("Reason (optional)"), placeholder: "" }], confirmLabel: "Cancel work", danger: true,
           onSubmit: async ([reason]) => { await api(`${path}/cancel`, { method: "POST", body: { reason } }); await reload(); },
         });
       });
     }
 
-    // layout() stops every timer, so the poll is started again after each draw.
-    function startPoll() {
-      let polling = false;
-      trackTimer(setInterval(async () => {
-        if (stale(gen) || polling) return;
-        polling = true;
-        try {
-          const fresh = await api(path);
-          const freshRuns = await phasesUi.load(path, fresh);
-          if (!stale(gen) && signature(fresh, freshRuns) !== signature(goal, runs)) { goal = fresh; runs = freshRuns; draw(); }
-        } catch (_) { /* the next poll retries */ }
-        finally { polling = false; }
-      }, 2500));
-    }
     draw();
+    livePoll(gen, async () => {
+      const fresh = await api(path);
+      const freshRuns = await phasesUi.load(path, fresh);
+      if (stale(gen)) return;
+      if (signature(fresh, freshRuns) !== signature(goal, runs)) { goal = fresh; runs = freshRuns; draw(); }
+    });
   }
 
-  return { renderGoals, renderGoalDetail };
+  return { renderGoalDetail };
 };

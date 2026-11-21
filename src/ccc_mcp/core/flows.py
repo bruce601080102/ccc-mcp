@@ -21,6 +21,25 @@ PRODUCER_ROLES = frozenset({"SA", "SD", "RD", "SD/RD", "SW", *GENERAL_PRODUCERS}
 # Producers that change the working tree and therefore get host tests afterwards.
 BUILDER_ROLES = frozenset({"RD", "SD/RD"})
 GATE_ROLES = frozenset(AGENT_ROLES) - PRODUCER_ROLES
+
+
+def goal_blocker(flow):
+    """Why this workflow cannot run a Goal phase, or None when it can.
+
+    A phase is accepted only on a host-run test of files a developer step changed, and a failed
+    step is repaired by sending the work back to that developer step. A team with no RD or SD/RD
+    step (for example the everyday teams, whose roles only write reports) has neither, so a phase on
+    it could never be verified. It still runs ordinary tasks. A custom role counts by the built-in
+    role it works like, which is what `step["role"]` holds."""
+    if any(step["role"] in BUILDER_ROLES for step in flow["steps"]):
+        return None
+    return (
+        f"The {flow['name']} workflow has no developer step (RD or SD/RD), so goal phases cannot "
+        "run on it: a phase is accepted on host-run tests of what a developer changed, and a "
+        "failed step is repaired by sending it back to that developer"
+    )
+
+
 # Gates that judge the finished implementation, so failing host tests always fail them.
 VERIFYING_GATES = frozenset({"REVIEW", "QA"})
 

@@ -271,8 +271,8 @@ def test_diff_shows_missing_newline_and_cli_commands(bridge, human):
 async def test_direct_edit_tools_respect_http_readonly(bridge):
     mutable = {t.name for t in await create_server(bridge.home).list_tools()}
     readonly = {t.name for t in await create_server(bridge.home, http=True).list_tools()}
-    assert {"get_workspace_edit", "start_project_request", "write_task_file"} <= mutable
-    assert "get_workspace_edit" in readonly
+    assert {"start_project_request", "write_task_file"} <= mutable
+    assert "get_workspace_edit" not in readonly | mutable   # the review is by CLI; no tool for it
     assert not {"propose_workspace_edit", "write_workspace"} & mutable
     assert "start_project_request" not in readonly
     assert not {"approve_workspace_edit", "configure_write_file"} & mutable

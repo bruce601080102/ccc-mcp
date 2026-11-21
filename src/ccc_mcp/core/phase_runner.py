@@ -54,7 +54,7 @@ from ..adapters.storage import now
 from ..infra.errors import BridgeError, PermissionDenied
 from ..infra.security import canonical, reject_secrets
 from .context import identifier
-from .flows import BUILDER_ROLES
+from .flows import BUILDER_ROLES, goal_blocker
 from .goal_plan import BUDGET_CAPS, DEFAULT_BUDGET
 from .goal_repair import coverage
 from .phase_repair import PhaseRepairMixin
@@ -435,7 +435,7 @@ class PhaseHub(PhaseRepairMixin):
         phase = next(item for item in plan["phases"] if item["id"] == run["phase_id"])
         return dict(goal), dict(version), phase, plan
 
-    def check_phase_runnable(self, project_id, goal, phase, adapter, requirement=None):
+    def check_phase_runnable(self, project_id, goal, phase, adapter, requirement=None, *, version=None):
         """Everything that must be true for a phase to run, without creating anything: the project is
         authorized, a test command is configured, the workflow is a step workflow with a developer
         step, and no role needs a person at a browser. Returns (access, test_command, flow id,
@@ -456,22 +456,28 @@ class PhaseHub(PhaseRepairMixin):
                 "automatically or proposed by a model"
             )
         requirement = requirement or phase_requirement(goal, phase)
-        choice = self._resolve_task_workflow(project_id, requirement, phase["workflow"])
-        flow_id = choice[0]
-        catalog = {flow["id"]: flow for flow in self.workflow_catalog(project_id)["workflows"]}
-        if not any(step["role"] in BUILDER_ROLES for step in catalog[flow_id]["steps"]):
-            raise BridgeError(
-                f"The {catalog[flow_id]['name']} workflow has no developer step (RD or SD/RD), so "
-                "there is nothing a repair could be sent back to"
-            )
-        if catalog[flow_id].get("legacy"):
+        flow_id = phase["workflow"]
+        choice = (flow_id, "goal_plan", "Selected in the goal plan")
+        flow = self.goal_plan_workflow(version or {}, flow_id)
+        if flow is None:
+            catalog = {entry["id"]: entry for entry in self.workflow_catalog(project_id)["workflows"]}
+            flow = catalog.get(flow_id)
+            if flow is None:
+                raise BridgeError(f"Workflow {flow_id} no longer exists; revise the goal plan")
+        blocker = goal_blocker(flow)
+        if blocker:
+            raise BridgeError(blocker)
+        if flow.get("legacy"):
             raise BridgeError(
                 "Phase runs need a step workflow (for example Standard). This project runs the "
                 "Classic workflow, which cannot hand a failed step back to the Delivery PM"
             )
+        for step in flow["steps"]:
+            if step.get("snapshot_id"):
+                self.require_role_snapshot_trusted(project_id, step["snapshot_id"])
         if adapter == "real":
-            self._require_unattended(project_id, catalog[flow_id])
-        return access, test_command, flow_id, choice, catalog[flow_id]
+            self._require_unattended(project_id, flow)
+        return access, test_command, flow_id, choice, flow
 
     def start_phase_run(
         self, project_id, goal_id, phase_id, *, adapter=None, fake_scenario="success",
@@ -510,7 +516,7 @@ class PhaseHub(PhaseRepairMixin):
             project_id, goal_id, phase_id, synthetic)
         requirement = phase_requirement(goal, phase, handoff)
         access, test_command, flow_id, choice, entry = self.check_phase_runnable(
-            project_id, goal, phase, adapter, requirement)
+            project_id, goal, phase, adapter, requirement, version=version)
         if synthetic is None:
             for dependency in phase["depends_on"]:
                 done = self.store.one(
@@ -620,12 +626,20 @@ class PhaseHub(PhaseRepairMixin):
         """A role played by ChatGPT in a browser cannot run without a person, so a flow that
         contains one cannot be run by this."""
         for step in flow["steps"]:
-            provider = self.resolve_agent_settings(project_id, step["role"], "auto")["provider"]
+            if step.get("snapshot_id"):
+                snapshot = self.role_snapshot(project_id, step["snapshot_id"])
+                provider = self.snapshot_agent_settings(snapshot)["provider"]
+            elif step.get("role_ref"):
+                role = self.get_custom_role(project_id, step["role_ref"])
+                provider = self._resolved_runtime(project_id, step["role"], role["definition"])["provider"]
+            else:
+                provider = (step.get("runtime") or
+                            self.resolve_agent_settings(project_id, step["role"]))["provider"]
             if provider == "chatgpt":
                 raise BridgeError(
                     f"Role {step['role']} in the {flow['name']} workflow is played by ChatGPT in a "
                     "browser, which cannot run unattended. Choose Codex or Claude Code for it in "
-                    "Agent Studio"
+                    "AI team settings"
                 )
 
     def _finish_start(self, run_id, requirement=None, acceptance=None):
@@ -636,14 +650,15 @@ class PhaseHub(PhaseRepairMixin):
             return
         project_id, task_id = run["project_id"], run["task_id"]
         if not self.store.one("SELECT 1 FROM tasks WHERE project_id=? AND id=?", (project_id, task_id)):
+            goal, version, phase, _ = self._bound_phase(run)
+            frozen = self.goal_plan_workflow(version, run["workflow_id"])
             if requirement is None:
-                goal, _, phase, _ = self._bound_phase(run)
                 requirement = phase_requirement(goal, phase, run["handoff"])
                 acceptance = [item["statement"] for item in json.loads(run["criteria"])]
             try:
                 created = self.create_task(
                     project_id, requirement, acceptance, task_id=task_id,
-                    workflow=run["workflow_id"],
+                    workflow=run["workflow_id"], frozen_workflow=frozen, phase_workflow=True,
                 )
             except BridgeError as exc:
                 if "already exists" not in str(exc):

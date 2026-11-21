@@ -94,7 +94,7 @@ def test_authorized_project_import_is_read_only_and_drops_machine_permissions(tm
 
     assert second.get_project_access("demo")["mode"] == "read-only"
     restored = second.get_project_settings("demo")
-    assert restored["mcp_servers"] == {}
+    assert "mcp_servers" not in restored   # a legacy executable registration is never transported
     assert restored["writable_roots"] == []
     assert restored["workspace_mode"] == "worktree"
 

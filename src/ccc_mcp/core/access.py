@@ -20,7 +20,6 @@ from ..adapters.storage import (
     STEP_WORKFLOW_TABLES,
     now,
 )
-from ..adapters.ui_groups import forget_project_group
 from ..infra.config import metadata_name
 from ..infra.errors import BridgeError, PermissionDenied, VersionConflict
 from ..infra.security import digest
@@ -287,11 +286,6 @@ class ProjectAccessHub:
                 except OSError as exc:
                     cleanup_error = f"{cleanup_error}; {exc}" if cleanup_error else str(exc)
                     remaining_paths.append(str(staging))
-            try:
-                forget_project_group(self.home, project_id)
-            except OSError as exc:
-                cleanup_error = f"{cleanup_error}; {exc}" if cleanup_error else str(exc)
-                remaining_paths.append(str(self.home / "ui" / "project_groups.json"))
             return {
                 "project_id": project_id,
                 "removed": True,

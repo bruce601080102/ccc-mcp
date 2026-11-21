@@ -162,16 +162,3 @@ def test_agent_report_executions_are_unaffected(bridge, human):
             "demo", sa, {"blocking_question": None, "no_blocking_question": True, "rationale": "r"}
         )
     assert bridge.submit_agent_report("demo", sa, report())["status"] == "RECORDED"
-
-
-def test_handoff_prompt_mentions_installed_mcp_for_chatgpt(bridge, human, tmp_path):
-    script = tmp_path / "srv.py"
-    script.write_text(
-        "from mcp.server import MCPServer\ns = MCPServer('m')\n"
-        "@s.tool()\ndef ping() -> str:\n    return 'pong'\ns.run(transport='stdio')\n",
-        encoding="utf-8",
-    )
-    bridge.install_mcp_server("demo", "m", command=sys.executable, args=[str(script)])
-    task_id, _ = to_ask(bridge)
-    prompt = handoff(bridge, task_id)["chatgpt_prompt"]
-    assert "call_installed_mcp_tool" in prompt and "（m）" in prompt

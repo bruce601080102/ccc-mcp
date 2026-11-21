@@ -254,7 +254,9 @@ class GoalVerifyMixin:
                     f"Final verification of goal {run['goal_id']}. This Task only holds the host "
                     "test result of the whole project; it is never run.",
                     ["The configured test command passes on the whole project"],
-                    task_id=anchor, workflow=flow)
+                    task_id=anchor, workflow=flow, phase_workflow=True,
+                    frozen_workflow=self.goal_plan_workflow(
+                        dict(self._plan_version_row(run)), flow))
             except BridgeError as exc:
                 if "already exists" not in str(exc):
                     raise

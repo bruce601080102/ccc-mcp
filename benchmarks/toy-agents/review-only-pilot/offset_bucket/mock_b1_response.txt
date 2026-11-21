@@ -1,2 +1,0 @@
-[major] the boundary check uses a strict greater-than comparison so the next bucket's first offset is misassigned evidence: bucket_for_offset(10, 10)
-No other issues found.

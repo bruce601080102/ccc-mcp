@@ -235,7 +235,7 @@ def test_a_deleted_task_leaves_the_lists_and_its_id_is_never_handed_out_again(br
     assert [task["id"] for task in bridge.list_tasks("demo")] == [first]
     with pytest.raises(BridgeError, match="Task not found"):
         bridge.task("demo", second)
-    assert second not in {task["task_id"] for task in bridge.dashboard_snapshot()["tasks"]}
+    assert second not in {task["id"] for task in bridge.work_overview("demo")["singles"]}
     assert bridge.create_task("demo", "第三個功能", ["功能可用"])["id"] == "TASK-0003"
     kept = bridge.store.one(
         "SELECT 1 FROM tasks WHERE project_id='demo' AND id=?", (second,)

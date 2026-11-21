@@ -17,11 +17,9 @@ dev consoles (e.g. Jupyter) use; see docs/en/7-reliability-and-security.md.
 import asyncio
 import collections
 import hmac
-import re
 import secrets
 from pathlib import Path
 
-from markdown_it import MarkdownIt
 from starlette.applications import Starlette
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -30,10 +28,8 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
 from .. import __version__
-from ..adapters import mcp_servers as mcp_registry
 from ..adapters.agent_setup import LOGIN_ARGS, ensure_installed, uninstall_provider
 from ..adapters.agents.base import native_executable
-from ..adapters.environment import git_check, python_version
 from ..adapters.tunnel_client import (
     connection_profiles,
     forget_connection_profile,
@@ -47,37 +43,11 @@ from ..adapters.tunnel_client import (
     save_tunnel_key,
     tunnel_client_path,
 )
-from ..adapters.ui_groups import change_project_groups, project_groups
-from ..evaluation_engine.config import validated_role_weights
-from ..infra.claude_usage import (
-    disable_claude_usage,
-    enable_claude_usage,
-    probe_claude_usage,
-    read_claude_usage,
-)
-from ..infra.codex_account import read_account_usage
-from ..infra.errors import BridgeError
+from ..core.flows import BUILTIN_FLOWS, goal_blocker
+from ..infra.errors import BridgeError, VersionConflict
 from ..service import CCCMCP
 
 STATIC_DIR = Path(__file__).parent / "webui_static"
-DOCS_DIR = Path(__file__).resolve().parent.parent / "docs"
-SOURCE_DOCS_DIR = Path(__file__).resolve().parents[3] / "docs"
-DOC_SLUG = re.compile(r"(?:README|[0-9]+-[a-z0-9-]+)\Z")
-
-
-async def documentation(request: Request):
-    """Serve the matching bundled guide for the UI's selected language."""
-    language = request.path_params["language"]
-    slug = request.path_params["slug"]
-    if language not in {"en", "ch"} or not DOC_SLUG.fullmatch(slug):
-        return JSONResponse({"error": "Document not found"}, status_code=404)
-    root = DOCS_DIR if DOCS_DIR.is_dir() else SOURCE_DOCS_DIR
-    path = root / language / f"{slug}.md"
-    if not path.is_file():
-        return JSONResponse({"error": "Document not found"}, status_code=404)
-    markdown = await asyncio.to_thread(path.read_text, encoding="utf-8")
-    html = MarkdownIt("default", {"html": False}).render(markdown)
-    return JSONResponse({"html": html})
 
 
 async def run(fn, *args, **kwargs):
@@ -85,10 +55,15 @@ async def run(fn, *args, **kwargs):
     return await asyncio.to_thread(fn, *args, **kwargs)
 
 
-def endpoint(fn):
+def endpoint(fn=None, *, conflict_status=400):
+    if fn is None:
+        return lambda handler: endpoint(handler, conflict_status=conflict_status)
+
     async def handler(request: Request):
         try:
             return await fn(request)
+        except VersionConflict as exc:
+            return JSONResponse({"error": str(exc)}, status_code=conflict_status)
         except BridgeError as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
         except (KeyError, ValueError, TypeError) as exc:
@@ -280,53 +255,6 @@ async def list_projects(request: Request):
         access = await run(bridge.get_project_access, project["id"])
         rows.append({**project, "access": access})
     return JSONResponse(rows)
-
-
-@endpoint
-async def dashboard(request: Request):
-    return JSONResponse(await run(
-        bridge_of(request).dashboard_snapshot,
-        request.query_params.get("usage_window", "1d"),
-    ))
-
-
-@endpoint
-async def dashboard_account_usage(request: Request):
-    return JSONResponse(await read_account_usage())
-
-
-@endpoint
-async def dashboard_claude_usage(request: Request):
-    return JSONResponse(await run(read_claude_usage, bridge_of(request).home))
-
-
-@endpoint
-async def dashboard_claude_usage_enable(request: Request):
-    return JSONResponse(await run(enable_claude_usage, bridge_of(request).home))
-
-
-@endpoint
-async def dashboard_claude_usage_probe(request: Request):
-    return JSONResponse(await run(probe_claude_usage, bridge_of(request).home))
-
-
-@endpoint
-async def dashboard_claude_usage_disable(request: Request):
-    return JSONResponse(await run(disable_claude_usage, bridge_of(request).home))
-
-
-@endpoint
-async def get_project_groups(request: Request):
-    bridge = bridge_of(request)
-    ids = {p["id"] for p in await run(bridge.list_projects)}
-    return JSONResponse(await run(project_groups, bridge.home, ids))
-
-
-@endpoint
-async def update_project_groups(request: Request):
-    bridge = bridge_of(request)
-    ids = {p["id"] for p in await run(bridge.list_projects)}
-    return JSONResponse(await run(change_project_groups, bridge.home, ids, await _body(request)))
 
 
 @endpoint
@@ -529,54 +457,21 @@ async def clear_history(request: Request):
 @endpoint
 async def get_settings(request: Request):
     bridge = bridge_of(request)
-    result = await run(bridge.provider_overview, request.path_params["project_id"])
-    result["evaluation_weights"] = validated_role_weights(
-        result["editable"].get("evaluation_engine", {}).get("weights")
-    )
-    result["custom_roles"] = await run(
-        bridge.custom_role_directory, request.path_params["project_id"]
-    )
-    return JSONResponse(result)
+    project_id = request.path_params["project_id"]
 
+    def overview():
+        with bridge.lock(project_id):
+            return bridge.provider_overview(project_id), bridge.workflow_catalog(project_id)
 
-@endpoint
-async def set_role_name(request: Request):
-    bridge = bridge_of(request)
-    body = await _body(request)
-    result = await run(
-        bridge.configure_role_name,
-        request.path_params["project_id"],
-        body.get("role"),
-        body.get("name"),
-    )
-    return JSONResponse(result)
-
-
-@endpoint
-async def set_role_avatar(request: Request):
-    bridge = bridge_of(request)
-    body = await _body(request)
-    return JSONResponse(await run(
-        bridge.configure_role_avatar,
-        request.path_params["project_id"],
-        body.get("role"),
-        body.get("avatar"),
-    ))
-
-
-@endpoint
-async def set_role(request: Request):
-    bridge = bridge_of(request)
-    body = await _body(request)
-    result = await run(
-        bridge.configure_role,
-        request.path_params["project_id"],
-        body.get("role"),
-        body.get("provider"),
-        body.get("model"),
-        body.get("effort"),
-        body.get("quota_fallback"),
-    )
+    result, catalog = await run(overview)
+    result["workflow_choices"] = [
+        {"id": f["id"], "name": f["name"], "legacy": bool(f.get("legacy")),
+         "builtin": f["id"] in BUILTIN_FLOWS, "summary": f.get("summary", ""),
+         "goal_ready": goal_blocker(f) is None,
+         "steps": [{"role": s["role"], "role_ref": s.get("role_ref")} for s in f["steps"]]}
+        for f in catalog["workflows"]
+    ]
+    result["custom_roles"] = catalog["custom_roles"]
     return JSONResponse(result)
 
 
@@ -632,79 +527,6 @@ async def set_test_command(request: Request):
 
 
 @endpoint
-async def set_meeting_mode(request: Request):
-    bridge = bridge_of(request)
-    body = await _body(request)
-    result = await run(
-        bridge.configure_meeting_mode,
-        request.path_params["project_id"],
-        body.get("enabled"),
-        body.get("min_rounds"),
-        body.get("max_rounds"),
-        body.get("escalation"),
-    )
-    return JSONResponse(result)
-
-
-@endpoint
-async def set_workflow(request: Request):
-    bridge = bridge_of(request)
-    body = await _body(request)
-    return JSONResponse(await run(
-        bridge.configure_workflow, request.path_params["project_id"], body.get("workflow"),
-    ))
-
-
-@endpoint
-async def set_review_gate(request: Request):
-    bridge = bridge_of(request)
-    body = await _body(request)
-    return JSONResponse(await run(
-        bridge.configure_review_gate,
-        request.path_params["project_id"],
-        body.get("ar_strictness"),
-        body.get("max_rounds"),
-        body.get("escalation"),
-    ))
-
-
-@endpoint
-async def set_workflow_selection(request: Request):
-    bridge = bridge_of(request)
-    body = await _body(request)
-    return JSONResponse(await run(
-        bridge.configure_workflow_selection, request.path_params["project_id"], body.get("selection"),
-    ))
-
-
-@endpoint
-async def save_workflow(request: Request):
-    bridge = bridge_of(request)
-    body = await _body(request)
-    return JSONResponse(await run(
-        bridge.save_workflow,
-        request.path_params["project_id"],
-        body.get("steps"),
-        body.get("name"),
-        body.get("id"),
-    ))
-
-
-@endpoint
-async def delete_workflow(request: Request):
-    bridge = bridge_of(request)
-    return JSONResponse(await run(
-        bridge.delete_workflow, request.path_params["project_id"], request.path_params["workflow_id"],
-    ))
-
-
-@endpoint
-async def list_workflows(request: Request):
-    bridge = bridge_of(request)
-    return JSONResponse(await run(bridge.workflow_catalog, request.path_params["project_id"]))
-
-
-@endpoint
 async def task_gate_decision(request: Request):
     bridge = bridge_of(request)
     body = await _body(request)
@@ -723,190 +545,6 @@ async def task_gate_decision(request: Request):
 # local authorization. There is deliberately no MCP tool, CLI command or settings.json route for
 # any of this, so a ChatGPT conversation or a file in the repository cannot write a role's
 # instructions or accept a change to a role's fixed contract.
-
-
-@endpoint
-async def list_roles(request: Request):
-    bridge = bridge_of(request)
-    project_id = request.path_params["project_id"]
-    return JSONResponse({
-        "roles": await run(bridge.custom_role_directory, project_id),
-        "catalog": bridge.role_studio_catalog(),
-        "pending_imports": await run(bridge.pending_imported_roles, project_id),
-    })
-
-
-@endpoint
-async def create_role(request: Request):
-    bridge = bridge_of(request)
-    body = await _body(request)
-    _only(body, "name", "base_role", "description", "avatar", "kind", "prompt", "stats", "runtime")
-    return JSONResponse(await run(
-        bridge.create_custom_role,
-        request.path_params["project_id"],
-        body.get("name"),
-        body.get("base_role"),
-        description=body.get("description") or "",
-        avatar=body.get("avatar"),
-        kind=body.get("kind"),
-        prompt=body.get("prompt"),
-        stats=body.get("stats"),
-        runtime=body.get("runtime"),
-        actor="local-console",
-    ))
-
-
-@endpoint
-async def get_role(request: Request):
-    bridge = bridge_of(request)
-    project_id, role_ref = request.path_params["project_id"], request.path_params["role_ref"]
-    role = await run(bridge.get_custom_role, project_id, role_ref)
-    return JSONResponse({
-        "role": role,
-        "versions": await run(bridge.custom_role_versions, project_id, role_ref),
-        "events": await run(bridge.custom_role_events, project_id, role_ref),
-        "usage": await run(bridge.custom_role_usage, project_id, role_ref),
-        "unconfirmed_snapshots": await run(
-            bridge.unconfirmed_imported_snapshots, project_id, role_ref),
-    })
-
-
-@endpoint
-async def update_role(request: Request):
-    bridge = bridge_of(request)
-    body = await _body(request)
-    _only(body, "changes", "expected_version")
-    return JSONResponse(await run(
-        bridge.update_custom_role,
-        request.path_params["project_id"],
-        request.path_params["role_ref"],
-        body.get("changes"),
-        expected_version=body.get("expected_version"),
-        actor="local-console",
-    ))
-
-
-@endpoint
-async def clone_role(request: Request):
-    bridge = bridge_of(request)
-    body = await _body(request)
-    _only(body, "name")
-    return JSONResponse(await run(
-        bridge.clone_custom_role,
-        request.path_params["project_id"],
-        request.path_params["role_ref"],
-        body.get("name") or None,
-        actor="local-console",
-    ))
-
-
-@endpoint
-async def set_role_status(request: Request):
-    bridge = bridge_of(request)
-    body = await _body(request)
-    _only(body, "status")
-    return JSONResponse(await run(
-        bridge.set_custom_role_status,
-        request.path_params["project_id"],
-        request.path_params["role_ref"],
-        body.get("status"),
-        actor="local-console",
-    ))
-
-
-@endpoint
-async def role_import_review(request: Request):
-    """What the console shows before an imported role is switched on. Read only."""
-    bridge = bridge_of(request)
-    return JSONResponse(await run(
-        bridge.imported_role_review,
-        request.path_params["project_id"],
-        request.path_params["role_ref"],
-    ))
-
-
-@endpoint
-async def confirm_role_import(request: Request):
-    """Switch on an imported role. Only this route can: the person must hold the console's
-    session token and type the phrase for this exact role version."""
-    bridge = bridge_of(request)
-    body = await _body(request)
-    _only(body, "version", "version_sha256", "snapshot_ids", "confirmation", "note")
-    return JSONResponse(await run(
-        bridge.confirm_imported_role_web,
-        request.path_params["project_id"],
-        request.path_params["role_ref"],
-        body.get("version"),
-        body.get("version_sha256"),
-        body.get("snapshot_ids") if body.get("snapshot_ids") is not None else [],
-        body.get("confirmation"),
-        note=body.get("note") or "",
-    ))
-
-
-@endpoint
-async def confirm_role_snapshot(request: Request):
-    """Confirm one more imported snapshot of a role that is already on. Console only."""
-    bridge = bridge_of(request)
-    body = await _body(request)
-    _only(body, "snapshot_id", "confirmation", "note")
-    result = await run(
-        bridge.confirm_imported_snapshot_web,
-        request.path_params["project_id"],
-        request.path_params["role_ref"],
-        body.get("snapshot_id"),
-        body.get("confirmation"),
-        note=body.get("note") or "",
-    )
-    return JSONResponse({"snapshot_id": result["snapshot_id"], "trusted": result["trusted"]})
-
-
-@endpoint
-async def role_diff(request: Request):
-    bridge = bridge_of(request)
-    query = request.query_params
-    return JSONResponse(await run(
-        bridge.custom_role_diff,
-        request.path_params["project_id"],
-        request.path_params["role_ref"],
-        int(query["from"]),
-        int(query["to"]),
-    ))
-
-
-@endpoint
-async def preview_role(request: Request):
-    bridge = bridge_of(request)
-    body = await _body(request)
-    _only(body, "role_ref", "draft", "base_role", "version", "provider", "requirement", "strictness", "max_rounds", "feedback")
-    return JSONResponse(await run(
-        bridge.preview_custom_role_prompt,
-        request.path_params["project_id"],
-        body.get("role_ref"),
-        draft=body.get("draft"),
-        base_role=body.get("base_role"),
-        version=body.get("version"),
-        provider=body.get("provider"),
-        requirement=body.get("requirement"),
-        strictness=body.get("strictness"),
-        max_rounds=body.get("max_rounds"),
-        feedback=body.get("feedback"),
-    ))
-
-
-@endpoint
-async def lint_role(request: Request):
-    bridge = bridge_of(request)
-    body = await _body(request)
-    _only(body, "role_ref", "draft", "base_role", "version")
-    return JSONResponse(await run(
-        bridge.lint_custom_role,
-        request.path_params["project_id"],
-        body.get("role_ref"),
-        draft=body.get("draft"),
-        base_role=body.get("base_role"),
-        version=body.get("version"),
-    ))
 
 
 @endpoint
@@ -935,21 +573,6 @@ async def accept_task_contract(request: Request):
     ))
 
 
-@endpoint
-async def set_evaluation_engine(request: Request):
-    bridge = bridge_of(request)
-    body = await _body(request)
-    result = await run(
-        bridge.configure_evaluation_engine,
-        request.path_params["project_id"],
-        body.get("enabled"),
-        body.get("auto_evaluate"),
-        body.get("weights"),
-        body.get("low_sample_threshold"),
-    )
-    return JSONResponse(result)
-
-
 # --- Tasks (read-only) -----------------------------------------------------------
 
 
@@ -974,75 +597,6 @@ async def task_result(request: Request):
     bridge = bridge_of(request)
     result = await run(
         bridge.get_task_result, request.path_params["project_id"], request.path_params["task_id"]
-    )
-    return JSONResponse(result)
-
-
-@endpoint
-async def task_usage(request: Request):
-    bridge = bridge_of(request)
-    result = await run(
-        bridge.get_task_usage, request.path_params["project_id"], request.path_params["task_id"]
-    )
-    return JSONResponse(result)
-
-
-@endpoint
-async def task_evaluations(request: Request):
-    bridge = bridge_of(request)
-    return JSONResponse(await run(
-        bridge.get_task_evaluations,
-        request.path_params["project_id"], request.path_params["task_id"],
-    ))
-
-
-@endpoint
-async def task_evaluate(request: Request):
-    bridge = bridge_of(request)
-    body = await _body(request)
-    return JSONResponse(await run(
-        bridge.evaluate_task,
-        request.path_params["project_id"], request.path_params["task_id"],
-        body.get("role"), body.get("task_type", "general"), body.get("force", False),
-    ))
-
-
-@endpoint
-async def task_reevaluate(request: Request):
-    bridge = bridge_of(request)
-    body = await _body(request)
-    execution_id = body.get("execution_id")
-    if not isinstance(execution_id, str) or not execution_id:
-        raise BridgeError("execution_id is required")
-    return JSONResponse(await run(
-        bridge.reevaluate_execution,
-        request.path_params["project_id"], request.path_params["task_id"],
-        execution_id, body.get("task_type", "general"),
-    ))
-
-
-@endpoint
-async def agent_reliability(request: Request):
-    bridge = bridge_of(request)
-    return JSONResponse(await run(bridge.get_agent_reliability))
-
-
-@endpoint
-async def task_approvals(request: Request):
-    bridge = bridge_of(request)
-    result = await run(
-        bridge.get_approval_status,
-        request.path_params["project_id"],
-        request.path_params["task_id"],
-    )
-    return JSONResponse(result)
-
-
-@endpoint
-async def task_meeting(request: Request):
-    bridge = bridge_of(request)
-    result = await run(
-        bridge.meeting_transcript, request.path_params["project_id"], request.path_params["task_id"]
     )
     return JSONResponse(result)
 
@@ -1141,231 +695,152 @@ async def task_restart(request: Request):
     ))
 
 
+# --- Imported custom roles: the one place a person trusts one ---------------------------------
+# Roles are no longer created in the console. A role that arrives in an imported backup stays off
+# until a person at this console types the phrase for that exact version; nothing else can switch it on.
+
+
+@endpoint(conflict_status=409)
+async def save_team_settings(request: Request):
+    body = _only(await _body(request), "revision", "changes")
+    return JSONResponse(await run(
+        bridge_of(request).save_team_settings, request.path_params["project_id"],
+        body.get("revision"), body.get("changes"),
+    ))
+
+
+@endpoint
+async def set_role(request: Request):
+    bridge = bridge_of(request)
+    body = _only(await _body(request), "role", "provider", "model", "effort", "quota_fallback")
+    return JSONResponse(await run(
+        bridge.configure_role, request.path_params["project_id"], body.get("role"),
+        body.get("provider"), body.get("model") or None, body.get("effort") or None,
+        body.get("quota_fallback") or None,
+    ))
+
+
+@endpoint
+async def set_workflow(request: Request):
+    bridge = bridge_of(request)
+    body = _only(await _body(request), "workflow")
+    return JSONResponse(await run(
+        bridge.configure_workflow, request.path_params["project_id"], body.get("workflow")))
+
+
+@endpoint
+async def set_review_gate(request: Request):
+    bridge = bridge_of(request)
+    body = _only(await _body(request), "ar_strictness", "max_rounds", "escalation")
+    return JSONResponse(await run(
+        bridge.configure_review_gate, request.path_params["project_id"], body.get("ar_strictness"),
+        body.get("max_rounds"), body.get("escalation")))
+
+
+# Your own roles and workflows. One compact surface: a role is a name, a base role (which alone decides
+# what it may do) and its instructions; a workflow is a name and an ordered list of roles.
+
+
+@endpoint
+async def get_role(request: Request):
+    bridge = bridge_of(request)
+    project_id, role_ref = request.path_params["project_id"], request.path_params["role_ref"]
+    role = await run(bridge.get_custom_role, project_id, role_ref)
+    return JSONResponse({"role": role, "usage": await run(bridge.custom_role_usage, project_id, role_ref)})
+
+
+@endpoint
+async def create_role(request: Request):
+    bridge = bridge_of(request)
+    body = _only(await _body(request), "name", "base_role", "instructions", "runtime")
+    instructions = body.get("instructions") or ""
+    return JSONResponse(await run(
+        bridge.create_custom_role, request.path_params["project_id"], body.get("name"),
+        body.get("base_role"), prompt={"mode": "freeform", "freeform": instructions},
+        runtime=body.get("runtime"), actor="local-console",
+    ))
+
+
+@endpoint(conflict_status=409)
+async def update_role(request: Request):
+    bridge = bridge_of(request)
+    body = _only(await _body(request), "expected_version", "name", "instructions", "runtime")
+    changes = {}
+    if "name" in body:
+        changes["name"] = body["name"]
+    if "instructions" in body:
+        changes["prompt"] = {"mode": "freeform", "freeform": body["instructions"]}
+    if "runtime" in body:
+        changes["runtime"] = body["runtime"]
+    return JSONResponse(await run(
+        bridge.update_custom_role, request.path_params["project_id"], request.path_params["role_ref"],
+        changes, expected_version=body.get("expected_version"), actor="local-console",
+    ))
+
+
+@endpoint
+async def set_role_status(request: Request):
+    bridge = bridge_of(request)
+    body = _only(await _body(request), "status")
+    return JSONResponse(await run(
+        bridge.set_custom_role_status, request.path_params["project_id"],
+        request.path_params["role_ref"], body.get("status"), actor="local-console",
+    ))
+
+
+@endpoint(conflict_status=409)
+async def save_workflow(request: Request):
+    bridge = bridge_of(request)
+    body = _only(await _body(request), "steps", "name", "id", "revision", "select")
+    return JSONResponse(await run(
+        bridge.save_workflow, request.path_params["project_id"], body.get("steps"), body.get("name"),
+        body.get("id"), revision=body.get("revision"), select=body.get("select") is True,
+    ))
+
+
+@endpoint(conflict_status=409)
+async def delete_workflow(request: Request):
+    bridge = bridge_of(request)
+    body = _only(await _body(request), "revision")
+    return JSONResponse(await run(
+        bridge.delete_workflow, request.path_params["project_id"], request.path_params["workflow_id"],
+        revision=body.get("revision")))
+
+
+@endpoint
+async def pending_roles(request: Request):
+    bridge = bridge_of(request)
+    project_id = request.path_params["project_id"]
+    ids = await run(bridge.pending_imported_roles, project_id)
+    roles = []
+    for role_ref in ids:
+        review = await run(bridge.imported_role_review, project_id, role_ref)
+        definition = review["role"]["definition"]
+        prompt = definition["prompt"]
+        roles.append({
+            "id": role_ref, "name": definition["name"], "version": review["confirmation"]["version"],
+            "permissions": review["permissions"], "source": review["source"],
+            "instruction": prompt["freeform"] if prompt["mode"] == "freeform" else prompt["sections"],
+            "version_sha256": review["confirmation"]["version_sha256"],
+            "phrase": review["confirmation"]["phrase"],
+        })
+    return JSONResponse({"pending": roles})
+
+
+@endpoint
+async def confirm_role_import(request: Request):
+    """Switch on an imported role. Only this route can: the person must hold the console's session
+    token and type the phrase for this exact role version."""
+    bridge = bridge_of(request)
+    body = _only(await _body(request), "version", "version_sha256", "confirmation")
+    return JSONResponse(await run(
+        bridge.confirm_imported_role_web, request.path_params["project_id"],
+        request.path_params["role_ref"], body.get("version"), body.get("version_sha256"), [],
+        body.get("confirmation"),
+    ))
+
+
 # --- Context / Skills / MCP ------------------------------------------------------
-
-
-@endpoint
-async def get_context(request: Request):
-    bridge = bridge_of(request)
-    result = await run(bridge.get_context, request.path_params["project_id"], "PM")
-    return JSONResponse(result)
-
-
-@endpoint
-async def list_skills(request: Request):
-    from ..adapters.skills import list_skills as _list_skills
-
-    bridge = bridge_of(request)
-    result = await run(_list_skills, bridge.home)
-    return JSONResponse(result)
-
-
-@endpoint
-async def discover_skills(request: Request):
-    from ..adapters.skills import discover_skills as _discover_skills
-
-    bridge = bridge_of(request)
-    result = await run(_discover_skills, bridge.home)
-    return JSONResponse(result)
-
-
-def _discovered_skill(bridge: CCCMCP, body: dict) -> dict:
-    """Resolve an exact entry shown by discovery, never an arbitrary browser-supplied path."""
-    from ..adapters.skills import discover_skills as _discover_skills
-
-    matches = [
-        item
-        for item in _discover_skills(bridge.home)
-        if item["id"] == body.get("id") and item["path"] == body.get("path")
-    ]
-    if len(matches) != 1:
-        raise BridgeError("The selected skill is no longer available; refresh the list")
-    found = matches[0]
-    if not found["usable"]:
-        raise BridgeError(found["reason"] or "This skill cannot be installed")
-    return found
-
-
-@endpoint
-async def install_discovered_skill(request: Request):
-    from ..adapters.skills import install_skill as _install_skill
-
-    bridge = bridge_of(request)
-    body = await _body(request)
-    found = await run(_discovered_skill, bridge, body)
-    result = await run(_install_skill, bridge.home, found["path"])
-    return JSONResponse(result)
-
-
-@endpoint
-async def remove_global_skill(request: Request):
-    from ..adapters.skills import remove_skill as _remove_skill
-    from ..core.approval import confirm_web
-
-    bridge = bridge_of(request)
-    skill_id = request.path_params["skill_id"]
-    body = await _body(request)
-    await run(confirm_web, f"REMOVE SKILL {skill_id}", body.get("confirm"))
-    result = await run(_remove_skill, bridge.home, skill_id)
-    return JSONResponse(result)
-
-
-@endpoint
-async def list_mcp(request: Request):
-    bridge = bridge_of(request)
-    result = await run(bridge.list_mcp_servers, request.path_params["project_id"])
-    return JSONResponse(result)
-
-
-def _discovered_mcp(bridge: CCCMCP, project_id: str, body: dict) -> dict:
-    """Resolve an exact entry shown by discovery, never an arbitrary browser command."""
-    root = bridge.project(project_id)["root"]
-    matches = [
-        item
-        for item in mcp_registry.discover(root)
-        if item["name"] == body.get("name")
-        and item["client"] == body.get("client")
-        and item["source_file"] == body.get("source_file")
-    ]
-    if len(matches) != 1:
-        raise BridgeError("The selected MCP server is no longer available; refresh the list")
-    found = matches[0]
-    if found["transport"] != "stdio":
-        raise BridgeError("Only local stdio MCP servers can be installed")
-    return found
-
-
-@endpoint
-async def probe_mcp(request: Request):
-    bridge = bridge_of(request)
-    project_id = request.path_params["project_id"]
-    body = await _body(request)
-    found = await run(_discovered_mcp, bridge, project_id, body)
-    resolved = await run(
-        mcp_registry.resolve_server,
-        found["name"],
-        found["command"],
-        found["args"],
-        bridge.project(project_id)["root"],
-    )
-    tools = await run(mcp_registry.probe_tools, resolved["command"], resolved["args"])
-    return JSONResponse({"name": found["name"], "command": resolved["command"], "tools": tools})
-
-
-@endpoint
-async def install_mcp(request: Request):
-    bridge = bridge_of(request)
-    project_id = request.path_params["project_id"]
-    body = await _body(request)
-    found = await run(_discovered_mcp, bridge, project_id, body)
-    tools = body.get("tools")
-    if not isinstance(tools, list) or not tools or any(not isinstance(t, str) for t in tools):
-        raise BridgeError("Select at least one MCP tool to enable")
-    result = await run(
-        bridge.install_mcp_server,
-        project_id,
-        found["name"],
-        found["command"],
-        found["args"],
-        tools,
-    )
-    return JSONResponse(result)
-
-
-@endpoint
-async def probe_mcp_by_name(request: Request):
-    """Preview a server by name alone, the same way `skill install mcp <name>` resolves it:
-    an exact/close match from a client's config, or a PATH command named `<name>`,
-    `<name>-mcp` or `<name>-server`. Covers tools that run but were never registered in any
-    MCP client config (for example a bare pip/npm install), so they aren't missed just
-    because they don't appear in the discovered-servers table."""
-    bridge = bridge_of(request)
-    project_id = request.path_params["project_id"]
-    body = await _body(request)
-    name = (body.get("name") or "").strip()
-    if not name:
-        raise BridgeError("Enter an MCP server name")
-    resolved = await run(
-        mcp_registry.resolve_server,
-        name,
-        (body.get("command") or "").strip() or None,
-        None,
-        bridge.project(project_id)["root"],
-    )
-    tools = await run(mcp_registry.probe_tools, resolved["command"], resolved["args"])
-    return JSONResponse({**resolved, "tools": tools})
-
-
-@endpoint
-async def install_mcp_by_name(request: Request):
-    bridge = bridge_of(request)
-    project_id = request.path_params["project_id"]
-    body = await _body(request)
-    name = (body.get("name") or "").strip()
-    if not name:
-        raise BridgeError("Enter an MCP server name")
-    tools = body.get("tools")
-    if not isinstance(tools, list) or not tools or any(not isinstance(t, str) for t in tools):
-        raise BridgeError("Select at least one MCP tool to enable")
-    result = await run(
-        bridge.install_mcp_server,
-        project_id,
-        name,
-        (body.get("command") or "").strip() or None,
-        None,
-        tools,
-    )
-    return JSONResponse(result)
-
-
-@endpoint
-async def remove_mcp(request: Request):
-    bridge = bridge_of(request)
-    result = await run(
-        bridge.remove_mcp_server,
-        request.path_params["project_id"],
-        request.path_params["name"],
-    )
-    return JSONResponse(result)
-
-
-@endpoint
-async def installed_mcp_tools(request: Request):
-    bridge = bridge_of(request)
-    project_id = request.path_params["project_id"]
-    name = request.path_params["name"]
-
-    def describe():
-        spec = bridge._installed_mcp(project_id, name)
-        allowed = set(spec["allowed_tools"])
-        return [
-            tool
-            for tool in mcp_registry.describe_tools(project_id, spec["command"], spec["args"])
-            if tool["name"] in allowed
-        ]
-
-    return JSONResponse(await run(describe))
-
-
-@endpoint
-async def call_mcp_tool(request: Request):
-    bridge = bridge_of(request)
-    body = await _body(request)
-    result = await run(
-        bridge.call_installed_mcp_tool,
-        request.path_params["project_id"],
-        request.path_params["name"],
-        request.path_params["tool"],
-        body.get("arguments", {}),
-    )
-    return JSONResponse(result)
-
-
-@endpoint
-async def mcp_calls(request: Request):
-    bridge = bridge_of(request)
-    result = await run(bridge.mcp_call_log, 50)
-    return JSONResponse(result)
 
 
 @endpoint
@@ -1375,59 +850,6 @@ async def session_info(request: Request):
 
 
 # --- Onboarding (first-run status) ----------------------------------------------
-
-
-def _next_onboarding_action(environment, tunnel, project):
-    """Priority-ordered "what to do next" for the Get started page — a pure
-    read of facts already exposed by `doctor`/`provider_overview`/`connect_status`,
-    not a second, persisted source of setup state."""
-    if not environment["python"]["available"] or not environment["git"]["available"]:
-        return {"key": "install_environment"}
-    if tunnel["state"] != "connected":
-        return {"key": "connect_tunnel"}
-    if project is None:
-        return {"key": "add_project"}
-    if not project["authorized"]:
-        return {"key": "authorize_project"}
-    if project["profile"] != "chatgpt-only":
-        return {"key": "set_chatgpt_only_profile"}
-    return {"key": "all_set"}
-
-
-@endpoint
-async def onboarding_status(request: Request):
-    """Aggregates existing status sources (environment check, Tunnel connection,
-    per-project profile/authorization/test-command) into one "what's left before
-    your first ChatGPT task" view, instead of adding a second place that tracks
-    setup progress."""
-    bridge = bridge_of(request)
-    manager: ConnectionManager = request.app.state.connection_manager
-    tunnel_installed = await run(lambda: tunnel_client_path(bridge.home).is_file())
-    environment = {
-        "python": {"available": True, "version": python_version()},
-        "git": await run(git_check),
-    }
-    tunnel = {**manager.status(), "tunnel_client_installed": tunnel_installed}
-
-    project = None
-    project_id = request.query_params.get("project_id")
-    if project_id:
-        overview = await run(bridge.provider_overview, project_id)
-        project = {
-            "profile": overview["profile"],
-            "authorized": overview["read_only_status"]["project_access"]["mode"] == "read-write",
-            "access_mode": overview["read_only_status"]["project_access"]["mode"],
-            "test_command_configured": bool(overview["editable"]["test_command"]),
-        }
-
-    return JSONResponse(
-        {
-            "environment": environment,
-            "tunnel": tunnel,
-            "project": project,
-            "next_action": _next_onboarding_action(environment, tunnel, project),
-        }
-    )
 
 
 # --- Connect (ChatGPT Tunnel) ----------------------------------------------------
@@ -1607,18 +1029,35 @@ async def connect_save(request: Request):
 # Goals (Stage A): plan and approve only. Approval is the one act here that needs the operator's
 # typed phrase on top of the console's session token, exactly like authorizing a project.
 @endpoint
-async def goals_list(request: Request):
+async def work_get(request: Request):
+    """The Tasks page's data: work groups and single tasks. With `?rev=` equal to the current
+    revision nothing is sent back but the revision, so the page can poll cheaply and patch only
+    when something moved."""
     bridge = bridge_of(request)
-    return JSONResponse(await run(bridge.list_goals, request.path_params["project_id"]))
+    overview = await run(bridge.work_overview, request.path_params["project_id"])
+    if request.query_params.get("rev") == overview["revision"]:
+        return JSONResponse({"revision": overview["revision"], "unchanged": True})
+    return JSONResponse(overview)
 
 
 @endpoint
-async def goal_create(request: Request):
+async def work_start(request: Request):
+    """Start a work group from the console: the same call ChatGPT's start_goal makes."""
     bridge = bridge_of(request)
-    body = _only(await _body(request), "requirement", "title", "request_key")
+    body = _only(await _body(request), "requirement", "title", "request_key", "confirm_new")
     return JSONResponse(await run(
-        bridge.create_goal, request.path_params["project_id"], body.get("requirement", ""),
-        body.get("title"), body.get("request_key"),
+        bridge.start_goal_work, request.path_params["project_id"], body.get("requirement", ""),
+        body.get("title"), body.get("request_key"), bool(body.get("confirm_new")), None, True,
+    ))
+
+
+@endpoint
+async def goal_rename(request: Request):
+    bridge = bridge_of(request)
+    body = _only(await _body(request), "title")
+    return JSONResponse(await run(
+        bridge.rename_goal, request.path_params["project_id"], request.path_params["goal_id"],
+        body.get("title", ""),
     ))
 
 
@@ -1690,18 +1129,6 @@ async def goal_cancel(request: Request):
 # any change; accepting criteria no command can judge also needs the typed phrase. Nothing here can
 # raise a budget, choose a command, or override the host-test safety refusal (that is a CLI-only
 # operator flag), and no route starts the next phase.
-@endpoint
-async def phase_start(request: Request):
-    bridge = bridge_of(request)
-    body = _only(await _body(request), "pm_provider")
-    if body.get("pm_provider") not in (None, "codex", "claude"):
-        raise BridgeError("pm_provider must be codex or claude")
-    return JSONResponse(await run(
-        bridge.start_phase_run, request.path_params["project_id"], request.path_params["goal_id"],
-        request.path_params["phase_id"], adapter="real", pm_provider=body.get("pm_provider"),
-    ))
-
-
 @endpoint
 async def phase_run_get(request: Request):
     bridge = bridge_of(request)
@@ -1859,8 +1286,6 @@ async def goal_runs_recover(request: Request):
 
 ROUTES = [
     Route("/api/session", session_info),
-    Route("/api/docs/{language}/{slug}", documentation, methods=["GET"]),
-    Route("/api/onboarding/status", onboarding_status, methods=["GET"]),
     Route("/api/connect/status", connect_status, methods=["GET"]),
     Route("/api/connect/providers", connect_providers, methods=["GET"]),
     Route("/api/connect/providers/{provider}/install", provider_install, methods=["POST"]),
@@ -1876,15 +1301,6 @@ ROUTES = [
     Route("/api/connect/forget", connect_forget, methods=["POST"]),
     Route("/api/browse", browse),
     Route("/api/projects", list_projects, methods=["GET"]),
-    Route("/api/dashboard", dashboard, methods=["GET"]),
-    Route("/api/dashboard/account-usage", dashboard_account_usage, methods=["GET"]),
-    Route("/api/dashboard/claude-usage", dashboard_claude_usage, methods=["GET"]),
-    Route("/api/dashboard/claude-usage/enable", dashboard_claude_usage_enable, methods=["POST"]),
-    Route("/api/dashboard/claude-usage/probe", dashboard_claude_usage_probe, methods=["POST"]),
-    Route("/api/dashboard/claude-usage/disable", dashboard_claude_usage_disable, methods=["POST"]),
-    Route("/api/dashboard/reliability", agent_reliability, methods=["GET"]),
-    Route("/api/project-groups", get_project_groups, methods=["GET"]),
-    Route("/api/project-groups", update_project_groups, methods=["POST"]),
     Route("/api/projects/add", add_project, methods=["POST"]),
     Route("/api/projects/create", create_project, methods=["POST"]),
     Route("/api/projects/import", import_project, methods=["POST"]),
@@ -1903,53 +1319,14 @@ ROUTES = [
         methods=["GET"],
     ),
     Route("/api/projects/{project_id}/settings", get_settings, methods=["GET"]),
-    Route("/api/projects/{project_id}/config/role", set_role, methods=["POST"]),
-    Route("/api/projects/{project_id}/config/role-name", set_role_name, methods=["POST"]),
-    Route("/api/projects/{project_id}/config/role-avatar", set_role_avatar, methods=["POST"]),
     Route("/api/projects/{project_id}/config/profile", set_profile, methods=["POST"]),
     Route("/api/projects/{project_id}/config/language", set_language, methods=["POST"]),
     Route("/api/projects/{project_id}/config/test-command", set_test_command, methods=["POST"]),
     Route("/api/projects/{project_id}/config/runtime", set_runtime, methods=["POST"]),
     Route("/api/projects/{project_id}/config/runtime/check", check_runtime, methods=["POST"]),
-    Route("/api/projects/{project_id}/config/meeting-mode", set_meeting_mode, methods=["POST"]),
-    Route("/api/projects/{project_id}/config/workflow", set_workflow, methods=["POST"]),
-    Route("/api/projects/{project_id}/config/review-gate", set_review_gate, methods=["POST"]),
-    Route("/api/projects/{project_id}/workflows", list_workflows, methods=["GET"]),
-    Route("/api/projects/{project_id}/workflows", save_workflow, methods=["POST"]),
-    Route(
-        "/api/projects/{project_id}/workflows/{workflow_id}/delete", delete_workflow,
-        methods=["POST"],
-    ),
-    Route(
-        "/api/projects/{project_id}/config/workflow-selection", set_workflow_selection,
-        methods=["POST"],
-    ),
-    Route(
-        "/api/projects/{project_id}/config/evaluation-engine",
-        set_evaluation_engine, methods=["POST"],
-    ),
-    Route("/api/projects/{project_id}/context", get_context, methods=["GET"]),
-    Route("/api/projects/{project_id}/mcp", list_mcp, methods=["GET"]),
-    Route("/api/projects/{project_id}/mcp/probe", probe_mcp, methods=["POST"]),
-    Route("/api/projects/{project_id}/mcp/install", install_mcp, methods=["POST"]),
-    Route("/api/projects/{project_id}/mcp/probe-by-name", probe_mcp_by_name, methods=["POST"]),
-    Route("/api/projects/{project_id}/mcp/install-by-name", install_mcp_by_name, methods=["POST"]),
-    Route("/api/projects/{project_id}/mcp/{name}/remove", remove_mcp, methods=["POST"]),
-    Route("/api/projects/{project_id}/mcp/{name}/tools", installed_mcp_tools, methods=["GET"]),
-    Route(
-        "/api/projects/{project_id}/mcp/{name}/tools/{tool}/call",
-        call_mcp_tool,
-        methods=["POST"],
-    ),
     Route("/api/projects/{project_id}/tasks", list_tasks, methods=["GET"]),
     Route("/api/projects/{project_id}/tasks/{task_id}", task_status, methods=["GET"]),
     Route("/api/projects/{project_id}/tasks/{task_id}/result", task_result, methods=["GET"]),
-    Route("/api/projects/{project_id}/tasks/{task_id}/usage", task_usage, methods=["GET"]),
-    Route("/api/projects/{project_id}/tasks/{task_id}/evaluations", task_evaluations, methods=["GET"]),
-    Route("/api/projects/{project_id}/tasks/{task_id}/evaluate", task_evaluate, methods=["POST"]),
-    Route("/api/projects/{project_id}/tasks/{task_id}/reevaluate", task_reevaluate, methods=["POST"]),
-    Route("/api/projects/{project_id}/tasks/{task_id}/approvals", task_approvals, methods=["GET"]),
-    Route("/api/projects/{project_id}/tasks/{task_id}/meeting", task_meeting, methods=["GET"]),
     Route("/api/projects/{project_id}/tasks/{task_id}/handoff", task_handoff, methods=["GET"]),
     Route("/api/projects/{project_id}/tasks/{task_id}/continuation", task_continuation, methods=["GET"]),
     Route("/api/projects/{project_id}/tasks/{task_id}/timeline", task_timeline, methods=["GET"]),
@@ -1964,8 +1341,24 @@ ROUTES = [
         "/api/projects/{project_id}/tasks/{task_id}/gate-decision", task_gate_decision,
         methods=["POST"],
     ),
-    Route("/api/projects/{project_id}/goals", goals_list, methods=["GET"]),
-    Route("/api/projects/{project_id}/goals", goal_create, methods=["POST"]),
+    Route("/api/projects/{project_id}/config/team", save_team_settings, methods=["POST"]),
+    Route("/api/projects/{project_id}/config/role", set_role, methods=["POST"]),
+    Route("/api/projects/{project_id}/config/workflow", set_workflow, methods=["POST"]),
+    Route("/api/projects/{project_id}/config/review-gate", set_review_gate, methods=["POST"]),
+    Route("/api/projects/{project_id}/roles/pending", pending_roles, methods=["GET"]),
+    Route("/api/projects/{project_id}/roles", create_role, methods=["POST"]),
+    Route("/api/projects/{project_id}/roles/{role_ref}", get_role, methods=["GET"]),
+    Route("/api/projects/{project_id}/roles/{role_ref}/update", update_role, methods=["POST"]),
+    Route("/api/projects/{project_id}/roles/{role_ref}/status", set_role_status, methods=["POST"]),
+    Route("/api/projects/{project_id}/workflows", save_workflow, methods=["POST"]),
+    Route("/api/projects/{project_id}/workflows/{workflow_id}/delete", delete_workflow, methods=["POST"]),
+    Route(
+        "/api/projects/{project_id}/roles/{role_ref}/confirm-import", confirm_role_import,
+        methods=["POST"],
+    ),
+    Route("/api/projects/{project_id}/work", work_get, methods=["GET"]),
+    Route("/api/projects/{project_id}/work/goals", work_start, methods=["POST"]),
+    Route("/api/projects/{project_id}/goals/{goal_id}/rename", goal_rename, methods=["POST"]),
     Route("/api/projects/{project_id}/goals/{goal_id}", goal_get, methods=["GET"]),
     Route("/api/projects/{project_id}/goals/{goal_id}/plan", goal_plan, methods=["POST"]),
     Route("/api/projects/{project_id}/goals/{goal_id}/plan/cancel", goal_plan_cancel,
@@ -1973,8 +1366,6 @@ ROUTES = [
     Route("/api/projects/{project_id}/goals/{goal_id}/import", goal_import, methods=["POST"]),
     Route("/api/projects/{project_id}/goals/{goal_id}/approve", goal_approve, methods=["POST"]),
     Route("/api/projects/{project_id}/goals/{goal_id}/cancel", goal_cancel, methods=["POST"]),
-    Route("/api/projects/{project_id}/goals/{goal_id}/phases/{phase_id}/start", phase_start,
-          methods=["POST"]),
     Route("/api/projects/{project_id}/goals/{goal_id}/run", goal_run_start, methods=["POST"]),
     Route("/api/projects/{project_id}/goal-runs/recover", goal_runs_recover, methods=["POST"]),
     Route("/api/projects/{project_id}/goal-runs/{run_id}", goal_run_get, methods=["GET"]),
@@ -1996,37 +1387,11 @@ ROUTES = [
           methods=["POST"]),
     Route("/api/projects/{project_id}/phase-runs/{run_id}/accept-preview", phase_run_accept_preview,
           methods=["GET"]),
-    Route("/api/projects/{project_id}/roles", list_roles, methods=["GET"]),
-    Route("/api/projects/{project_id}/roles", create_role, methods=["POST"]),
-    Route("/api/projects/{project_id}/roles/preview", preview_role, methods=["POST"]),
-    Route("/api/projects/{project_id}/roles/lint", lint_role, methods=["POST"]),
-    Route("/api/projects/{project_id}/roles/{role_ref}", get_role, methods=["GET"]),
-    Route("/api/projects/{project_id}/roles/{role_ref}/update", update_role, methods=["POST"]),
-    Route("/api/projects/{project_id}/roles/{role_ref}/clone", clone_role, methods=["POST"]),
-    Route("/api/projects/{project_id}/roles/{role_ref}/status", set_role_status, methods=["POST"]),
-    Route("/api/projects/{project_id}/roles/{role_ref}/diff", role_diff, methods=["GET"]),
-    Route(
-        "/api/projects/{project_id}/roles/{role_ref}/import-review", role_import_review,
-        methods=["GET"],
-    ),
-    Route(
-        "/api/projects/{project_id}/roles/{role_ref}/confirm-import", confirm_role_import,
-        methods=["POST"],
-    ),
-    Route(
-        "/api/projects/{project_id}/roles/{role_ref}/confirm-snapshot", confirm_role_snapshot,
-        methods=["POST"],
-    ),
     Route("/api/projects/{project_id}/tasks/{task_id}/contract", task_contract, methods=["GET"]),
     Route(
         "/api/projects/{project_id}/tasks/{task_id}/contract/accept", accept_task_contract,
         methods=["POST"],
     ),
-    Route("/api/skills", list_skills, methods=["GET"]),
-    Route("/api/skills/discover", discover_skills, methods=["GET"]),
-    Route("/api/skills/install-discovered", install_discovered_skill, methods=["POST"]),
-    Route("/api/skills/{skill_id}/remove", remove_global_skill, methods=["POST"]),
-    Route("/api/mcp/calls", mcp_calls, methods=["GET"]),
     Mount("/", app=StaticFiles(directory=STATIC_DIR, html=True), name="static"),
 ]
 

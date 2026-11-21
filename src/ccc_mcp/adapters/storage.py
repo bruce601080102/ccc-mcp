@@ -210,10 +210,8 @@ CREATE INDEX IF NOT EXISTS idx_meeting_clarifications_project_task
  ON meeting_clarifications(project_id, task_id, round);
 CREATE TRIGGER IF NOT EXISTS meeting_clarifications_no_delete BEFORE DELETE ON meeting_clarifications
  BEGIN SELECT RAISE(ABORT, 'Meeting Mode clarification history is immutable'); END;
--- Evaluation Engine (evaluation_engine/*, wired in core/evaluation.py): one row per
--- evaluate_task/evaluate_execution call, append-only and versioned per
--- source_execution_id (never UPDATEd) so re-evaluating a round keeps its full history
--- instead of overwriting it, mirroring context_versions' own immutability.
+-- ARCHIVE: written by the evaluation engine of earlier releases, which no longer exists. Append-only and
+-- kept so existing history is never destroyed; nothing but project export/import reads it.
 CREATE TABLE IF NOT EXISTS evaluations (
  id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
  task_id TEXT NOT NULL, role TEXT NOT NULL, agent TEXT NOT NULL, model TEXT,
@@ -228,12 +226,7 @@ CREATE TRIGGER IF NOT EXISTS evaluations_no_update BEFORE UPDATE ON evaluations
  BEGIN SELECT RAISE(ABORT, 'Evaluation history is immutable; re-evaluate to add a new version'); END;
 CREATE TRIGGER IF NOT EXISTS evaluations_no_delete BEFORE DELETE ON evaluations
  BEGIN SELECT RAISE(ABORT, 'Evaluation history is immutable'); END;
--- Agent reliability audit ledger (evaluation_engine/reputation_tracker.py): one row
--- for the first verified outcome of each execution. The displayed estimate uses
--- each execution's latest evaluation version so a later correction takes effect.
--- source_execution_id is UNIQUE so re-evaluating the same execution (a new
--- `evaluations` version) can never double-count its first outcome. Neither this ledger
--- nor the versioned evaluations store a mutable running total.
+-- ARCHIVE: the agent reliability ledger of earlier releases. Append-only; nothing but export/import reads it.
 CREATE TABLE IF NOT EXISTS reputation_events (
  id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
  task_id TEXT NOT NULL, role TEXT NOT NULL, agent TEXT NOT NULL, model TEXT,
@@ -659,6 +652,10 @@ ADDED_COLUMNS = {
     # Stage C: how a phase run came about (a plan phase or an integration fix), the context it was
     # handed, and the goal run that started it. NULL for runs started by hand in Stage B.
     "goal_phase_runs": ("kind", "synthetic", "handoff", "goal_run_id"),
+    # The name a person gave a goal in the console or in chat. `title` (the name it was created
+    # with) never changes; the page shows display_title when there is one.
+    "goals": ("display_title",),
+    "goal_plan_versions": ("team_snapshots",),
 }
 
 # Objects that refer to the added columns, so they can only be created once the columns exist.

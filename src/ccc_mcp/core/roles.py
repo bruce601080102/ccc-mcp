@@ -26,7 +26,6 @@ AGENT_ROLES = (*ENGINEERING_ROLES, *GENERAL_ROLES)
 # PM is the interactive ChatGPT conversation that drives the workflow; it has an identity
 # in the chat room (name, avatar) but no provider to configure.
 PM_ROLE = "PM"
-NAMEABLE_ROLES = (PM_ROLE, *AGENT_ROLES)
 
 # Reviewers judge; they never change the work tree.
 READ_ONLY_ROLES = frozenset({"SA", "REVIEW", "SR", "AR", "SEC", "QA", "SW", *GENERAL_ROLES})
@@ -120,39 +119,6 @@ STAT_BACKUP_BONUS = 0.5
 STAT_GAP = 1
 
 
-def role_stats(role):
-    """{ability: 0-5} for one role; an unknown role has none."""
-    values = ROLE_STATS.get(role)
-    return dict(zip(STAT_AXES, values)) if values else None
-
-
-def team_stats(roles, extra=None):
-    """The combined ability chart of a workflow's roles (each role counts once, however many
-    steps it has). The strongest member sets an ability; every other member who is strong at
-    it adds STAT_BACKUP_BONUS, up to STAT_MAX. `gaps` are abilities nobody is good at.
-
-    `extra` adds members that are not built-in roles, as {name: six scores}: a custom role's
-    declared abilities."""
-    table = {**ROLE_STATS, **{key: tuple(value) for key, value in (extra or {}).items()}}
-    distinct = [role for role in dict.fromkeys(roles) if role in table]
-    team = {}
-    for index, axis in enumerate(STAT_AXES):
-        scores = sorted((table[role][index] for role in distinct), reverse=True)
-        best = scores[0] if scores else 0
-        backups = sum(1 for score in scores[1:] if score >= STAT_STRONG)
-        team[axis] = min(STAT_MAX, round(best + STAT_BACKUP_BONUS * backups, 1))
-    return {
-        "axes": list(STAT_AXES),
-        "max": STAT_MAX,
-        "team": team,
-        "power": round(sum(team.values()), 1),
-        "gaps": [axis for axis in STAT_AXES if team[axis] <= STAT_GAP],
-        "roles": {
-            role: dict(zip(STAT_AXES, table[role], strict=True)) for role in distinct
-        },
-    }
-
-
 ROLE_NAME_MAX = 24
 
 # Pixel characters a role can wear in the chat room; the console draws them. A role with no
@@ -172,23 +138,6 @@ DEFAULT_AVATARS = {
 }
 
 
-def validated_role_avatars(value):
-    """{role: avatar id}. Naming the role's own default is the same as no choice."""
-    if not isinstance(value, dict):
-        raise BridgeError("role_avatars must be an object")
-    avatars = {}
-    for role, avatar in value.items():
-        if role not in NAMEABLE_ROLES:
-            raise BridgeError("role_avatars contains an unsupported role")
-        if avatar is None or avatar == "":
-            continue
-        if avatar not in AVATAR_IDS:
-            raise BridgeError(f"Unknown avatar; choose one of {list(AVATAR_IDS)}")
-        if avatar != DEFAULT_AVATARS.get(role):
-            avatars[role] = avatar
-    return avatars
-
-
 def default_provider(role):
     """Everyday roles default to ChatGPT (they may need to browse); engineering reviewers to
     Codex and builders to Claude, the split `best-model` uses."""
@@ -199,21 +148,6 @@ def default_provider(role):
 
 def role_abbreviation(role):
     return ROLE_CATALOG[role][0] if role in ROLE_CATALOG else role
-
-
-def validated_role_names(value):
-    """{role: display name}. A blank name is dropped, which brings back the default
-    (the role's abbreviation)."""
-    if not isinstance(value, dict):
-        raise BridgeError("role_names must be an object")
-    names = {}
-    for role, name in value.items():
-        if role not in NAMEABLE_ROLES:
-            raise BridgeError("role_names contains an unsupported role")
-        cleaned = validated_role_name(name)
-        if cleaned:
-            names[role] = cleaned
-    return names
 
 
 def validated_role_name(name):

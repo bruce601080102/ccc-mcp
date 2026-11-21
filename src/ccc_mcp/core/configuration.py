@@ -1,17 +1,14 @@
+import hashlib
 import json
-import time
-from datetime import UTC, datetime
 from pathlib import Path
 
-from ..adapters import mcp_servers as mcp_registry
 from ..adapters.agents import ADAPTERS, CodexAdapter
 from ..adapters.agents.base import native_executable, operator_policy
 from ..adapters.git import git
 from ..adapters.runtime import RUNTIMES, resolve_runtime, validate_runtime
-from ..evaluation_engine.config import DEFAULT_EVALUATION_ENGINE, validated_evaluation_engine
 from ..infra.config import cli_language, metadata_name
-from ..infra.errors import BridgeError, PermissionDenied
-from ..infra.security import atomic_write, canonical, redact, reject_secrets, safe_path
+from ..infra.errors import BridgeError, VersionConflict
+from ..infra.security import atomic_write, canonical, reject_secrets, safe_path
 from .context import context_policy, identifier
 from .flows import (
     BUILTIN_FLOWS,
@@ -32,12 +29,8 @@ from .flows import (
 from .models import PROTOCOL_VERSION
 from .roles import (
     AGENT_ROLES,
-    NAMEABLE_ROLES,
     READ_ONLY_ROLES,
     default_provider,
-    validated_role_avatars,
-    validated_role_name,
-    validated_role_names,
 )
 
 # "chatgpt" is interactive, not CLI-dispatched, so it is not in the ADAPTERS registry
@@ -282,10 +275,6 @@ class ConfigurationHub:
             )
         if "meeting_mode" in document:
             updated["meeting_mode"] = self._validated_meeting_mode(document["meeting_mode"])
-        if "role_names" in document:
-            updated["role_names"] = validated_role_names(document["role_names"])
-        if "role_avatars" in document:
-            updated["role_avatars"] = validated_role_avatars(document["role_avatars"])
         if "workflows" in document:
             # The file mirrors what was saved, so steps that use the project's own roles must
             # read back. Only roles that already exist here and were made here qualify: the
@@ -304,8 +293,6 @@ class ConfigurationHub:
             updated["workflow_selection"] = validated_selection(document["workflow_selection"])
         if "review_gate" in document:
             updated["review_gate"] = validated_review_gate(document["review_gate"])
-        if "evaluation_engine" in document:
-            updated["evaluation_engine"] = validated_evaluation_engine(document["evaluation_engine"])
         if "runtime" in document:
             updated["runtime"] = validate_runtime(document["runtime"])
         return updated
@@ -417,23 +404,13 @@ class ConfigurationHub:
             "test_command": settings.get("test_command"),
             "runtime": validate_runtime(settings.get("runtime")),
             "context_token_budget": settings.get("context_token_budget"),
-            # Installed only through the local CLI (install_mcp_server): settings.json is
-            # deliberately not an import source for this key, because it holds commands
-            # that get executed on dispatch.
-            "mcp_servers": settings.get("mcp_servers", {}),
             # Merge (not replace) so a project saved before `escalation` existed still
             # reads a complete dict instead of KeyError-ing downstream.
             "meeting_mode": {**DEFAULT_MEETING_MODE, **settings.get("meeting_mode", {})},
-            # Chat-room display names; a role without an entry shows its abbreviation.
-            "role_names": settings.get("role_names", {}),
-            "role_avatars": settings.get("role_avatars", {}),
             "workflow": self._effective_workflow(settings),
             "workflows": settings.get("workflows", {}),
             "workflow_selection": settings.get("workflow_selection", DEFAULT_SELECTION),
             "review_gate": {**DEFAULT_REVIEW_GATE, **settings.get("review_gate", {})},
-            # Off by default (brief #4 "預設關閉自動評估"); merge for the same reason
-            # as meeting_mode above.
-            "evaluation_engine": {**DEFAULT_EVALUATION_ENGINE, **settings.get("evaluation_engine", {})},
         }
 
     def _save_settings(self, project_id, settings):
@@ -456,6 +433,41 @@ class ConfigurationHub:
         )
         return settings
 
+    @staticmethod
+    def team_revision(settings):
+        keys = ("workflow", "workflows", "workflow_selection", "roles", "review_gate")
+        return hashlib.sha256(canonical({key: settings[key] for key in keys}).encode()).hexdigest()
+
+    def _check_team_revision(self, settings, revision):
+        if revision != self.team_revision(settings):
+            raise VersionConflict("Team settings changed in another session")
+
+    def save_team_settings(self, project_id, revision, changes):
+        """Commit the entire team settings draft or reject it without applying any field."""
+        keys = {"workflow", "workflow_selection", "roles", "review_gate"}
+        if not isinstance(changes, dict) or changes.keys() - keys:
+            raise BridgeError("Invalid team settings")
+        with self.lock(project_id):
+            settings = self.get_project_settings(project_id)
+            self._check_team_revision(settings, revision)
+            if "workflow" in changes:
+                settings["workflow"] = validated_workflow(changes["workflow"], settings["workflows"])
+            if "workflow_selection" in changes:
+                settings["workflow_selection"] = validated_selection(changes["workflow_selection"])
+            if "review_gate" in changes:
+                settings["review_gate"] = validated_review_gate(changes["review_gate"])
+            roles = changes.get("roles", {})
+            if not isinstance(roles, dict):
+                raise BridgeError("Invalid role settings")
+            for role, config in roles.items():
+                if not isinstance(config, dict) or config.keys() - {
+                    "provider", "model", "effort", "quota_fallback"
+                }:
+                    raise BridgeError("Invalid role settings")
+                settings["roles"][role] = self._validated_role(role, **config)
+            self._save_settings(project_id, settings)
+            return {"revision": self.team_revision(settings)}
+
     def configure_role(
         self, project_id, role, provider, model=None, effort=None, quota_fallback=None
     ):
@@ -463,22 +475,6 @@ class ConfigurationHub:
         with self.lock(project_id):
             settings = self.get_project_settings(project_id)
             settings["roles"][role] = updated
-            return self._save_settings(project_id, settings)
-
-    def configure_role_name(self, project_id, role, name):
-        """Give a role (or PM) a display name for the chat room; blank resets it to the
-        role's abbreviation."""
-        if role not in NAMEABLE_ROLES:
-            raise BridgeError("Unsupported role")
-        cleaned = validated_role_name(name)
-        with self.lock(project_id):
-            settings = self.get_project_settings(project_id)
-            names = dict(settings.get("role_names", {}))
-            if cleaned:
-                names[role] = cleaned
-            else:
-                names.pop(role, None)
-            settings["role_names"] = names
             return self._save_settings(project_id, settings)
 
     def configure_workflow(self, project_id, workflow):
@@ -533,13 +529,17 @@ class ConfigurationHub:
         roles.update({ref: base for ref, base in pending.items() if ref in named})
         return roles
 
-    def save_workflow(self, project_id, steps, name=None, workflow_id=None):
+    def save_workflow(
+        self, project_id, steps, name=None, workflow_id=None, *, revision=None, select=False,
+    ):
         """Create a workflow of your own, or change one. A new one is named "工作流 2",
         "工作流 3", ... unless a name is given; built-in workflows cannot be changed (save a
         copy instead)."""
-        validated = validated_steps(steps, self.custom_role_bases(project_id))
         with self.lock(project_id):
             settings = self.get_project_settings(project_id)
+            if revision is not None:
+                self._check_team_revision(settings, revision)
+            validated = validated_steps(steps, self.custom_role_bases(project_id))
             custom = dict(settings["workflows"])
             if workflow_id is None:
                 if len(custom) >= MAX_CUSTOM_WORKFLOWS:
@@ -560,14 +560,19 @@ class ConfigurationHub:
             settings["workflows"] = validated_custom_workflows(
                 custom, self._readable_custom_roles(project_id, settings["workflows"])
             )
+            if select:
+                settings["workflow"] = workflow_id
+                settings["workflow_selection"] = "fixed"
             self._save_settings(project_id, settings)
             return {"id": workflow_id, **settings["workflows"][workflow_id]}
 
-    def delete_workflow(self, project_id, workflow_id):
+    def delete_workflow(self, project_id, workflow_id, *, revision=None):
         """Remove one of your own workflows. Tasks already running it keep it; if it was the
         selected one, new tasks go back to Classic."""
         with self.lock(project_id):
             settings = self.get_project_settings(project_id)
+            if revision is not None:
+                self._check_team_revision(settings, revision)
             if workflow_id in BUILTIN_FLOWS:
                 raise BridgeError("Built-in workflows cannot be deleted")
             if workflow_id not in settings["workflows"]:
@@ -596,16 +601,6 @@ class ConfigurationHub:
                     "escalation": current["escalation"] if escalation is None else escalation,
                 }
             )
-            return self._save_settings(project_id, settings)
-
-    def configure_role_avatar(self, project_id, role, avatar):
-        """Pick the pixel character a role (or PM) wears in the chat room; blank resets it."""
-        if role not in NAMEABLE_ROLES:
-            raise BridgeError("Unsupported role")
-        with self.lock(project_id):
-            settings = self.get_project_settings(project_id)
-            chosen = {**settings["role_avatars"], role: avatar}
-            settings["role_avatars"] = validated_role_avatars(chosen)
             return self._save_settings(project_id, settings)
 
     def configure_profile(self, project_id, profile):
@@ -718,6 +713,9 @@ class ConfigurationHub:
         settings = self.get_project_settings(project_id)
         return {
             "profile": detect_profile(settings["roles"]),
+            "team_revision": self.team_revision(settings),
+            "profile_presets": {profile: profile_roles(profile)
+                                for profile in ("chatgpt-only", "best-model")},
             "editable": {
                 "roles": settings["roles"],
                 "language": settings["language"],
@@ -725,9 +723,6 @@ class ConfigurationHub:
                 "runtime": settings["runtime"],
                 "context_token_budget": settings["context_token_budget"],
                 "meeting_mode": settings["meeting_mode"],
-                "evaluation_engine": settings["evaluation_engine"],
-                "role_names": settings["role_names"],
-                "role_avatars": settings["role_avatars"],
                 "workflow": settings["workflow"],
                 "workflows": settings["workflows"],
                 "workflow_selection": settings["workflow_selection"],
@@ -885,247 +880,6 @@ class ConfigurationHub:
             }
             settings["meeting_mode"] = self._validated_meeting_mode(updated)
             return self._save_settings(project_id, settings)
-
-    def configure_evaluation_engine(
-        self, project_id, enabled, auto_evaluate=None, weights=None, low_sample_threshold=None
-    ):
-        """Default off (both enabled and auto_evaluate); omitted auto_evaluate keeps
-        whatever is already configured, mirroring configure_meeting_mode."""
-        with self.lock(project_id):
-            settings = self.get_project_settings(project_id)
-            current = settings.get("evaluation_engine", DEFAULT_EVALUATION_ENGINE)
-            updated = {
-                **current,
-                "enabled": enabled,
-                "auto_evaluate": current["auto_evaluate"] if auto_evaluate is None else auto_evaluate,
-            }
-            if weights is not None:
-                updated["weights"] = weights
-            if low_sample_threshold is not None:
-                updated["low_sample_threshold"] = low_sample_threshold
-            settings["evaluation_engine"] = validated_evaluation_engine(updated)
-            return self._save_settings(project_id, settings)
-
-    # --- MCP servers: global (no --project) or one project's own -------------------
-
-    def _global_mcp_path(self):
-        return Path(self.home) / "mcp-servers.json"
-
-    def global_mcp_servers(self):
-        """Installed for every project. Kept in the ccc-mcp home, outside any repository,
-        so no agent-writable file can add to it."""
-        try:
-            document = json.loads(self._global_mcp_path().read_text(encoding="utf-8"))
-        except FileNotFoundError:
-            return {}
-        except (OSError, ValueError) as exc:
-            raise BridgeError(f"Invalid {self._global_mcp_path()}; fix or delete it") from exc
-        return document if isinstance(document, dict) else {}
-
-    def _save_global_mcp_servers(self, servers):
-        reject_secrets(servers)
-        atomic_write(
-            self._global_mcp_path(), json.dumps(servers, ensure_ascii=False, indent=2) + "\n"
-        )
-
-    def effective_mcp_servers(self, project_id):
-        """What this project's agents get: global installs plus its own; a project entry
-        with the same name replaces the global one."""
-        return {
-            **{n: {**s, "scope": "global"} for n, s in self.global_mcp_servers().items()},
-            **{
-                n: {**s, "scope": "project"}
-                for n, s in self.get_project_settings(project_id)["mcp_servers"].items()
-            },
-        }
-
-    def list_mcp_servers(self, project_id=None, all_projects=False):
-        """Servers clients on this machine define (discovered) and the installed ones.
-
-        With a project: the servers that project's agents get (global + its own, each
-        tagged with its scope). Without one, or with all_projects: the global installs and
-        every project's own installs."""
-
-        def describe(servers):
-            return {
-                name: {**spec, "command_exists": Path(spec["command"]).is_file()}
-                for name, spec in servers.items()
-            }
-
-        if project_id and not all_projects:
-            return {
-                "discovered": mcp_registry.discover(self.project(project_id)["root"]),
-                "installed": describe(self.effective_mcp_servers(project_id)),
-            }
-        by_project = {}
-        for project in self.list_projects():
-            try:
-                servers = self.get_project_settings(project["id"])["mcp_servers"]
-            except BridgeError:
-                continue
-            if servers:
-                by_project[project["id"]] = describe(servers)
-        return {
-            "discovered": mcp_registry.discover(),
-            "global": describe(self.global_mcp_servers()),
-            "projects": by_project,
-        }
-
-    def install_mcp_server(self, project_id, name, command=None, args=None, tools=None):
-        """Make a local stdio MCP server callable by dispatched agents.
-
-        `project_id=None` installs it globally (every project); otherwise only for that
-        project. Verifies the command exists and completes a real MCP handshake first,
-        records its absolute path (so later runs do not depend on the shell's PATH or an
-        activated conda/venv), and enables only `tools` (default: all it exposes)."""
-        root = self.project(project_id)["root"] if project_id else None
-        found = mcp_registry.resolve_server(name, command, args, root)
-        listed = mcp_registry.probe_tools(found["command"], found["args"])
-        available = {tool["name"] for tool in listed}
-        allowed = list(tools) if tools else [tool["name"] for tool in listed]
-        unknown = sorted(set(allowed) - available)
-        if unknown:
-            raise BridgeError(f"{found['name']} does not expose: {', '.join(unknown)}")
-        entry = {
-            "command": found["command"],
-            "args": found["args"],
-            "allowed_tools": allowed,
-            "source": found["source"],
-        }
-        if project_id:
-            with self.lock(project_id):
-                settings = self.get_project_settings(project_id)
-                settings["mcp_servers"] = {**settings.get("mcp_servers", {}), found["name"]: entry}
-                self._save_settings(project_id, settings)
-            roles = {
-                role: {"claude": "live", "codex": "live"}.get(
-                    values["provider"],
-                    "live (through list_installed_mcp_tools / call_installed_mcp_tool)"
-                    if values["provider"] == "chatgpt"
-                    else "unknown",
-                )
-                for role, values in settings["roles"].items()
-            }
-        else:
-            self._save_global_mcp_servers({**self.global_mcp_servers(), found["name"]: entry})
-            roles = "every role of every project (Claude, Codex and ChatGPT)"
-        return {
-            "name": found["name"],
-            "scope": project_id or "global",
-            "command": found["command"],
-            "args": found["args"],
-            "source": found["source"],
-            "tools": [{**tool, "enabled": tool["name"] in allowed} for tool in listed],
-            "roles": roles,
-            "warnings": found["warnings"],
-        }
-
-    def _installed_mcp(self, project_id, name):
-        servers = self.effective_mcp_servers(project_id)
-        if name not in servers:
-            raise BridgeError(
-                f"MCP server '{name}' is not installed for this project; installed: "
-                f"{sorted(servers) or 'none'} (an operator installs one with "
-                "`ccc-mcp skill install mcp <name>`)"
-            )
-        spec = servers[name]
-        if not Path(spec["command"]).is_file():
-            raise BridgeError(
-                f"MCP server '{name}' command is gone: {spec['command']}. The operator must "
-                f"re-run `ccc-mcp skill install mcp {name}` in the environment where it works."
-            )
-        return spec
-
-    def installed_mcp_tools(self, project_id):
-        """What an interactive ChatGPT role may call: only the operator-enabled tools."""
-        result = {}
-        for name in self.effective_mcp_servers(project_id):
-            spec = self._installed_mcp(project_id, name)
-            live = {t["name"]: t for t in mcp_registry.describe_tools(project_id, spec["command"], spec["args"])}
-            result[name] = [live[tool] for tool in spec["allowed_tools"] if tool in live]
-        return result
-
-    def call_installed_mcp_tool(self, project_id, server_name, tool, arguments=None):
-        """Run one operator-enabled tool of an operator-installed server for ChatGPT.
-
-        ChatGPT is not a process ccc-mcp launches, so it cannot be handed an MCP config the
-        way Claude/Codex are; this is the equivalent. The server and tool must both appear
-        in the settings the local CLI wrote — nothing the caller says widens that."""
-        arguments = arguments or {}
-        if not isinstance(arguments, dict):
-            raise BridgeError("arguments must be an object")
-        if len(json.dumps(arguments)) > 100_000:
-            raise BridgeError("arguments exceed 100 KB")
-        spec = self._installed_mcp(project_id, server_name)
-        if tool not in spec["allowed_tools"]:
-            raise PermissionDenied(
-                f"Tool '{tool}' is not enabled for MCP server '{server_name}'; enabled: "
-                f"{spec['allowed_tools']}"
-            )
-        started = time.monotonic()
-        try:
-            outcome = mcp_registry.call_tool(
-                project_id, spec["command"], spec["args"], tool, arguments
-            )
-        except BridgeError as exc:
-            self._log_mcp_call(project_id, server_name, tool, arguments, None, started, str(exc))
-            raise
-        self._log_mcp_call(
-            project_id, server_name, tool, arguments, outcome["is_error"], started, None
-        )
-        return {"server": server_name, "tool": tool, **outcome}
-
-    def _log_mcp_call(self, project_id, server, tool, arguments, is_error, started, error):
-        """Evidence that ChatGPT really called (or failed to call) an MCP tool. Results are
-        deliberately not stored: they can be large or sensitive."""
-        entry = {
-            "ts": datetime.now(UTC).isoformat(timespec="seconds"),
-            "project": project_id,
-            "server": server,
-            "tool": tool,
-            "arguments": redact(json.dumps(arguments, ensure_ascii=False))[:500],
-            "is_error": is_error,
-            "error": error,
-            "seconds": round(time.monotonic() - started, 2),
-        }
-        try:
-            with open(Path(self.home) / "mcp-calls.jsonl", "a", encoding="utf-8") as log:
-                log.write(json.dumps(entry, ensure_ascii=False) + "\n")
-        except OSError:
-            pass  # the log is evidence, never a reason to fail the call
-
-    def mcp_call_log(self, limit=20):
-        path = Path(self.home) / "mcp-calls.jsonl"
-        try:
-            lines = path.read_text(encoding="utf-8").splitlines()
-        except FileNotFoundError:
-            return []
-        return [json.loads(line) for line in lines[-limit:]]
-
-    def remove_mcp_server(self, project_id, name):
-        """Remove a project's own install (project_id given) or a global one (None)."""
-        if project_id:
-            with self.lock(project_id):
-                settings = self.get_project_settings(project_id)
-                servers = dict(settings.get("mcp_servers", {}))
-                if name not in servers:
-                    hint = (
-                        f" It is installed globally; remove it with `ccc-mcp mcp remove {name}` "
-                        "(without --project), which affects every project."
-                        if name in self.global_mcp_servers()
-                        else ""
-                    )
-                    raise BridgeError(f"MCP server not installed for this project: {name}.{hint}")
-                del servers[name]
-                settings["mcp_servers"] = servers
-                self._save_settings(project_id, settings)
-            return {"name": name, "scope": project_id, "removed": True}
-        servers = self.global_mcp_servers()
-        if name not in servers:
-            raise BridgeError(f"MCP server not installed globally: {name}")
-        del servers[name]
-        self._save_global_mcp_servers(servers)
-        return {"name": name, "scope": "global", "removed": True}
 
     def execution_workspace(self, row):
         options = row.get("options") or {}

@@ -1,4 +1,0 @@
-# Paste the FULL reply from the B1 (general_review_prompt) ChatGPT conversation here, then delete this line.
-[major] Exact bucket boundaries are assigned to the previous bucket instead of the next bucket under standard zero-based, half-open bucket semantics. For example, `bucket_for_offset(10, 10)` returns `0` instead of `1`, and `bucket_for_offset(20, 10)` returns `1` instead of `2`. evidence: The loop uses `while offset > boundary:` rather than `while offset >= boundary:`, so equality never advances the bucket.
-
-[major] Large offsets with small widths cause excessive execution time because bucket calculation requires a linear number of iterations rather than constant time. For example, `bucket_for_offset(1_000_000_000, 1)` requires approximately one billion loop iterations. evidence: The implementation initializes `bucket = 0` and `boundary = width`, then repeatedly executes `bucket += 1` and `boundary += width` until the boundary reaches the offset.

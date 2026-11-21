@@ -476,20 +476,6 @@ def test_min_rounds_unmet_is_reported_when_sd_rd_still_declines(bridge, human):
     assert report_schema_of(bridge, nxt["execution_id"]) == "agent_report"
 
 
-def test_meeting_transcript_is_complete_and_unclipped(bridge, human):
-    bridge.configure_meeting_mode("demo", True, 0, 5)
-    task_id, sa = start_task(bridge)
-    advance_after_sa(bridge, task_id, sa, fake_scenario="ask_question")
-    dispatch_and_run(
-        bridge, task_id, "SA", report_schema="clarification_response",
-        fake_scenario="recommendation", clarification_text="X" * 500,
-    )
-    transcript = bridge.meeting_transcript("demo", task_id)
-    assert "X" * 500 in transcript["markdown"]  # never clipped, unlike the notice
-    assert "SD/RD →" in transcript["markdown"] and "SA (recommendation) →" in transcript["markdown"]
-    assert "get_meeting_transcript" in bridge.task_handoff("demo", task_id)["meeting_mode_notice"]["text"]
-
-
 # --- a direct dispatch_agent for SD/RD cannot skip the gate ------------------
 
 

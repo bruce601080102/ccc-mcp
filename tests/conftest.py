@@ -21,9 +21,11 @@ def remove_tree(path):
     shutil.rmtree(path, onerror=make_writable_and_retry)
 
 
-@pytest.fixture
-def bridge(tmp_path, monkeypatch):
-    repo = tmp_path / "repository"
+@pytest.fixture(scope="session")
+def _template_repository(tmp_path_factory):
+    """The tiny committed Git project every `bridge` test starts from, built once per run (a worker
+    process under xdist) and copied, instead of running four git subprocesses for every test."""
+    repo = tmp_path_factory.mktemp("template") / "repository"
     repo.mkdir()
     (repo / "app.py").write_text(
         "# original comment\ndef value():\n    return 1\n", encoding="utf-8"
@@ -31,17 +33,16 @@ def bridge(tmp_path, monkeypatch):
     for args in [
         ["init"],
         ["add", "."],
-        [
-            "-c",
-            "user.name=Test",
-            "-c",
-            "user.email=test@example.invalid",
-            "commit",
-            "-m",
-            "initial",
-        ],
+        ["-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-m", "initial"],
     ]:
         subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True)
+    return repo
+
+
+@pytest.fixture
+def bridge(tmp_path, monkeypatch, _template_repository):
+    repo = tmp_path / "repository"
+    shutil.copytree(_template_repository, repo)
     service = CCCMCP(tmp_path / "home")
     service.register_project(repo, "demo", "建立可跨 Session 恢復的測試專案")
     monkeypatch.setattr(service, "spawn_worker", lambda execution_id: None)
@@ -72,3 +73,19 @@ def dispatch(bridge, role="SA", **kwargs):
         adapter="fake",
         **kwargs,
     )
+
+
+# Files whose tests start real worker processes, real pytest host tests or a real browser. They are the
+# slow part of the suite and stay in the full run; `pytest -m "not integration"` is the fast loop.
+INTEGRATION_FILES = {
+    "test_goal_run.py", "test_goal_run_acceptance.py", "test_goal_run_crash.py",
+    "test_goal_run_web_cli.py", "test_phase_acceptance.py", "test_phase_runner.py",
+    "test_host_test_recovery.py", "test_goal_worker_kill.py", "test_orphan_provider.py",
+    "test_work_e2e.py", "test_ui_browser.py",
+}
+
+
+def pytest_collection_modifyitems(items):
+    for item in items:
+        if item.path.name in INTEGRATION_FILES:
+            item.add_marker(pytest.mark.integration)

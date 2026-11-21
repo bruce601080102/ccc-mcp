@@ -7,7 +7,6 @@ from .core.configuration import ConfigurationHub
 from .core.context import ContextHub
 from .core.custom_roles import CustomRoleHub
 from .core.directedit import DirectEditHub
-from .core.evaluation import EvaluationHub
 from .core.flow_engine import FlowHub
 from .core.goal_orchestrator import GoalRunHub
 from .core.goals import GoalHub
@@ -15,13 +14,14 @@ from .core.phase_runner import PhaseHub
 from .core.project_bundle import ProjectBundleHub
 from .core.role_bundle import RoleBundleHub
 from .core.tasks import TaskHub
+from .core.work import WorkHub
 from .core.workspace import WorkspaceHub
 from .infra.config import bridge_home
 
 
 class CCCMCP(
     ConfigurationHub, WorkspaceHub, DirectEditHub, ProjectAccessHub, ContextHub, TaskHub,
-    FlowHub, EvaluationHub, ProjectBundleHub, CustomRoleHub, RoleBundleHub, GoalHub, PhaseHub, GoalRunHub,
+    FlowHub, ProjectBundleHub, CustomRoleHub, RoleBundleHub, GoalHub, PhaseHub, GoalRunHub, WorkHub,
 ):
     """The same application service is used by CLI, MCP and independent workers."""
 

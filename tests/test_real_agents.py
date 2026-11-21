@@ -12,6 +12,7 @@ if a required CLI cannot be resolved, rather than failing on a machine that does
 have them. See README.md's hello-demo walkthrough and docs/en/1-install-and-sign-in.md.
 """
 
+import os
 from pathlib import Path
 
 import pytest
@@ -24,6 +25,10 @@ pytestmark = pytest.mark.real_agents
 
 
 def _require_cli(provider):
+    # These tests spend real subscription quota. Selecting a marker expression that happens not to
+    # exclude them (for example `-m "not integration"`) must never start them by accident.
+    if os.environ.get("CCC_MCP_RUN_REAL_AGENTS") != "1":
+        pytest.skip("real-agent tests run only with CCC_MCP_RUN_REAL_AGENTS=1 (they use real quota)")
     try:
         native_executable(provider)
     except BridgeError:

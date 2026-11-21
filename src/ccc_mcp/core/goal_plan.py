@@ -250,7 +250,7 @@ def validate_plan(plan, *, known_workflows):
     """Return the normalised StoredGoalPlan, or raise GoalPlanInvalid with every problem found.
 
     `plan` is a dict (or a model) from any source. `known_workflows` is the set of workflow ids
-    a phase may name; the Classic workflow, which has no step limit of its own, is never in it."""
+    a phase may name. The phase runner executes these workflows with a dispatch budget."""
     problems = []
     try:
         if isinstance(plan, StoredGoalPlan | GoalPlanProposal):

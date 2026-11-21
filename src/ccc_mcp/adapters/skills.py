@@ -106,28 +106,7 @@ def _install_from_url(home: Path, url: str) -> dict:
     raise BridgeError("Skill URL must end in .md (single file) or .zip (archive)")
 
 
-SNAPSHOT_PREFIX = "codebase-memory:"
-
-
-def _install_codebase_snapshot(home, source, repo_root, cbm):
-    from .codebase_snapshot import build_snapshot, cli_runner, resolve_binary
-
-    target = source[len(SNAPSHOT_PREFIX):].strip() or repo_root
-    if not target:
-        raise BridgeError(
-            "Give a repo path (codebase-memory:/path/to/repo) or select a project with --project"
-        )
-    with tempfile.TemporaryDirectory() as tmp:
-        out = Path(tmp) / "snapshot"
-        built = build_snapshot(cli_runner(resolve_binary(cbm)), target, out)
-        return {**_install_from_path(home, out), "indexed_now": built["indexed_now"]}
-
-
-def install_skill(
-    home: Path, source: str, *, repo_root: str | None = None, cbm: str | None = None
-) -> dict:
-    if source.startswith(SNAPSHOT_PREFIX):
-        return _install_codebase_snapshot(home, source, repo_root, cbm)
+def install_skill(home: Path, source: str) -> dict:
     if source.startswith(("http://", "https://")):
         return _install_from_url(home, source)
     path = Path(source).expanduser()
@@ -183,72 +162,3 @@ def _provider_skill_roots() -> list[tuple[str, Path]]:
         ("Claude Code", home / ".claude" / "skills"),
         ("Codex", home / ".codex" / "skills"),
     ]
-
-
-def discover_skills(home: Path) -> list[dict]:
-    """Skills already installed on this machine for Claude Code / Codex, outside ccc-mcp's
-    own store (for example by a third-party installer run as `npx <tool> init --global`).
-
-    ccc-mcp cannot see these automatically: a dispatched Claude Code/Codex CLI run is locked
-    down (no --setting-sources, slash commands disabled) and never reads either directory, so
-    a skill only reaches an agent once an operator installs it into ccc-mcp's own store. This
-    lists what is findable so that decision can be made from the UI/CLI instead of by hand.
-
-    Each entry reports `usable` (a readable SKILL.md with real content — the only thing that
-    determines whether ccc-mcp *can* install it; which provider it came from doesn't matter,
-    since the content is copied as-is) and `already_installed` (same id already in ccc-mcp's
-    store). Entries sharing one resolved SKILL.md path (installed for both providers at once,
-    as `--providers=claude,codex` tools do) are reported once.
-    """
-    installed_ids = {skill["id"] for skill in list_skills(home)}
-    found = []
-    seen_paths = set()
-    for provider, skills_dir in _provider_skill_roots():
-        if not skills_dir.is_dir():
-            continue
-        for entry in sorted(skills_dir.iterdir()):
-            if not entry.is_dir() or entry.name.startswith("."):
-                continue
-            skill_md = entry / "SKILL.md"
-            if not skill_md.is_file():
-                found.append(
-                    {
-                        "id": _slug(entry.name), "name": entry.name, "description": "",
-                        "provider": provider, "path": str(entry),
-                        "usable": False, "reason": "No SKILL.md in this directory",
-                        "already_installed": False,
-                    }
-                )
-                continue
-            resolved = skill_md.resolve()
-            if resolved in seen_paths:
-                continue
-            seen_paths.add(resolved)
-            try:
-                text = skill_md.read_text(encoding="utf-8")
-            except OSError as exc:
-                found.append(
-                    {
-                        "id": _slug(entry.name), "name": entry.name, "description": "",
-                        "provider": provider, "path": str(entry),
-                        "usable": False, "reason": f"Could not read SKILL.md: {exc}",
-                        "already_installed": False,
-                    }
-                )
-                continue
-            meta, body = _parse_skill_md(text)
-            skill_id = _slug(meta.get("name", entry.name))
-            usable = bool(body.strip())
-            found.append(
-                {
-                    "id": skill_id,
-                    "name": meta.get("name", entry.name),
-                    "description": meta.get("description", ""),
-                    "provider": provider,
-                    "path": str(entry),
-                    "usable": usable,
-                    "reason": None if usable else "SKILL.md has no content below its frontmatter",
-                    "already_installed": skill_id in installed_ids,
-                }
-            )
-    return found

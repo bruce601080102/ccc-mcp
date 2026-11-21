@@ -16,7 +16,7 @@ from typer.core import TyperGroup
 from ..adapters.agent_setup import setup_provider, uninstall_provider
 from ..adapters.agents.base import native_executable
 from ..adapters.environment import git_check, python_version
-from ..adapters.skills import discover_skills, install_skill, list_skills, remove_skill
+from ..adapters.skills import install_skill, list_skills, remove_skill
 from ..adapters.tunnel_client import (
     ensure_tunnel_client,
     forget_tunnel_key,
@@ -147,18 +147,10 @@ app.add_typer(context_app, name="context")
 app.add_typer(task_app, name="task")
 app.add_typer(goal_app, name="goal")
 app.add_typer(clear_app, name="clear")
-app.add_typer(workspace_app, name="workspace", hidden=True)
 app.add_typer(config_app, name="config")
+app.add_typer(workspace_app, name="workspace", hidden=True)
 app.add_typer(schema_app, name="schema")
 app.add_typer(skill_app, name="skill")
-mcp_app = typer.Typer(
-    no_args_is_help=True,
-    help=t(
-        "本機 MCP 伺服器：列出本機各客戶端定義的伺服器，以及這個專案已安裝給 agent 用的",
-        "Local MCP servers: list what clients on this machine define, and what this project installed for agents",
-    ),
-)
-app.add_typer(mcp_app, name="mcp")
 
 
 @app.callback(
@@ -686,17 +678,6 @@ def config_profile(
 
 
 @config_app.command(
-    "prompt",
-    help=t(
-        "純讀取：依目前設定印出該角色實際會收到的操作政策／提示文字，不會真的派工。",
-        "Read-only: print exactly what a role would currently be sent, without dispatching anything.",
-    ),
-)
-def config_prompt(ctx: typer.Context, role: str):
-    output(bridge(ctx).role_prompt_preview(project_id(ctx), role))
-
-
-@config_app.command(
     "context-budget",
     help=t(
         "設定派工時 build_handoff 的 token 預算；超額時會壓縮歷史清單並列出省略了什麼。"
@@ -923,42 +904,6 @@ def config_review_gate(
 
 
 @config_app.command(
-    "evaluation-engine",
-    help=t(
-        "預設關閉：開啟後可用 `ccc-mcp task evaluate` 對已完成的 SA/SD/RD/REVIEW 執行"
-        "做證據導向評分（規則運算，不呼叫 LLM）。--auto-evaluate 額外在每次角色執行成功後"
-        "自動評估一次；省略時維持現有設定。評估結果從不影響任務本身的狀態機，純粹是旁側紀錄。"
-        "例如：ccc-mcp config evaluation-engine on --auto-evaluate",
-        "Off by default: once on, `ccc-mcp task evaluate` scores a completed SA/SD/RD/"
-        "REVIEW execution from evidence (rule-based arithmetic, no LLM call). "
-        "--auto-evaluate additionally evaluates automatically after every successful "
-        "role execution; omit to keep the current setting. Evaluation results never "
-        "affect the task's own state machine — purely a side record. "
-        "Example: ccc-mcp config evaluation-engine on --auto-evaluate",
-    ),
-)
-def config_evaluation_engine(
-    ctx: typer.Context,
-    enabled: Annotated[str, typer.Argument(help=t("on 或 off", "on or off"))],
-    auto_evaluate: Annotated[
-        bool | None,
-        typer.Option(
-            "--auto-evaluate/--manual-only",
-            help=t(
-                "是否在每次角色執行成功後自動評估；省略時維持現有設定",
-                "Whether to auto-evaluate after every successful role execution; omit to keep the current setting",
-            ),
-        ),
-    ] = None,
-):
-    if enabled not in {"on", "off"}:
-        raise BridgeError(t("請輸入 on 或 off", "Enter on or off"))
-    output(
-        bridge(ctx).configure_evaluation_engine(project_id(ctx), enabled == "on", auto_evaluate)
-    )
-
-
-@config_app.command(
     "role",
     help=t(
         "指定一個角色使用哪個 provider，並可選擇 model/effort/額度備援；每次呼叫會整組取代"
@@ -1013,47 +958,6 @@ def config_role(
     output(
         bridge(ctx).configure_role(project_id(ctx), role, provider, model, effort, quota_fallback)
     )
-
-
-@config_app.command(
-    "role-name",
-    help=t(
-        "替角色取一個聊天室顯示名稱（PM 也可以）；不填名稱就恢復預設（角色縮寫）。"
-        "例如：ccc-mcp config role-name SA 小分析",
-        "Give a role (PM included) a display name for the chat room; omit the name to restore "
-        "the default (the role's abbreviation). Example: ccc-mcp config role-name SA Analyst Amy",
-    ),
-)
-def config_role_name(
-    ctx: typer.Context,
-    role: Annotated[
-        str, typer.Argument(help=t("PM、SA、SD、RD、SD/RD、REVIEW、SR、AR、SEC、QA、SW，或 PA、RS、AN、PL、CS、WR、ED、VC、RV", "PM, SA, SD, RD, SD/RD, REVIEW, SR, AR, SEC, QA, SW, or PA, RS, AN, PL, CS, WR, ED, VC, RV"))
-    ],
-    name: Annotated[
-        str | None,
-        typer.Argument(help=t("顯示名稱（最多 24 字）；留空恢復預設", "Display name (up to 24 characters); omit to reset")),
-    ] = None,
-):
-    output(bridge(ctx).configure_role_name(project_id(ctx), role, name))
-
-
-@config_app.command(
-    "role-avatar",
-    help=t(
-        "替角色（含 PM）選聊天室的像素頭像；不填頭像就恢復該角色的預設。"
-        "可選：boss、detective、designer、dev、angel、monk、devil、knight、tester、person、cat、robot、bear、frog、writer、assistant、researcher、analyst、planner、consultant、author、editor、checker、reviewer。"
-        "例如：ccc-mcp config role-avatar QA cat",
-        "Choose the pixel avatar a role (PM included) wears in the chat room; omit the avatar to "
-        "restore the role's own. Choices: boss, detective, designer, dev, angel, monk, devil, knight, "
-        "tester, person, cat, robot, bear, frog, writer, assistant, researcher, analyst, planner, consultant, author, editor, checker, reviewer. Example: ccc-mcp config role-avatar QA cat",
-    ),
-)
-def config_role_avatar(
-    ctx: typer.Context,
-    role: Annotated[str, typer.Argument(help=t("PM、SA、SD、RD、SD/RD、REVIEW、SR、AR、SEC、QA、SW，或 PA、RS、AN、PL、CS、WR、ED、VC、RV", "PM, SA, SD, RD, SD/RD, REVIEW, SR, AR, SEC, QA, SW, or PA, RS, AN, PL, CS, WR, ED, VC, RV"))],
-    avatar: Annotated[str | None, typer.Argument(help=t("頭像名稱；留空恢復預設", "Avatar name; omit to reset"))] = None,
-):
-    output(bridge(ctx).configure_role_avatar(project_id(ctx), role, avatar))
 
 
 @config_app.command(
@@ -1155,30 +1059,6 @@ def config_test_command(
 
 
 @config_app.command(
-    "write-file",
-    hidden=True,
-    help=t(
-        "開放一個專案相對檔案的直接編輯提案；每份差異仍須本機核准。",
-        "Allow proposing a direct edit to one project-relative file; every diff still needs local approval.",
-    ),
-)
-def config_write_file(ctx: typer.Context, path: str):
-    output(bridge(ctx).configure_write_file(project_id(ctx), path))
-
-
-@config_app.command(
-    "revoke-file",
-    hidden=True,
-    help=t(
-        "撤銷一個檔案的直接編輯權；尚未套用的核准也會被擋下。",
-        "Revoke direct-edit rights for one file; any not-yet-applied approval is blocked too.",
-    ),
-)
-def config_revoke_file(ctx: typer.Context, path: str):
-    output(bridge(ctx).revoke_write_file(project_id(ctx), path))
-
-
-@config_app.command(
     "write-root",
     hidden=True,
     help=t(
@@ -1212,28 +1092,6 @@ def config_revoke_write_root(ctx: typer.Context, path: Annotated[str, typer.Argu
 )
 def config_language(ctx: typer.Context, language: str):
     output(bridge(ctx).configure_language(project_id(ctx), language))
-
-
-@workspace_app.command(
-    "show",
-    help=t(
-        "查看直接編輯的差異與核准紀錄；--include-content 同時顯示前後全文。",
-        "View a direct edit's diff and approval record; --include-content also shows the full before/after text.",
-    ),
-)
-def workspace_show(ctx: typer.Context, edit_id: str, include_content: bool = False):
-    output(bridge(ctx).get_workspace_edit(project_id(ctx), edit_id, include_content))
-
-
-@workspace_app.command(
-    "approve",
-    help=t(
-        "舊版本機逐檔審閱工具；一般專案修改請使用 Agent 工作串。",
-        "Legacy per-file local review tool; use the Agent workstream for ordinary project changes.",
-    ),
-)
-def workspace_approve(ctx: typer.Context, edit_id: str):
-    output(bridge(ctx).approve_workspace_edit_local(project_id(ctx), edit_id))
 
 
 @config_app.command(
@@ -1534,18 +1392,6 @@ def task_show(ctx: typer.Context, task_id: Annotated[str | None, typer.Argument(
 
 
 @task_app.command(
-    "usage",
-    help=t(
-        "只顯示各次執行的 CLI、模型設定與可取得的用量；舊紀錄標示未知。",
-        "Show only each execution's CLI, model settings and available usage; older records show as unknown.",
-    ),
-)
-def task_usage(ctx: typer.Context, task_id: Annotated[str | None, typer.Argument()] = None):
-    service, project = bridge(ctx), project_id(ctx)
-    output(service.get_task_usage(project, task_id or service.project_workstream_task(project)))
-
-
-@task_app.command(
     "handoff",
     help=t(
         "唯讀：現在輪到誰、下一步做什麼；若正等待這個 ChatGPT 對話接手，額外附上可直接貼"
@@ -1594,20 +1440,6 @@ def task_continue(
 
 
 @task_app.command(
-    "meeting",
-    help=t(
-        "唯讀：印出這個任務 Meeting Mode 的完整 SA／SD 對話紀錄（不截斷），"
-        "包含動工前檢查結果、每輪問題、SA 回覆與 PM 決策。不依賴 ChatGPT 轉述。",
-        "Read-only: print the task's full, unclipped Meeting Mode record — the "
-        "pre-implementation check, each round's question, SA's answer and any PM decision. "
-        "Does not depend on ChatGPT relaying it.",
-    ),
-)
-def task_meeting(ctx: typer.Context, task_id: Annotated[str | None, typer.Argument()] = None):
-    typer.echo(bridge(ctx).meeting_transcript(project_id(ctx), task_id)["markdown"])
-
-
-@task_app.command(
     "preflight",
     help=t(
         "唯讀：派工前整體檢查，回傳分級的 checks[]（ready/warning/blocker，附修復方式）"
@@ -1628,146 +1460,6 @@ def task_meeting(ctx: typer.Context, task_id: Annotated[str | None, typer.Argume
 def task_preflight(ctx: typer.Context, task_id: Annotated[str | None, typer.Argument()] = None):
     service, project = bridge(ctx), project_id(ctx)
     output(service.task_preflight(project, task_id))
-
-
-@task_app.command(
-    "evaluate",
-    help=t(
-        "需先 `config evaluation-engine on`。對這個任務每個角色最新一次成功執行做一次"
-        "證據導向評分（規則運算，不呼叫 LLM）；用 --role 只評一個角色。已評過的執行預設"
-        "會跳過，加 --force 強制重新評估（保留舊版本，不覆蓋）。",
-        "Requires `config evaluation-engine on` first. Scores the latest successful "
-        "execution of every role on this task from evidence (rule-based arithmetic, no "
-        "LLM call); use --role to score only one. An already-evaluated execution is "
-        "skipped by default — pass --force to re-evaluate (kept as a new version, "
-        "never overwriting the old one).",
-    ),
-)
-def task_evaluate(
-    ctx: typer.Context,
-    task_id: Annotated[str | None, typer.Argument()] = None,
-    role: Annotated[str | None, typer.Option(help=t("只評一個角色", "Evaluate only one role"))] = None,
-    task_type: Annotated[
-        str, typer.Option("--task-type", help=t("自訂任務類型標籤，用於可靠度分組", "A task-type label, used to group reliability stats"))
-    ] = "general",
-    force: Annotated[bool, typer.Option(help=t("強制重新評估", "Force re-evaluation"))] = False,
-):
-    service, project = bridge(ctx), project_id(ctx)
-    output(service.evaluate_task(project, task_id, role=role, task_type=task_type, force=force))
-
-
-@task_app.command(
-    "evaluations",
-    help=t(
-        "唯讀：列出這個任務已有的評估報告（含每次重新評估保留的舊版本）；用 --role 篩選。",
-        "Read-only: list this task's evaluation reports so far, including every kept "
-        "re-evaluation version; use --role to filter.",
-    ),
-)
-def task_evaluations(
-    ctx: typer.Context,
-    task_id: Annotated[str | None, typer.Argument()] = None,
-    role: Annotated[str | None, typer.Option(help=t("只看一個角色", "Only one role"))] = None,
-):
-    service, project = bridge(ctx), project_id(ctx)
-    output(service.get_task_evaluations(project, task_id, role=role))
-
-
-@task_app.command(
-    "export-cases",
-    help=t(
-        "唯讀：把專案裡有完成實作的任務匯出成 `validate-scoring` 要用的案例檔（JSONL）。"
-        "instance_id 取自需求文字裡的 SWE-bench 編號，找不到就用任務編號；標準答案不含在內。"
-        "例如：ccc-mcp task export-cases --out cases.jsonl",
-        "Read-only: exports every task with a finished implementation round as the "
-        "JSONL cases `validate-scoring` reads. instance_id is the SWE-bench id found in "
-        "the requirement text, else the task id; ground truth is not included. "
-        "Example: ccc-mcp task export-cases --out cases.jsonl",
-    ),
-)
-def task_export_cases(
-    ctx: typer.Context,
-    task_ids: Annotated[
-        list[str] | None, typer.Argument(help=t("只匯出這些任務；省略則全部", "Only these tasks; omit for all"))
-    ] = None,
-    out: Annotated[Path | None, typer.Option(help=t("寫入檔案；省略則印出", "Write to a file; omit to print"))] = None,
-):
-    cases = bridge(ctx).export_scoring_cases(project_id(ctx), task_ids or None)
-    lines = "\n".join(json.dumps(case, ensure_ascii=False) for case in cases)
-    if out:
-        out.write_text(lines + ("\n" if lines else ""), encoding="utf-8")
-        output({"exported": len(cases), "path": str(out)})
-    else:
-        typer.echo(lines)
-
-
-@app.command(
-    "compare-tokens",
-    help=t(
-        "比較 ccc-mcp 與單一 Agent 直接做同一批任務：每解決一題花多少 token、解決率各是多少。"
-        "兩邊各一個 JSONL（instance_id、tokens_total、resolved）；ccc-mcp 那邊可用 "
-        "`task export-cases` 產生。ChatGPT 網頁／MCP 的回合沒有 token 資料，會在結論中註明。",
-        "Compare ccc-mcp with one agent doing the same tasks directly: tokens per resolved "
-        "task and resolve rate for each. One JSONL per side (instance_id, tokens_total, "
-        "resolved); `task export-cases` writes the ccc-mcp side. ChatGPT web/MCP rounds "
-        "report no tokens, which the verdict notes.",
-    ),
-)
-def compare_tokens(
-    ccc_file: Annotated[Path, typer.Argument(help=t("ccc-mcp 那邊的 JSONL", "The ccc-mcp JSONL"))],
-    direct_file: Annotated[Path, typer.Argument(help=t("單一 Agent 那邊的 JSONL", "The direct-agent JSONL"))],
-    ccc_labels: Annotated[Path | None, typer.Option("--ccc-labels", help=t("ccc-mcp 那邊的 SWE-bench 結果", "SWE-bench result for the ccc-mcp side"))] = None,
-    direct_labels: Annotated[Path | None, typer.Option("--direct-labels", help=t("單一 Agent 那邊的 SWE-bench 結果", "SWE-bench result for the direct side"))] = None,
-):
-    from ..evaluation_engine import benchmark
-
-    output(
-        benchmark.compare(
-            benchmark.load_arm(ccc_file),
-            benchmark.load_arm(direct_file),
-            benchmark.load_labels(ccc_labels) if ccc_labels else None,
-            benchmark.load_labels(direct_labels) if direct_labels else None,
-        )
-    )
-
-
-@app.command(
-    "validate-scoring",
-    help=t(
-        "用標準答案檢驗評分準確度：讀入每行一筆的案例檔（diff、本機測試輸出、Agent 報告）"
-        "，用 --labels 指定 SWE-bench 的評測結果（resolved_ids / unresolved_ids），"
-        "輸出 AUROC、各及格線準確度與「PASSED 但沒解決」的誤判率。純規則運算，不呼叫 LLM、"
-        "不需要專案。",
-        "Check scoring accuracy against ground truth: reads a JSONL file of cases (diff, "
-        "local test output, agent report) and, with --labels, a SWE-bench harness result "
-        "(resolved_ids / unresolved_ids). Prints AUROC, accuracy per pass line, and how "
-        "often a PASSED verdict was wrong. Rule-based; no LLM call and no project needed.",
-    ),
-)
-def validate_scoring(
-    cases_file: Annotated[Path, typer.Argument(help=t("案例 JSONL 檔", "Cases JSONL file"))],
-    labels: Annotated[
-        Path | None,
-        typer.Option(
-            "--labels",
-            help=t(
-                "SWE-bench 評測結果 JSON；省略時使用案例內的 resolved 欄位",
-                "SWE-bench result JSON; omit to use each case's own resolved field",
-            ),
-        ),
-    ] = None,
-    rows: Annotated[
-        bool, typer.Option("--rows", help=t("一併輸出每筆案例的分數", "Include per-case scores"))
-    ] = False,
-):
-    from ..evaluation_engine import validation
-
-    summary = validation.validate(
-        validation.load_cases(cases_file), validation.load_labels(labels) if labels else None
-    )
-    if not rows:
-        summary.pop("rows")
-    output(summary)
 
 
 @task_app.command(
@@ -1997,29 +1689,6 @@ def goal_approve(ctx: typer.Context, goal_id: str):
 @goal_app.command("cancel", help=t("取消 Goal（不可還原）。", "Cancel a goal (final)."))
 def goal_cancel(ctx: typer.Context, goal_id: str, reason: Annotated[str, typer.Option("--reason")] = ""):
     output(bridge(ctx).cancel_goal(project_id(ctx), goal_id, reason))
-
-
-@goal_app.command(
-    "phase-start",
-    help=t(
-        "啟動已核准計畫中的一個 Phase（刻意啟動；完成後不會自動接續下一個 Phase）。"
-        "專案需已授權寫入並設定 test-command；預算（嘗試、派工、時間）由程式強制。",
-        "Start one phase of the approved plan, on purpose; it never continues to the next phase "
-        "by itself. The project must be authorized for writes and have a test command; the "
-        "budget (attempts, dispatches, time) is enforced in code.",
-    ),
-)
-def goal_phase_start(
-    ctx: typer.Context,
-    goal_id: str,
-    phase_id: str,
-    pm_provider: Annotated[str | None, typer.Option("--pm-provider", help="codex or claude")] = None,
-    wait: Annotated[bool, typer.Option("--wait/--no-wait", help="Stay until it stops")] = False,
-    timeout: Annotated[int, typer.Option("--timeout", help="Seconds to wait with --wait")] = 3600,
-):
-    service = bridge(ctx)
-    run = service.start_phase_run(project_id(ctx), goal_id, phase_id, pm_provider=pm_provider)
-    output(service.wait_for_phase_run(project_id(ctx), run["id"], timeout) if wait else run)
 
 
 @goal_app.command("phase-show", help=t("顯示一次 Phase 執行。", "Show a phase run."))
@@ -2278,52 +1947,6 @@ def reject(
 
 
 @task_app.command(
-    "reevaluate",
-    help=t(
-        "需先 `config evaluation-engine on`。強制重新評估一次特定執行（execution_id），"
-        "保留舊版本，不覆蓋——用 `task evaluations` 查 execution_id。",
-        "Requires `config evaluation-engine on` first. Force a fresh evaluation of one "
-        "specific execution (execution_id) — kept as a new version, never overwriting "
-        "the old one. Find execution_id via `task evaluations`.",
-    ),
-)
-def task_reevaluate(
-    ctx: typer.Context,
-    task_id: str,
-    execution_id: str,
-    task_type: Annotated[
-        str, typer.Option("--task-type", help=t("自訂任務類型標籤", "A task-type label"))
-    ] = "general",
-):
-    service, project = bridge(ctx), project_id(ctx)
-    output(service.reevaluate_execution(project, task_id, execution_id, task_type=task_type))
-
-
-@app.command(
-    "reputation",
-    help=t(
-        "唯讀，跨所有專案：依 agent/model/role/task_type 統計 Beta-Bernoulli 可靠度"
-        "（只計入已驗證的 PASSED/FAILED，從不計入 NEEDS_VERIFICATION/INSUFFICIENT_EVIDENCE）。"
-        "樣本數太少時 low_sample 會是 true。REVIEW 角色另外附上 review_precision；"
-        "review_recall 永遠是 null（沒有完整缺陷真值集合，不宣稱算得出 Recall）。",
-        "Read-only, across every project: Beta-Bernoulli reliability grouped by "
-        "agent/model/role/task_type (only ever counts verified PASSED/FAILED outcomes, "
-        "never NEEDS_VERIFICATION/INSUFFICIENT_EVIDENCE). low_sample is true when the "
-        "sample size is still too small to trust. REVIEW rows also carry "
-        "review_precision; review_recall is always null — no ground-truth defect set "
-        "exists to honestly claim Recall from.",
-    ),
-)
-def reputation_show(
-    ctx: typer.Context,
-    agent: Annotated[str | None, typer.Option(help=t("只看一個 provider", "Only one provider"))] = None,
-    role: Annotated[str | None, typer.Option(help=t("只看一個角色", "Only one role"))] = None,
-    task_type: Annotated[str | None, typer.Option("--task-type", help=t("只看一個任務類型", "Only one task type"))] = None,
-):
-    output(bridge(ctx).get_agent_reliability(agent=agent, role=role, task_type=task_type))
-
-
-@task_app.command(
     "decision",
     help=t(
         "本機記錄一筆決策（需終端機確認），寫入共用 Context 的稽核紀錄。"
@@ -2483,79 +2106,11 @@ def schema_export(out_dir: Path):
 @skill_app.command(
     "install",
     help=t(
-        "從本機路徑或 URL（.md 單檔／.zip 封存）安裝一個全局 Skill。"
-        "`skill install mcp <名稱>` 則是讓這個專案派出的 agent 能即時呼叫本機的 stdio MCP 伺服器"
-        "（先確認指令存在並完成 MCP 握手，記下完整路徑，所以之後不依賴 conda/venv 的啟用）。"
-        "也可用 codebase-memory:<repo 路徑> 把該 repo 的 codebase-memory-mcp 索引存成快照 Skill"
-        "（路徑留空則使用 --project 的專案根目錄）；agent 讀得到這些檔案。",
-        "Install a global skill from a local path or URL (a single .md file, or a .zip archive). "
-        "`skill install mcp <name>` instead lets this project's dispatched agents call a local "
-        "stdio MCP server live (the command must exist and complete an MCP handshake; its full "
-        "path is recorded, so later runs do not depend on an activated conda/venv). "
-        "Also accepts codebase-memory:<repo path> to save that repo's codebase-memory-mcp index "
-        "as a snapshot skill (empty path = the --project's root); agents can read these files.",
+        "從本機資料夾或 URL（.md 單檔／.zip 封存）安裝一個全局 Skill。",
+        "Install a global skill from a local folder or URL (a single .md file, or a .zip archive).",
     ),
 )
-def skill_install(
-    ctx: typer.Context,
-    source: str,
-    name: Annotated[
-        str | None, typer.Argument(help=t("MCP 名稱（搭配 mcp）", "MCP name (with `mcp`)"))
-    ] = None,
-    command: Annotated[
-        str | None,
-        typer.Option(
-            "--command", help=t("MCP 伺服器的完整指令路徑", "Full path of the MCP server command")
-        ),
-    ] = None,
-    arg: Annotated[
-        list[str] | None,
-        typer.Option(
-            "--arg",
-            help=t("傳給 MCP 指令的參數（可重複）", "Argument for the MCP command (repeatable)"),
-        ),
-    ] = None,
-    tools: Annotated[
-        str | None,
-        typer.Option(
-            "--tools",
-            help=t(
-                "只啟用這些工具，逗號分隔（預設全部）",
-                "Enable only these tools, comma-separated (default: all)",
-            ),
-        ),
-    ] = None,
-    cbm: Annotated[
-        str | None,
-        typer.Option(
-            "--cbm",
-            help=t("codebase-memory-mcp 執行檔路徑", "Path to the codebase-memory-mcp binary"),
-        ),
-    ] = None,
-):
-    if source == "mcp":
-        if not name:
-            raise BridgeError(
-                t("用法：skill install mcp <名稱>", "Usage: skill install mcp <name>")
-            )
-        scope = ctx.obj["project"]  # only an explicit --project narrows it; none = global
-        result = bridge(ctx).install_mcp_server(
-            scope, name, command, arg, tools.split(",") if tools else None
-        )
-        if scope is None:
-            typer.echo(
-                t(
-                    "! 已安裝為「全域」：所有專案的 agent 都能使用這個 MCP 啟用的工具。"
-                    "只想給單一專案請加 --project <id>。",
-                    "! Installed GLOBALLY: every project's agents can use this MCP's enabled "
-                    "tools. Add --project <id> to scope it to one project.",
-                ),
-                err=True,
-            )
-        for warning in result["warnings"]:
-            typer.echo(f"! {warning}", err=True)
-        output(result)
-        return
+def skill_install(ctx: typer.Context, source: str):
     if source.startswith(("http://", "https://")):
         typer.echo(
             t(
@@ -2564,63 +2119,7 @@ def skill_install(
             ),
             err=True,
         )
-    if not source.startswith("codebase-memory:"):
-        output(install_skill(bridge(ctx).home, source))
-        return
-    repo_root = None
-    if not source[len("codebase-memory:") :].strip():
-        repo_root = bridge(ctx).project(project_id(ctx))["root"]
-    output(install_skill(bridge(ctx).home, source, repo_root=repo_root, cbm=cbm))
-
-
-@mcp_app.command(
-    "list",
-    help=t(
-        "列出本機客戶端定義的 MCP 伺服器，以及已安裝的。有 --project：該專案的 agent 實際拿到的"
-        "（全域＋專案自己的，同名以專案為準）；沒有 --project（或加 --all）：全域安裝與各專案自己的安裝。",
-        "List MCP servers defined by clients on this machine and the installed ones. With --project: "
-        "what that project's agents actually get (global + its own; a project entry replaces a "
-        "global one of the same name). Without --project (or with --all): the global installs and "
-        "each project's own.",
-    ),
-)
-def mcp_list(
-    ctx: typer.Context,
-    all_projects: Annotated[
-        bool, typer.Option("--all", help=t("列出全域與所有專案", "List global and every project"))
-    ] = False,
-):
-    output(bridge(ctx).list_mcp_servers(ctx.obj["project"], all_projects))
-
-
-@mcp_app.command(
-    "calls",
-    help=t(
-        "唯讀：最近經由 ccc-mcp 中介（list/call_installed_mcp_tool）發生的 MCP 呼叫紀錄——"
-        "ChatGPT 有沒有真的呼叫的證據。只記錄參數摘要與結果狀態，不記錄回傳內容。",
-        "Read-only: recent MCP calls made through ccc-mcp's bridge (call_installed_mcp_tool) — "
-        "evidence of whether ChatGPT really called. Records argument summaries and outcome, "
-        "never the returned content.",
-    ),
-)
-def mcp_calls(
-    ctx: typer.Context,
-    limit: Annotated[
-        int, typer.Option("--limit", help=t("顯示最近幾筆", "How many recent calls"))
-    ] = 20,
-):
-    output(bridge(ctx).mcp_call_log(limit))
-
-
-@mcp_app.command(
-    "remove",
-    help=t(
-        "移除 MCP 伺服器：有 --project 移除該專案自己的；沒有則移除全域安裝。",
-        "Remove an MCP server: with --project this project's own install, without it the global one.",
-    ),
-)
-def mcp_remove(ctx: typer.Context, name: str):
-    output(bridge(ctx).remove_mcp_server(ctx.obj["project"], name))
+    output(install_skill(bridge(ctx).home, source))
 
 
 @skill_app.command("list", help=t("列出所有已安裝的 Skill。", "List every installed skill."))
@@ -2628,27 +2127,67 @@ def skill_list(ctx: typer.Context):
     output(list_skills(bridge(ctx).home))
 
 
-@skill_app.command(
-    "discover",
-    help=t(
-        "列出本機 Claude Code（~/.claude/skills）與 Codex（~/.codex/skills）全域目錄中找得到的 "
-        "Skill——例如由 `npx <工具> init --global` 這類第三方安裝器裝的。每筆標示是否可安裝"
-        "（usable：SKILL.md 讀得到且有內容）以及是否已安裝到 ccc-mcp。可安裝的直接用 "
-        "`skill install <path>` 安裝。",
-        "List skills found in Claude Code's (~/.claude/skills) and Codex's (~/.codex/skills) "
-        "global directories on this machine — for example ones a third-party installer put "
-        "there via `npx <tool> init --global`. Each entry marks whether it is usable (a "
-        "readable SKILL.md with content) and whether it is already installed into ccc-mcp. "
-        "Install a usable one with `skill install <path>`.",
-    ),
-)
-def skill_discover(ctx: typer.Context):
-    output(discover_skills(bridge(ctx).home))
-
-
 @skill_app.command("remove", help=t("移除一個已安裝的 Skill。", "Remove an installed skill."))
 def skill_remove(ctx: typer.Context, skill_id: str):
     output(remove_skill(bridge(ctx).home, skill_id))
+
+
+@config_app.command(
+    "write-file",
+    hidden=True,
+    help=t(
+        "開放一個專案相對檔案的直接編輯提案；每份差異仍須本機核准。",
+        "Allow proposing a direct edit to one project-relative file; every diff still needs local approval.",
+    ),
+)
+def config_write_file(ctx: typer.Context, path: str):
+    output(bridge(ctx).configure_write_file(project_id(ctx), path))
+
+
+@config_app.command(
+    "revoke-file",
+    hidden=True,
+    help=t(
+        "撤銷一個檔案的直接編輯權；尚未套用的核准也會被擋下。",
+        "Revoke direct-edit rights for one file; any not-yet-applied approval is blocked too.",
+    ),
+)
+def config_revoke_file(ctx: typer.Context, path: str):
+    output(bridge(ctx).revoke_write_file(project_id(ctx), path))
+
+
+@workspace_app.command(
+    "show",
+    help=t(
+        "查看直接編輯的差異與核准紀錄；--include-content 同時顯示前後全文。",
+        "View a direct edit's diff and approval record; --include-content also shows the full before/after text.",
+    ),
+)
+def workspace_show(ctx: typer.Context, edit_id: str, include_content: bool = False):
+    output(bridge(ctx).get_workspace_edit(project_id(ctx), edit_id, include_content))
+
+
+@workspace_app.command(
+    "approve",
+    help=t(
+        "舊版本機逐檔審閱工具；一般專案修改請使用 Agent 工作串。",
+        "Legacy per-file local review tool; use the Agent workstream for ordinary project changes.",
+    ),
+)
+def workspace_approve(ctx: typer.Context, edit_id: str):
+    output(bridge(ctx).approve_workspace_edit_local(project_id(ctx), edit_id))
+
+
+@task_app.command(
+    "usage",
+    help=t(
+        "只顯示各次執行的 CLI、模型設定與可取得的用量；舊紀錄標示未知。",
+        "Show only each execution's CLI, model settings and available usage; older records show as unknown.",
+    ),
+)
+def task_usage(ctx: typer.Context, task_id: Annotated[str | None, typer.Argument()] = None):
+    service, project = bridge(ctx), project_id(ctx)
+    output(service.get_task_usage(project, task_id or service.project_workstream_task(project)))
 
 
 @app.command(

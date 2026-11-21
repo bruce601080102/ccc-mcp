@@ -208,28 +208,31 @@ def test_an_approval_given_for_one_team_cannot_carry_another_team_forward(bridge
         bridge.approved_plan("demo", task_id)
 
 
-def test_built_in_workflows_are_untouched(bridge, human):
+def _built_in_flow_ids():
     from ccc_mcp.core.flows import BUILTIN_FLOWS
 
+    return [flow_id for flow_id, flow in BUILTIN_FLOWS.items() if not flow["legacy"]]
+
+
+@pytest.mark.parametrize("flow_id", _built_in_flow_ids())
+def test_built_in_workflows_are_untouched(bridge, human, flow_id):
+    """One test per built-in workflow, so a parallel run spreads them over workers."""
     bridge.authorize_project_local("demo")
     bridge.configure_test_command("demo", [sys.executable, "-c", "print('ok')"])
-    for flow_id, flow in BUILTIN_FLOWS.items():
-        if flow["legacy"]:
-            continue
-        bridge.configure_workflow("demo", flow_id)
-        task_id = bridge.start_project_request("demo", f"Task for {flow_id}", adapter="fake")[
-            "workstream"]["id"]
-        drive(bridge, task_id)
-        assert bridge.task("demo", task_id)["state"] == "COMPLETED", flow_id
-        rows = executions(bridge, task_id)
-        assert all(r["role_ref"] is None and r["role_snapshot"] is None and r["step_id"] is None
-                   for r in rows), flow_id
-        first = rows[0]
-        assert first["instruction"] == step_instruction(
-            first["role"], f"Task for {flow_id}",
-            strictness=bridge.get_project_settings("demo")["review_gate"]["ar_strictness"],
-            max_rounds=bridge.get_project_settings("demo")["review_gate"]["max_rounds"],
-        ), flow_id
+    bridge.configure_workflow("demo", flow_id)
+    task_id = bridge.start_project_request("demo", f"Task for {flow_id}", adapter="fake")[
+        "workstream"]["id"]
+    drive(bridge, task_id)
+    assert bridge.task("demo", task_id)["state"] == "COMPLETED", flow_id
+    rows = executions(bridge, task_id)
+    assert all(r["role_ref"] is None and r["role_snapshot"] is None and r["step_id"] is None
+               for r in rows), flow_id
+    first = rows[0]
+    assert first["instruction"] == step_instruction(
+        first["role"], f"Task for {flow_id}",
+        strictness=bridge.get_project_settings("demo")["review_gate"]["ar_strictness"],
+        max_rounds=bridge.get_project_settings("demo")["review_gate"]["max_rounds"],
+    ), flow_id
     assert bridge.store.one("SELECT COUNT(*) AS n FROM task_roster_pins")["n"] == 0
     assert bridge.store.one("SELECT COUNT(*) AS n FROM execution_prompts")["n"] == 0
 
@@ -303,33 +306,6 @@ def test_two_custom_roles_on_the_same_base_never_share_a_record(bridge, human):
     brief = bridge.get_task_status("demo", task_id)["brief"]["workflow"]
     assert brief["steps"] == ["SA", "SD", strict["id"], lenient["id"]]
     assert [d["name"] for d in brief["steps_detail"]] == [None, None, "Strict Gate", "Lenient Gate"]
-
-
-def test_evaluation_and_reputation_follow_the_role_and_step(bridge, human):
-    bridge.configure_evaluation_engine("demo", enabled=True)
-    first = make_role(bridge, "Reviewer One", "REVIEW", "Review as one.")
-    second = make_role(bridge, "Reviewer Two", "REVIEW", "Review as two.")
-    use_workflow(bridge, "SA", "SD/RD", ref(first), ref(second))
-    task_id = start(bridge)
-    drive(bridge, task_id)
-    bridge.evaluate_task("demo", task_id, force=True)
-
-    rows = bridge.get_task_evaluations("demo", task_id)
-    reviews = [r for r in rows if r["role"] == "REVIEW"]
-    assert {r["role_ref"] for r in reviews} == {first["id"], second["id"]}
-    assert len({r["step_id"] for r in reviews}) == 2
-    assert all(r["role_snapshot"] for r in reviews)
-    assert {r["role_name"] for r in reviews} == {"Reviewer One", "Reviewer Two"}
-    assert [r["role_ref"] for r in bridge.get_task_evaluations(
-        "demo", task_id, role="REVIEW", role_ref=first["id"])] == [first["id"]]
-    ledger = bridge.store.all(
-        "SELECT role_ref, step_id FROM reputation_events WHERE role='REVIEW'")
-    assert {row["role_ref"] for row in ledger} <= {first["id"], second["id"]}
-    built_in = [r for r in rows if r["role"] == "SD/RD"]
-    assert built_in and all(r["role_ref"] is None for r in built_in)
-
-
-# -- 3. what is dispatched ----------------------------------------------------------------------
 
 
 def test_the_dispatched_instruction_is_the_pinned_assembly(bridge, human):

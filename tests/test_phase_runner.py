@@ -471,17 +471,18 @@ def test_a_test_command_picked_automatically_is_not_good_enough(env, tmp_path):
         start(env, goal)
 
 
-def test_the_classic_workflow_is_refused_with_the_reason(env, tmp_path):
+def test_switching_to_classic_does_not_override_a_saved_plan(env, tmp_path):
     goal = make_ready_goal(env, scripted_test(tmp_path, ["pass"]))
     env.configure_workflow("demo", "classic")
-    with pytest.raises(BridgeError, match="Classic"):
-        start(env, goal)
-    assert env.list_tasks("demo") == []
+    run = start(env, goal)
+    assert env._task_flow("demo", run["task_id"])["id"] == "standard"
 
 
 def test_a_role_that_needs_a_browser_cannot_be_run_unattended(env, tmp_path):
-    goal = make_ready_goal(env, scripted_test(tmp_path, ["pass"]))
+    command = scripted_test(tmp_path, ["pass"])
     env.configure_role("demo", "SD", "chatgpt")
+    goal = make_ready_goal(env, command)
+    env.configure_role("demo", "SD", "codex")
     with pytest.raises(BridgeError, match="ChatGPT in a browser"):
         env.start_phase_run("demo", goal["id"], "P1", adapter="real")
     assert env.list_tasks("demo") == []
@@ -809,6 +810,17 @@ def test_a_runner_killed_during_the_host_test_is_recovered_without_replaying_the
             "SELECT 1 FROM host_test_runs WHERE status='RUNNING' AND child IS NOT NULL")), \
             "the host test never started"
         child = json.loads(env.store.one("SELECT child FROM host_test_runs")["child"])
+
+        def script_entered():
+            # Recording the child PID does not mean Python has reached the test script yet.
+            # Under load, killing the worker here could interrupt the first invocation
+            # before it advances the fixture to its "pass" outcome for the retry.
+            try:
+                return json.loads((tmp_path / "gate_state.json").read_text())["calls"] == 1
+            except json.JSONDecodeError:
+                return False  # the script is writing the counter
+
+        assert wait_for(script_entered), "the child never entered the test script"
         os.kill(worker.pid, signal.SIGKILL)                 # no finally block, no cleanup runs
         worker.wait(timeout=10)
         assert psutil.pid_exists(child["pid"])              # the test process is an orphan, still running

@@ -255,7 +255,7 @@ class GoalRunHub(GoalVerifyMixin):
         for phase in plan["phases"]:
             try:
                 access, test_command, *_ = self.check_phase_runnable(
-                    project_id, goal, phase, adapter, phase_requirement(goal, phase))
+                    project_id, goal, phase, adapter, phase_requirement(goal, phase), version=version)
             except (BridgeError, PermissionDenied) as exc:
                 raise type(exc)(f"Phase {phase['id']} cannot run: {exc}") from None
         pm = self._planning_settings(project_id, pm_provider, adapter)

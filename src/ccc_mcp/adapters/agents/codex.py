@@ -14,26 +14,6 @@ def toml_value(value):
     return json.dumps(value, ensure_ascii=False)
 
 
-def codex_mcp_flags(name, spec):
-    """`-c` overrides that give Codex exactly one operator-installed MCP server.
-
-    Each was needed in testing: `required` makes Codex wait for a slow-starting server
-    (codebase-memory-mcp takes ~6 s) instead of starting the turn without its tools;
-    `default_tools_approval_mode="approve"` is needed because the run uses `-a never`,
-    under which an MCP call that needs approval is simply refused; `enabled_tools`
-    limits the model to the tools the operator enabled at install time."""
-    prefix = f"mcp_servers.{name}"
-    pairs = {
-        "command": toml_value(spec["command"]),
-        "args": toml_value(list(spec["args"])),
-        "enabled_tools": toml_value(list(spec["allowed_tools"])),
-        "required": "true",
-        "default_tools_approval_mode": toml_value("approve"),
-        "startup_timeout_sec": "60",
-    }
-    return [item for key, value in pairs.items() for item in ("-c", f"{prefix}.{key}={value}")]
-
-
 class CodexAdapter(BaseAgentAdapter):
     # Appended to the shared operator policy for every Codex dispatch. A class constant
     # (not built inline in run()) so `config prompt`/preview_role_prompt can show exactly
@@ -95,15 +75,6 @@ class CodexAdapter(BaseAgentAdapter):
                 str(cwd),
                 "-",
             ]
-            mcp = package.get("mcp_servers") or {}
-            for name, spec in mcp.items():
-                if not Path(spec["command"]).is_file():
-                    raise BridgeError(
-                        f"MCP server '{name}' command is gone: {spec['command']}. Re-run "
-                        f"`ccc-mcp skill install mcp {name}` in the environment where it works."
-                    )
-            # Placed just before the "-" stdin marker, after every other option.
-            argv[-1:-1] = [flag for name, spec in mcp.items() for flag in codex_mcp_flags(name, spec)]
             if options.get("model"):
                 argv[4:4] = ["--model", options["model"]]
             if options.get("effort"):

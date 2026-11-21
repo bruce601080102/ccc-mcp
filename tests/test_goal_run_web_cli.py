@@ -55,7 +55,7 @@ def ready(client, phases=2):
     service = client.app.state.bridge
     service.authorize_project_local("demo")
     service.configure_test_command("demo", PYTEST)
-    goal = client.post("/api/projects/demo/goals", json={"requirement": "Build a slug tool"}).json()
+    goal = client.app.state.bridge.create_goal("demo", "Build a slug tool")
     imported = client.post(f"/api/projects/demo/goals/{goal['id']}/import",
                            json={"plan": plan_dict(PYTEST, phases), "base_version": 0})
     assert imported.status_code == 200, imported.text
@@ -100,7 +100,7 @@ def test_the_console_cannot_raise_a_limit_choose_a_command_or_approve_a_plan(cli
 
 
 def test_an_unapproved_goal_and_a_missing_authorization_are_refused_with_a_reason(client):
-    goal = client.post("/api/projects/demo/goals", json={"requirement": "x y z"}).json()
+    goal = client.app.state.bridge.create_goal("demo", "x y z")
     refused = client.post(f"/api/projects/demo/goals/{goal['id']}/run", json={})
     assert refused.status_code >= 400 and "no plan" in refused.text
     service = client.app.state.bridge
@@ -208,7 +208,7 @@ def test_accepting_the_final_result_needs_the_typed_phrase(client, tmp_path, mon
     plan = plan_dict(PYTEST, 1)
     plan["final_acceptance"].append({"id": "FM", "statement": "A person is happy",
                                      "verify": {"kind": "manual", "description": "Look"}})
-    goal = client.post("/api/projects/demo/goals", json={"requirement": "Build a slug tool"}).json()["id"]
+    goal = client.app.state.bridge.create_goal("demo", "Build a slug tool")["id"]
     client.post(f"/api/projects/demo/goals/{goal}/import", json={"plan": plan, "base_version": 0})
     shown = client.get(f"/api/projects/demo/goals/{goal}").json()
     client.post(f"/api/projects/demo/goals/{goal}/approve", json={

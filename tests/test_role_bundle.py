@@ -27,15 +27,31 @@ def start_task(bridge, requirement="Add a feature"):
         "demo", requirement, adapter="fake", fake_scenario="success")["workstream"]["id"]
 
 
+def archive_legacy_evaluations(bridge, task_id):
+    """The evaluation engine is gone, but projects created by older releases hold its rows. They are
+    history that an export must carry and an import must check, so the test writes such rows."""
+    for row in bridge.store.all(
+        "SELECT id,agent,role,role_ref,role_snapshot,step_id FROM agent_executions "
+        "WHERE task_id=? AND role_ref IS NOT NULL", (task_id,),
+    ):
+        bridge.store.execute(
+            "INSERT INTO evaluations(id,project_id,task_id,role,agent,task_type,source_execution_id,"
+            "version,trigger,evidence_coverage,task_status,scoring_details,evidence,disagreements,"
+            "schema_version,created,role_ref,role_snapshot,step_id) "
+            "VALUES(?,?,?,?,?,'general',?,1,'manual',0.5,'PASSED','{}','{}','[]','1',"
+            "'2026-01-01T00:00:00+00:00',?,?,?)",
+            ("EVAL-" + row["id"], "demo", task_id, row["role"], row["agent"], row["id"],
+             row["role_ref"], row["role_snapshot"], row["step_id"]))
+
+
 def build_source(bridge, human):
     """A project that has really used two custom roles in a workflow and finished a task."""
-    bridge.configure_evaluation_engine("demo", enabled=True)
     first = make_role(bridge, "Reviewer One", "REVIEW", "Review as one.")
     second = make_role(bridge, "Reviewer Two", "REVIEW", "Review as two.")
     use_workflow(bridge, "SA", "SD/RD", ref(first), ref(second), name="Two reviewers")
     task_id = start_task(bridge)
     drive(bridge, task_id)
-    bridge.evaluate_task("demo", task_id, force=True)
+    archive_legacy_evaluations(bridge, task_id)
     return first, second, task_id
 
 
@@ -78,12 +94,45 @@ def trigger_exists(service):
 
 
 @pytest.fixture
-def exported(bridge, human):
+def fresh_exported(bridge, human):
+    """A source project built for this one test; for tests that change the source."""
     first, second, task_id = build_source(bridge, human)
     return {
         "bridge": bridge, "first": first, "second": second, "task_id": task_id,
         "text": bridge.export_project_bundle("demo"),
     }
+
+
+@pytest.fixture(scope="module")
+def _shared_export(tmp_path_factory):
+    """The source project (two custom roles, a finished task) is built ONCE per module: it takes
+    seconds, and most tests only read it or import its bundle into another home."""
+    import subprocess as sp
+
+    from ccc_mcp.service import CCCMCP
+
+    root = tmp_path_factory.mktemp("bundle-source")
+    repo = root / "repository"
+    repo.mkdir()
+    (repo / "app.py").write_text("# original comment\ndef value():\n    return 1\n", encoding="utf-8")
+    for args in (["init"], ["add", "."], ["-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+                                          "commit", "-m", "initial"]):
+        sp.run(["git", "-C", str(repo), *args], check=True, capture_output=True)
+    service = CCCMCP(root / "home")
+    service.register_project(repo, "demo", "shared bundle source")
+    patch = pytest.MonkeyPatch()
+    patch.setattr(service, "spawn_worker", lambda execution_id: None)
+    patch.setattr("ccc_mcp.core.approval.confirm_local", lambda *args: "test-principal")
+    first, second, task_id = build_source(service, None)
+    state = {"bridge": service, "first": first, "second": second, "task_id": task_id,
+             "text": service.export_project_bundle("demo")}
+    yield state
+    patch.undo()
+
+
+@pytest.fixture
+def exported(_shared_export, human):
+    return _shared_export
 
 
 # -- the format ----------------------------------------------------------------------------------
@@ -126,7 +175,8 @@ def test_a_version_1_bundle_cannot_carry_role_records(tmp_path, exported):
         CCCMCP(tmp_path / "home-b").import_project_bundle(reseal(bundle), target_folder(tmp_path))
 
 
-def test_the_bundle_leaves_out_what_must_not_travel(exported):
+def test_the_bundle_leaves_out_what_must_not_travel(fresh_exported):
+    exported = fresh_exported
     bridge = exported["bridge"]
     # a run's complete provider text holds the project's Context, so it never goes in a bundle
     with bridge.store.transaction() as conn:
@@ -143,7 +193,8 @@ def test_the_bundle_leaves_out_what_must_not_travel(exported):
         assert key not in text
 
 
-def test_an_export_refuses_a_role_that_holds_a_credential(exported):
+def test_an_export_refuses_a_role_that_holds_a_credential(fresh_exported):
+    exported = fresh_exported
     bridge = exported["bridge"]
     row = bridge.store.one("SELECT rowid AS n, definition FROM custom_role_versions "
                            "WHERE project_id='demo'")
@@ -185,7 +236,7 @@ def test_the_roundtrip_keeps_roles_versions_snapshots_rosters_and_workflows(tmp_
     runs = service.store.all("SELECT role_ref, role_snapshot, step_id FROM agent_executions "
                              "WHERE role_ref IS NOT NULL")
     assert runs and all(row["role_snapshot"] and row["step_id"] for row in runs)
-    assert service.get_task_evaluations("demo", exported["task_id"])
+    assert service.store.all("SELECT id FROM evaluations WHERE task_id=?", (exported["task_id"],))
     assert trigger_exists(service)
 
 
@@ -820,3 +871,37 @@ def test_role_text_cannot_escape_the_page_or_the_folder(tmp_path, exported):
         service = CCCMCP(tmp_path / f"home-{abs(hash(name))}")
         with pytest.raises(BridgeError):
             service.import_project_bundle(reseal(bundle), target_folder(tmp_path, f"t{abs(hash(name))}"))
+
+
+# -- the console's one trust screen --------------------------------------------------------------
+
+
+def test_the_console_lists_an_imported_role_and_only_the_exact_phrase_trusts_it(tmp_path, exported, human):
+    from starlette.testclient import TestClient
+
+    from ccc_mcp.interfaces.web import create_app
+
+    service, _, _ = import_into(tmp_path, exported["text"])
+    app = create_app(service.home, token="role-token")
+    client = TestClient(app, headers={"X-CCC-UI-Token": "role-token"})
+    first = client.get("/api/projects/demo/roles/pending")
+    assert first.status_code == 200, first.text
+    pending = first.json()["pending"]
+    assert {r["name"] for r in pending} == {"Reviewer One", "Reviewer Two"}
+    role = pending[0]
+    assert role["permissions"]["may_write_files"] is False and role["phrase"]
+
+    body = {"version": role["version"], "version_sha256": role["version_sha256"]}
+    assert TestClient(app).post(
+        f"/api/projects/demo/roles/{role['id']}/confirm-import", json=body).status_code == 401
+    wrong = client.post(f"/api/projects/demo/roles/{role['id']}/confirm-import",
+                        json={**body, "confirmation": "yes"})
+    assert wrong.status_code >= 400
+    assert len(client.get("/api/projects/demo/roles/pending").json()["pending"]) == 2
+
+    done = client.post(f"/api/projects/demo/roles/{role['id']}/confirm-import",
+                       json={**body, "confirmation": role["phrase"]})
+    assert done.status_code == 200, done.text
+    assert [r["id"] for r in client.get("/api/projects/demo/roles/pending").json()["pending"]] != [
+        role["id"], role["id"]]
+    assert role["id"] not in {r["id"] for r in client.get("/api/projects/demo/roles/pending").json()["pending"]}

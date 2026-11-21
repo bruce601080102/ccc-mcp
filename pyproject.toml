@@ -31,7 +31,6 @@ dependencies = [
   # because interfaces/web.py (the `ccc-mcp ui` local console) now depends on them
   # directly too.
   "starlette>=1,<2", "uvicorn>=0.30,<1",
-  "markdown-it-py>=3,<5",
   # adapters/agents/base.py imports win32api/win32con/win32job to kill agent process trees
   "pywin32>=311; sys_platform == 'win32'",
 ]
@@ -53,6 +52,7 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 addopts = "-m \"not real_agents\""
 markers = [
+  "integration: real worker processes, real host-test subprocesses or a real browser; the fast core suite is `pytest -m \"not integration and not real_agents\"`, the full acceptance run is plain `pytest`",
   "real_agents: exercises actually-installed, logged-in Codex/Claude CLIs end to end; excluded by default (see docs/en/1-install-and-sign-in.md), run explicitly with `-m real_agents`",
 ]
 
@@ -88,7 +88,3 @@ replacement = '\1https://github.com/bruce601080102/ccc-mcp/blob/main/\2)'
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/ccc_mcp"]
-
-[tool.hatch.build.targets.wheel.force-include]
-"docs/en" = "ccc_mcp/docs/en"
-"docs/ch" = "ccc_mcp/docs/ch"

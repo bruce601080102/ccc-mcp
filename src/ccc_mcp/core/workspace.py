@@ -364,8 +364,6 @@ class WorkspaceHub:
             self.finish_execution(
                 execution_id, report=parsed, state=state, extras=extras, locked=True
             )
-        if row["role"] in {"SA", "REVIEW"}:
-            self.maybe_auto_evaluate(execution_id)
         result = {
             "execution_id": execution_id,
             "task_id": row["task_id"],

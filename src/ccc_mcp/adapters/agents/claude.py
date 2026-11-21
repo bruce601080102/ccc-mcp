@@ -1,12 +1,9 @@
 import json
-import os
-from pathlib import Path
 
 from ...core.roles import AGENT_ROLES, READ_ONLY_ROLES
 from ...infra.errors import AgentProcessError, BridgeError
 from ...infra.security import redact
 from ...infra.telemetry import record_output
-from ..mcp_servers import claude_tool_patterns
 from .base import REPORT_MODELS, BaseAgentAdapter, parse_report, probe, run_process
 
 
@@ -41,14 +38,6 @@ class ClaudeCodeAdapter(BaseAgentAdapter):
             or bool(package.get("read_only"))
         )
         options = package.get("agent_settings", {})
-        # Only servers an operator installed with the local CLI (`skill install mcp`).
-        mcp = package.get("mcp_servers") or {}
-        for name, spec in mcp.items():
-            if not Path(spec["command"]).is_file():
-                raise BridgeError(
-                    f"MCP server '{name}' command is gone: {spec['command']}. Re-run "
-                    f"`ccc-mcp skill install mcp {name}` in the environment where it works."
-                )
         executable = probe(
             "claude",
             [],
@@ -62,30 +51,18 @@ class ClaudeCodeAdapter(BaseAgentAdapter):
                 "--strict-mcp-config",
                 "--mcp-config",
                 "--no-session-persistence",
-                *(["--disable-slash-commands", "--allowedTools"] if mcp else ["--safe-mode"]),
+                "--safe-mode",
             ],
         )
-        # No shell, network or task tools, and no MCP unless the operator installed some.
-        # --safe-mode also switches off every --mcp-config server, so a project with
-        # installed MCP runs without it; the surfaces it would have closed are closed
-        # individually (settings/hooks via --setting-sources "", skills via
-        # --disable-slash-commands, CLAUDE.md and auto-memory via the env vars below).
+        # No shell, network, task or MCP tools: --safe-mode plus an empty, strict MCP config.
         argv = [
             executable,
-            *([] if mcp else ["--safe-mode"]),
+            "--safe-mode",
             "--setting-sources",
             "",
             "--strict-mcp-config",
             "--mcp-config",
-            json.dumps(
-                {
-                    "mcpServers": {
-                        name: {"command": spec["command"], "args": spec["args"]}
-                        for name, spec in mcp.items()
-                    }
-                },
-                separators=(",", ":"),
-            ),
+            '{"mcpServers":{}}',
             "--print",
             "--no-session-persistence",
             "--output-format",
@@ -97,20 +74,13 @@ class ClaudeCodeAdapter(BaseAgentAdapter):
             "--tools",
             "Read,Glob,Grep" if readonly else "Read,Edit,Write,Glob,Grep",
         ]
-        if mcp:
-            argv += ["--disable-slash-commands", "--allowedTools", ",".join(claude_tool_patterns(mcp))]
         if options.get("model"):
             argv += ["--model", options["model"]]
         if options.get("effort"):
             argv += ["--effort", options["effort"]]
-        extra = (
-            [{**os.environ, "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1", "CLAUDE_CODE_DISABLE_CLAUDE_MDS": "1"}]
-            if mcp
-            else []
-        )
         try:
             stdout, stderr = run_process(
-                argv, cwd, self.sent(self.prompt(package, instruction)), timeout, cancelled, *extra
+                argv, cwd, self.sent(self.prompt(package, instruction)), timeout, cancelled
             )
             record_output("claude", stdout, stderr)
         except AgentProcessError as exc:

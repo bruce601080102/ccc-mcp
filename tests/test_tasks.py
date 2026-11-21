@@ -247,10 +247,9 @@ def test_accept_requires_pm_review_and_terminal(bridge, human):
     run_execution(bridge, queued["execution_id"])
     assert bridge.accept_local("demo", "TASK-0001")["state"] == "COMPLETED"
     assert bridge.get_task_status("demo", "TASK-0001")["events"][-1]["new_state"] == "COMPLETED"
-    dashboard = bridge.dashboard_snapshot()
-    assert dashboard["open_count"] == 0
-    assert dashboard["activity"][-1]["created"] == 1
-    assert dashboard["activity"][-1]["completed"] == 1
+    overview = bridge.work_overview("demo")
+    assert overview["needs_you"] == 0
+    assert [(t["id"], t["state"]) for t in overview["singles"]] == [("TASK-0001", "COMPLETED")]
 
 
 def test_append_decisions_and_reject_plan(bridge, human):

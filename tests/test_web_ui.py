@@ -16,7 +16,6 @@ import pytest
 from starlette.testclient import TestClient
 
 from ccc_mcp import __version__
-from ccc_mcp.infra.codex_account import _rate_metrics, _usage_metrics, read_account_usage
 from ccc_mcp.infra.errors import BridgeError
 from ccc_mcp.interfaces.web import create_app
 
@@ -118,119 +117,6 @@ def test_a_finished_task_can_be_deleted_from_the_console_but_a_running_one_canno
     assert bridge.create_task("removal", "Next thing")["id"] == "TASK-0002"
 
 
-def test_dashboard_shows_actionable_task_without_exposing_raw_executions(
-    tmp_path, client, monkeypatch
-):
-    repo = mkrepo(tmp_path, "dashboard")
-    assert (
-        client.post("/api/projects/add", json={"path": str(repo), "id": "dashboard"}).status_code
-        == 200
-    )
-    bridge = client.app.state.bridge
-    bridge.create_task("dashboard", "Check the parser", ["Tests pass"])
-    original_status = bridge.get_task_status
-    polls = iter((1, 2))
-
-    def changing_status(project_id, task_id):
-        status = original_status(project_id, task_id)
-        status["brief"]["progress"] = {"elapsed_seconds": next(polls)}
-        return status
-
-    monkeypatch.setattr(bridge, "get_task_status", changing_status)
-
-    response = client.get("/api/dashboard")
-    assert response.status_code == 200
-    data = response.json()
-    assert data["task_count"] == data["open_count"] == 1
-    assert len(data["activity"]) == 14
-    assert sum(day["created"] for day in data["activity"]) == 1
-    assert sum(day["completed"] for day in data["activity"]) == 0
-    assert data["usage"]["chatgpt_executions"] == 0
-    assert data["usage"]["unmeasured_native_executions"] == 0
-    assert data["tasks"][0]["brief"]["waiting_on"] == "PM_DECISION"
-    assert data["tasks"][0]["requirement"] == "Check the parser"
-    assert "executions" not in data["tasks"][0]
-    assert "progress" not in data["tasks"][0]["brief"]
-    assert client.get("/api/dashboard").json() == data
-    assert TestClient(client.app).get("/api/dashboard").status_code == 401
-
-
-def test_account_usage_endpoint_is_gated_and_keeps_account_scope(client, monkeypatch):
-    async def account_usage():
-        return {"available": True, "tokens_available": True, "summary": {"lifetimeTokens": 123}}
-
-    monkeypatch.setattr("ccc_mcp.interfaces.web.read_account_usage", account_usage)
-    response = client.get("/api/dashboard/account-usage")
-    assert response.status_code == 200
-    assert response.json()["summary"]["lifetimeTokens"] == 123
-    assert TestClient(client.app).get("/api/dashboard/account-usage").status_code == 401
-
-
-def test_claude_quota_controls_are_token_gated(client, monkeypatch):
-    expected = {"enabled": True, "windows": [{"name": "5-hour", "used_percent": 42}]}
-    monkeypatch.setattr("ccc_mcp.interfaces.web.read_claude_usage", lambda home: expected)
-    monkeypatch.setattr("ccc_mcp.interfaces.web.enable_claude_usage", lambda home: expected)
-    monkeypatch.setattr("ccc_mcp.interfaces.web.disable_claude_usage", lambda home: {"enabled": False})
-    assert client.get("/api/dashboard/claude-usage").json() == expected
-    assert client.post("/api/dashboard/claude-usage/enable").json() == expected
-    assert client.post("/api/dashboard/claude-usage/disable").json() == {"enabled": False}
-    probed = {**expected, "probe": {"ok": True, "reason": "updated"}}
-    monkeypatch.setattr("ccc_mcp.interfaces.web.probe_claude_usage", lambda home: probed)
-    assert client.post("/api/dashboard/claude-usage/probe").json() == probed
-    assert TestClient(client.app).post("/api/dashboard/claude-usage/probe").status_code == 401
-    unauthenticated = TestClient(client.app)
-    assert unauthenticated.get("/api/dashboard/claude-usage").status_code == 401
-    assert unauthenticated.post("/api/dashboard/claude-usage/enable").status_code == 401
-
-
-def test_dashboard_period_and_evaluation_controls_are_available_in_ui(tmp_path, client):
-    repo = mkrepo(tmp_path, "evaluation-ui")
-    assert client.post("/api/projects/add", json={"path": str(repo), "id": "evaluation-ui"}).status_code == 200
-    task_id = client.app.state.bridge.create_task("evaluation-ui", "Check evidence")["id"]
-    assert client.get("/api/dashboard?usage_window=15m").json()["usage"]["window"] == "15m"
-    assert client.get("/api/dashboard?usage_window=invalid").status_code == 400
-    base = f"/api/projects/evaluation-ui/tasks/{task_id}"
-    assert client.get(f"{base}/evaluations").json() == []
-    assert client.post(f"{base}/evaluate", json={}).status_code == 400
-    enabled = client.post(
-        "/api/projects/evaluation-ui/config/evaluation-engine",
-        json={
-            "enabled": True, "auto_evaluate": False,
-            "weights": {"SA": {"requirement": 0.8, "review": 0.2}},
-        },
-    )
-    assert enabled.status_code == 200
-    settings = client.get("/api/projects/evaluation-ui/settings").json()
-    assert settings["evaluation_weights"]["SA"]["requirement"] == 0.8
-    assert client.post(f"{base}/evaluate", json={}).json() == []
-    assert client.get("/api/dashboard/reliability").json() == []
-    assert TestClient(client.app).get(f"{base}/evaluations").status_code == 401
-
-
-def test_account_usage_filters_unexpected_fields():
-    usage = _usage_metrics(
-        {
-            "summary": {"lifetimeTokens": 123, "secret": "ignore", "peakDailyTokens": -1},
-            "dailyUsageBuckets": [
-                {"startDate": "2026-11-01", "tokens": 42},
-                {"startDate": "2026-11-02", "tokens": True},
-            ],
-        }
-    )
-    assert usage["summary"]["lifetimeTokens"] == 123
-    assert usage["summary"]["peakDailyTokens"] is None
-    assert "secret" not in usage["summary"]
-    assert usage["daily"] == [{"date": "2026-11-01", "tokens": 42}]
-    assert _rate_metrics(
-        {
-            "rateLimits": {
-                "limitId": "codex",
-                "primary": {"usedPercent": 35, "windowDurationMins": 300, "resetsAt": 123},
-            }
-        }
-    ) == [{"name": "codex", "used_percent": 35, "duration_mins": 300, "resets_at": 123}]
-
-
 def test_remove_project_keeps_folder_by_default_and_checks_confirmation(tmp_path, client):
     repo = mkrepo(tmp_path, "removable")
     assert (
@@ -243,8 +129,6 @@ def test_remove_project_keeps_folder_by_default_and_checks_confirmation(tmp_path
     assert "without an archive" in preview["description_en"]
     assert "backed up under archives" in preview["description_en_keep_records"]
     client.app.state.bridge.create_task("removable", "Old task")
-    group = client.post("/api/project-groups", json={"action": "create", "name": "Old group"}).json()["groups"][0]
-    client.post("/api/project-groups", json={"action": "move", "project_id": "removable", "group_id": group["id"]})
     denied = client.post("/api/projects/removable/remove", json={"confirm": "wrong"})
     assert denied.status_code == 400
     assert client.get("/api/projects").json()
@@ -260,7 +144,6 @@ def test_remove_project_keeps_folder_by_default_and_checks_confirmation(tmp_path
     assert client.get("/api/projects").json() == []
     assert client.post("/api/projects/add", json={"path": str(repo), "id": "removable"}).status_code == 200
     assert client.get("/api/projects/removable/tasks").json() == []
-    assert client.get("/api/project-groups").json()["assignments"] == {}
 
 
 def test_remove_project_can_explicitly_keep_records(tmp_path, client):
@@ -326,61 +209,6 @@ def test_static_shell_is_served_without_a_token(tmp_path):
     assert anonymous.get("/i18n.js").status_code == 200
 
 
-def test_documentation_uses_selected_language_and_requires_token(tmp_path, client):
-    english = client.get("/api/docs/en/README")
-    chinese = client.get("/api/docs/ch/README")
-    assert english.status_code == 200
-    assert chinese.status_code == 200
-    assert "ccc-mcp documentation" in english.json()["html"]
-    assert "ccc-mcp 文件（繁體中文）" in chinese.json()["html"]
-    assert english.json()["html"] != chinese.json()["html"]
-    assert client.get("/api/docs/en/not-a-guide").status_code == 404
-    anonymous = TestClient(create_app(tmp_path / "other-home", token=TOKEN))
-    assert anonymous.get("/api/docs/en/README").status_code == 401
-
-
-def test_global_skill_install_and_remove_affects_every_project(tmp_path, client, monkeypatch):
-    from ccc_mcp.adapters import skills as skill_registry
-
-    provider_root = tmp_path / "provider-skills"
-    source = provider_root / "shared-guidance"
-    source.mkdir(parents=True)
-    (source / "SKILL.md").write_text(
-        "---\nname: shared-guidance\ndescription: Shared guidance\n---\nFollow this guidance.\n",
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(skill_registry, "_provider_skill_roots", lambda: [("Codex", provider_root)])
-    for project_id in ("first", "second"):
-        repo = mkrepo(tmp_path, project_id)
-        assert (
-            client.post("/api/projects/add", json={"path": str(repo), "id": project_id}).status_code
-            == 200
-        )
-
-    discovered = client.get("/api/skills/discover").json()
-    selected = next(item for item in discovered if item["id"] == "shared-guidance")
-    assert selected["already_installed"] is False
-    installed = client.post(
-        "/api/skills/install-discovered",
-        json={"id": selected["id"], "path": selected["path"]},
-    )
-    assert installed.status_code == 200, installed.text
-    assert [skill["id"] for skill in client.get("/api/skills").json()] == ["shared-guidance"]
-    for project_id in ("first", "second"):
-        context = client.get(f"/api/projects/{project_id}/context").json()
-        assert any(
-            skill["id"] == "shared-guidance" for skill in context["content"]["available_skills"]
-        )
-
-    path = "/api/skills/shared-guidance/remove"
-    assert client.post(path, json={"confirm": "wrong"}).status_code == 400
-    assert client.get("/api/skills").json()
-    removed = client.post(path, json={"confirm": "REMOVE SKILL shared-guidance"})
-    assert removed.status_code == 200, removed.text
-    assert client.get("/api/skills").json() == []
-    assert (source / "SKILL.md").is_file()
-
-
 def test_each_launch_gets_its_own_random_token(tmp_path):
     first = create_app(tmp_path / "home1")
     second = create_app(tmp_path / "home2")
@@ -398,134 +226,6 @@ def test_add_project_is_read_only_by_default(tmp_path, client):
     assert resp.json()["id"] == "demo1"
     listed = client.get("/api/projects").json()
     assert listed[0]["access"]["mode"] == "read-only"
-
-
-def test_project_groups_create_move_rename_reorder_delete_and_persist(tmp_path, client):
-    for name in ("alpha", "beta"):
-        repo = mkrepo(tmp_path, name)
-        assert (
-            client.post("/api/projects/add", json={"path": str(repo), "id": name}).status_code
-            == 200
-        )
-    first = client.post("/api/project-groups", json={"action": "create", "name": "Work"})
-    assert first.status_code == 200, first.text
-    work = first.json()["groups"][0]["id"]
-    second = client.post("/api/project-groups", json={"action": "create", "name": "Personal"})
-    personal = second.json()["groups"][1]["id"]
-    moved = client.post(
-        "/api/project-groups", json={"action": "move", "project_id": "alpha", "group_id": work}
-    )
-    assert moved.json()["assignments"] == {"alpha": work}
-    renamed = client.post(
-        "/api/project-groups", json={"action": "rename", "group_id": work, "name": "Client"}
-    )
-    assert renamed.json()["groups"][0]["name"] == "Client"
-    reordered = client.post(
-        "/api/project-groups", json={"action": "reorder", "group_ids": [personal, work]}
-    )
-    assert [g["id"] for g in reordered.json()["groups"]] == [personal, work]
-    assert client.get("/api/project-groups").json()["assignments"] == {"alpha": work}
-    deleted = client.post("/api/project-groups", json={"action": "delete", "group_id": work})
-    assert deleted.json()["assignments"] == {}
-    assert [g["id"] for g in deleted.json()["groups"]] == [personal]
-
-
-def test_project_groups_reject_unknown_project_and_duplicate_name(tmp_path, client):
-    assert (
-        client.post("/api/project-groups", json={"action": "create", "name": "Work"}).status_code
-        == 200
-    )
-    assert (
-        client.post("/api/project-groups", json={"action": "create", "name": "work"}).status_code
-        == 400
-    )
-    assert (
-        client.post(
-            "/api/project-groups",
-            json={"action": "move", "project_id": "missing", "group_id": None},
-        ).status_code
-        == 400
-    )
-
-
-def test_project_groups_support_bilingual_names_without_changing_assignments(tmp_path, client):
-    repo = mkrepo(tmp_path, "alpha")
-    assert (
-        client.post("/api/projects/add", json={"path": str(repo), "id": "alpha"}).status_code == 200
-    )
-    created = client.post("/api/project-groups", json={"action": "create", "name": "測試"})
-    assert created.status_code == 200
-    group_id = created.json()["groups"][0]["id"]
-    moved = client.post(
-        "/api/project-groups", json={"action": "move", "project_id": "alpha", "group_id": group_id}
-    )
-    assert moved.status_code == 200
-
-    renamed = client.post(
-        "/api/project-groups",
-        json={"action": "rename", "group_id": group_id, "name_zh": "測試", "name_en": "Test"},
-    )
-    assert renamed.status_code == 200, renamed.text
-    assert renamed.json()["groups"] == [
-        {"id": group_id, "name": "測試", "name_zh": "測試", "name_en": "Test"}
-    ]
-    assert client.get("/api/project-groups").json()["assignments"] == {"alpha": group_id}
-
-    duplicate = client.post(
-        "/api/project-groups", json={"action": "create", "name_zh": "另一組", "name_en": "test"}
-    )
-    assert duplicate.status_code == 400
-    empty = client.post(
-        "/api/project-groups", json={"action": "create", "name_zh": " ", "name_en": " "}
-    )
-    assert empty.status_code == 400
-
-
-def test_account_usage_reads_documented_app_server_metrics(tmp_path, monkeypatch):
-    server = tmp_path / "codex"
-    server.write_text(
-        "#!/usr/bin/env python3\n"
-        "import json, sys\n"
-        "for line in sys.stdin:\n"
-        "    request = json.loads(line)\n"
-        "    if request.get('id') == 1:\n"
-        "        result = {'userAgent': 'fake'}\n"
-        "    elif request.get('id') == 2:\n"
-        "        result = {'summary': {'lifetimeTokens': 1200}, 'dailyUsageBuckets': [{'startDate': '2026-11-01', 'tokens': 80}]}\n"
-        "    elif request.get('id') == 3:\n"
-        "        result = {'rateLimits': {'limitId': 'codex', 'primary': {'usedPercent': 25, 'windowDurationMins': 300, 'resetsAt': 123}}}\n"
-        "    else:\n"
-        "        continue\n"
-        "    print(json.dumps({'id': request['id'], 'result': result}), flush=True)\n",
-        encoding="utf-8",
-    )
-    server.chmod(0o755)
-    real_subprocess_exec = asyncio.create_subprocess_exec
-
-    async def launch_python_fixture(executable, *args, **kwargs):
-        return await real_subprocess_exec(sys.executable, executable, *args, **kwargs)
-
-    monkeypatch.setattr("ccc_mcp.infra.codex_account.shutil.which", lambda name: str(server))
-    monkeypatch.setattr("ccc_mcp.infra.codex_account.asyncio.create_subprocess_exec", launch_python_fixture)
-    data = asyncio.run(read_account_usage(timeout=2))
-    assert data["available"] is True
-    assert data["summary"]["lifetimeTokens"] == 1200
-    assert data["daily"] == [{"date": "2026-11-01", "tokens": 80}]
-    assert data["rate_limits"][0]["used_percent"] == 25
-
-
-def test_project_groups_allow_one_language_and_legacy_rename(tmp_path, client):
-    created = client.post(
-        "/api/project-groups", json={"action": "create", "name_zh": "工作", "name_en": ""}
-    )
-    assert created.status_code == 200, created.text
-    group_id = created.json()["groups"][0]["id"]
-    assert created.json()["groups"][0] == {"id": group_id, "name": "工作", "name_zh": "工作"}
-    renamed = client.post(
-        "/api/project-groups", json={"action": "rename", "group_id": group_id, "name": "Work"}
-    )
-    assert renamed.status_code == 200
-    assert renamed.json()["groups"][0] == {"id": group_id, "name": "Work"}
 
 
 def test_add_project_with_enable_write_needs_the_exact_typed_project_id(tmp_path, client):
@@ -691,24 +391,6 @@ def test_config_endpoints_round_trip(tmp_path, client):
     settings = client.get("/api/projects/demo10/settings").json()
     assert settings["editable"]["test_command"] == ["python", "-m", "pytest", "-q"]
 
-    resp = client.post(
-        "/api/projects/demo10/config/meeting-mode",
-        json={"enabled": True, "max_rounds": 2},
-    )
-    assert resp.status_code == 200
-    settings = client.get("/api/projects/demo10/settings").json()
-    assert settings["editable"]["meeting_mode"]["enabled"] is True
-    assert settings["editable"]["meeting_mode"]["max_rounds"] == 2
-
-    resp = client.post(
-        "/api/projects/demo10/config/evaluation-engine",
-        json={"enabled": True, "auto_evaluate": True},
-    )
-    assert resp.status_code == 200
-    settings = client.get("/api/projects/demo10/settings").json()
-    assert settings["editable"]["evaluation_engine"]["enabled"] is True
-    assert settings["editable"]["evaluation_engine"]["auto_evaluate"] is True
-
 
 # --- Tasks (read-only) --------------------------------------------------------
 
@@ -727,172 +409,6 @@ def test_unknown_project_returns_a_client_error_not_a_crash(tmp_path, client):
     assert "error" in resp.json()
 
 
-def test_mcp_ui_probes_selected_tools_and_installs_only_the_selected_subset(
-    tmp_path, client, monkeypatch
-):
-    from ccc_mcp.adapters import mcp_servers
-
-    repo = mkrepo(tmp_path, "mcp-repo")
-    client.post("/api/projects/add", json={"path": str(repo), "id": "mcp-demo"})
-    discovered = {
-        "name": "example-mcp",
-        "client": "VS Code",
-        "source_file": "local-mcp.json",
-        "transport": "stdio",
-        "command": sys.executable,
-        "args": [],
-        "has_env": False,
-    }
-    monkeypatch.setattr(mcp_servers, "discover", lambda root=None: [discovered])
-    monkeypatch.setattr(
-        mcp_servers,
-        "probe_tools",
-        lambda command, args: [
-            {"name": "read", "description": "Read data", "read_only": True},
-            {"name": "delete", "description": "Delete data", "read_only": False},
-        ],
-    )
-    selected = {key: discovered[key] for key in ("name", "client", "source_file")}
-    preview = client.post("/api/projects/mcp-demo/mcp/probe", json=selected)
-    assert preview.status_code == 200, preview.text
-    assert [tool["name"] for tool in preview.json()["tools"]] == ["read", "delete"]
-
-    empty = client.post("/api/projects/mcp-demo/mcp/install", json={**selected, "tools": []})
-    assert empty.status_code == 400
-    unknown = client.post(
-        "/api/projects/mcp-demo/mcp/install", json={**selected, "tools": ["unknown"]}
-    )
-    assert unknown.status_code == 400
-
-    installed = client.post(
-        "/api/projects/mcp-demo/mcp/install", json={**selected, "tools": ["read"]}
-    )
-    assert installed.status_code == 200, installed.text
-    listed = client.get("/api/projects/mcp-demo/mcp").json()["installed"]["example-mcp"]
-    assert listed["allowed_tools"] == ["read"]
-    assert listed["scope"] == "project"
-
-    monkeypatch.setattr(
-        mcp_servers,
-        "describe_tools",
-        lambda scope, command, args: [
-            {"name": "read", "description": "Read data", "input_schema": {"type": "object"}},
-            {"name": "delete", "description": "Delete data", "input_schema": {"type": "object"}},
-        ],
-    )
-    monkeypatch.setattr(
-        mcp_servers,
-        "call_tool",
-        lambda scope, command, args, tool, arguments: {
-            "is_error": False,
-            "text": f"{tool}:{arguments['value']}",
-            "truncated": False,
-        },
-    )
-    tools = client.get("/api/projects/mcp-demo/mcp/example-mcp/tools")
-    assert tools.status_code == 200
-    assert [tool["name"] for tool in tools.json()] == ["read"]
-    called = client.post(
-        "/api/projects/mcp-demo/mcp/example-mcp/tools/read/call",
-        json={"arguments": {"value": "hello"}},
-    )
-    assert called.status_code == 200
-    assert called.json()["text"] == "read:hello"
-    assert (
-        client.post(
-            "/api/projects/mcp-demo/mcp/example-mcp/tools/delete/call",
-            json={"arguments": {"value": "bad"}},
-        ).status_code
-        == 400
-    )
-    assert client.get("/api/mcp/calls").json()[-1]["tool"] == "read"
-
-    removed = client.post("/api/projects/mcp-demo/mcp/example-mcp/remove")
-    assert removed.status_code == 200
-    assert client.get("/api/projects/mcp-demo/mcp").json()["installed"] == {}
-
-
-def test_mcp_ui_lists_venv_executable_and_installs_after_tool_selection(
-    tmp_path, client, monkeypatch
-):
-    from ccc_mcp.adapters import mcp_servers
-
-    repo = mkrepo(tmp_path, "mcp-venv-repo")
-    executable = "codebase-memory-mcp.exe" if os.name == "nt" else "codebase-memory-mcp"
-    binary = repo / ".venv" / ("Scripts" if os.name == "nt" else "bin") / executable
-    binary.parent.mkdir(parents=True)
-    binary.write_text("#!/bin/sh\n")
-    binary.chmod(0o755)
-    client.post("/api/projects/add", json={"path": str(repo), "id": "mcp-venv"})
-    monkeypatch.setattr(mcp_servers, "client_config_files", lambda root=None: [])
-
-    probes = []
-
-    def probe(command, args):
-        probes.append(command)
-        return [{"name": "search", "description": "Search", "read_only": True}]
-
-    monkeypatch.setattr(
-        mcp_servers,
-        "probe_tools",
-        probe,
-    )
-
-    listed = client.get("/api/projects/mcp-venv/mcp")
-    assert listed.status_code == 200
-    candidate = next(
-        item
-        for item in listed.json()["discovered"]
-        if item["name"] == "codebase-memory-mcp" and item["command"] == str(binary)
-    )
-    assert listed.json()["installed"] == {}
-    assert probes == []
-    selected = {key: candidate[key] for key in ("name", "client", "source_file")}
-    preview = client.post("/api/projects/mcp-venv/mcp/probe", json=selected)
-    assert preview.status_code == 200, preview.text
-    assert preview.json()["tools"][0]["name"] == "search"
-    assert probes == [str(binary)]
-    installed = client.post(
-        "/api/projects/mcp-venv/mcp/install", json={**selected, "tools": ["search"]}
-    )
-    assert installed.status_code == 200, installed.text
-    assert client.get("/api/projects/mcp-venv/mcp").json()["installed"]["codebase-memory-mcp"][
-        "allowed_tools"
-    ] == ["search"]
-
-
-def test_mcp_ui_rejects_unlisted_or_remote_server_and_requires_token(tmp_path, client, monkeypatch):
-    from ccc_mcp.adapters import mcp_servers
-
-    repo = mkrepo(tmp_path, "mcp-remote")
-    client.post("/api/projects/add", json={"path": str(repo), "id": "mcp-remote"})
-    monkeypatch.setattr(
-        mcp_servers,
-        "discover",
-        lambda root=None: [
-            {
-                "name": "remote",
-                "client": "VS Code",
-                "source_file": "local-mcp.json",
-                "transport": "http",
-                "command": None,
-                "args": [],
-                "has_env": False,
-            }
-        ],
-    )
-    path = "/api/projects/mcp-remote/mcp/probe"
-    assert client.post(path, json={"name": "fake"}).status_code == 400
-    assert (
-        client.post(
-            path, json={"name": "remote", "client": "VS Code", "source_file": "local-mcp.json"}
-        ).status_code
-        == 400
-    )
-    anonymous = TestClient(create_app(tmp_path / "home", token=TOKEN))
-    assert anonymous.post(path, json={"name": "remote"}).status_code == 401
-
-
 # --- Connect (ChatGPT Tunnel) -------------------------------------------------
 #
 # The subprocess-lifecycle tests below drive `ConnectionManager` directly with
@@ -904,54 +420,6 @@ def test_mcp_ui_rejects_unlisted_or_remote_server_and_requires_token(tmp_path, c
 # real async behavior instead of going through repeated HTTP round trips.
 
 TUNNEL = "tunnel_" + "c" * 32
-
-
-def test_onboarding_status_without_project_reports_environment_and_tunnel(client):
-    resp = client.get("/api/onboarding/status")
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["environment"]["python"]["available"] is True
-    assert body["environment"]["git"]["available"] is True
-    assert body["tunnel"]["state"] == "disconnected"
-    assert body["project"] is None
-    # Environment and tunnel are both fine on a dev/CI box but the tunnel is not
-    # connected yet, so that is the next thing to fix.
-    assert body["next_action"] == {"key": "connect_tunnel"}
-
-
-def test_onboarding_status_reports_unauthorized_unconfigured_project(tmp_path, client):
-    repo = mkrepo(tmp_path, "fresh")
-    assert client.post("/api/projects/add", json={"path": str(repo), "id": "fresh"}).status_code == 200
-    client.app.state.connection_manager.state = "connected"
-
-    body = client.get("/api/onboarding/status", params={"project_id": "fresh"}).json()
-    assert body["project"]["authorized"] is False
-    assert body["project"]["access_mode"] == "read-only"
-    assert body["project"]["test_command_configured"] is False
-    assert body["next_action"] == {"key": "authorize_project"}
-
-
-def test_onboarding_status_next_action_reaches_all_set(tmp_path, client):
-    repo = mkrepo(tmp_path, "ready")
-    assert client.post("/api/projects/add", json={"path": str(repo), "id": "ready"}).status_code == 200
-    bridge = client.app.state.bridge
-    bridge.authorize_project_web("ready", "ready")
-    bridge.configure_profile("ready", "chatgpt-only")
-    client.app.state.connection_manager.state = "connected"
-
-    body = client.get("/api/onboarding/status", params={"project_id": "ready"}).json()
-    assert body["project"]["authorized"] is True
-    assert body["project"]["profile"] == "chatgpt-only"
-    assert body["next_action"] == {"key": "all_set"}
-
-    bridge.configure_test_command("ready", ["pytest", "-q"])
-    body = client.get("/api/onboarding/status", params={"project_id": "ready"}).json()
-    assert body["project"]["test_command_configured"] is True
-
-
-def test_onboarding_status_is_token_gated(tmp_path):
-    app = create_app(tmp_path / "home", token=TOKEN)
-    assert TestClient(app).get("/api/onboarding/status").status_code == 401
 
 
 def test_connect_status_reports_disconnected_by_default(tmp_path, client):
@@ -982,7 +450,6 @@ def test_connect_start_without_any_key_is_refused(tmp_path, client):
 
 
 def _fake_prepared(tmp_path, body="print('ready', flush=True)\nimport time\ntime.sleep(3)\n"):
-    import os
 
     client_script = tmp_path / "fake-tunnel-client"
     client_script.write_text(f"#!{sys.executable}\n{body}")
@@ -1376,27 +843,6 @@ def test_named_connection_can_start_with_its_saved_key(tmp_path, client, monkeyp
     assert seen == [(TUNNEL, "sk-work")]
 
 
-def test_workflow_and_review_gate_can_be_set_from_the_console(tmp_path, client):
-    repo = mkrepo(tmp_path, "flows")
-    assert client.post("/api/projects/add", json={"path": str(repo), "id": "flows"}).status_code == 200
-
-    catalog = client.get("/api/projects/flows/workflows").json()
-    assert catalog["selected"] == "standard"  # a project added through the console
-    assert [flow["id"] for flow in catalog["workflows"]][:3] == ["classic", "standard", "full"]
-
-    assert client.post("/api/projects/flows/config/workflow", json={"workflow": "full"}).status_code == 200
-    assert client.post("/api/projects/flows/config/workflow", json={"workflow": "x"}).status_code == 400
-    gate = {"ar_strictness": "extreme", "max_rounds": 4, "escalation": "auto_pm"}
-    assert client.post("/api/projects/flows/config/review-gate", json=gate).status_code == 200
-    assert client.post(
-        "/api/projects/flows/config/review-gate", json={"max_rounds": 6}
-    ).status_code == 400
-
-    editable = client.get("/api/projects/flows/settings").json()["editable"]
-    assert editable["workflow"] == "full"
-    assert editable["review_gate"] == gate
-
-
 def test_gate_decision_needs_a_pending_gate(tmp_path, client):
     repo = mkrepo(tmp_path, "gates")
     assert client.post("/api/projects/add", json={"path": str(repo), "id": "gates"}).status_code == 200
@@ -1406,67 +852,6 @@ def test_gate_decision_needs_a_pending_gate(tmp_path, client):
     )
     assert response.status_code == 400
     assert "No gate decision is pending" in response.text
-
-
-def test_custom_workflows_can_be_managed_from_the_console(tmp_path, client):
-    repo = mkrepo(tmp_path, "mine")
-    assert client.post("/api/projects/add", json={"path": str(repo), "id": "mine"}).status_code == 200
-
-    saved = client.post("/api/projects/mine/workflows", json={"steps": ["SD", "AR", "RD"]})
-    assert saved.status_code == 200
-    assert saved.json()["id"] == "flow-2"
-    renamed = client.post(
-        "/api/projects/mine/workflows",
-        json={"id": "flow-2", "steps": ["SD", "RD"], "name": "Short"},
-    )
-    assert renamed.json()["name"] == "Short"
-    assert client.post("/api/projects/mine/workflows", json={"steps": ["QA"]}).status_code == 400
-
-    assert client.post(
-        "/api/projects/mine/config/workflow-selection", json={"selection": "pm"}
-    ).status_code == 200
-    catalog = client.get("/api/projects/mine/workflows").json()
-    assert (catalog["selection"], [f["id"] for f in catalog["workflows"]]) == (
-        "pm", ["classic", "standard", "full", "life", "business", "content", "decision", "flow-2"]
-    )
-    assert client.post("/api/projects/mine/workflows/flow-2/delete", json={}).json()["deleted"] == "flow-2"
-    assert client.post("/api/projects/mine/workflows/full/delete", json={}).status_code == 400
-
-
-def test_a_project_can_wear_a_pixel_character_or_text_in_a_color(tmp_path, client):
-    repo = mkrepo(tmp_path, "alpha")
-    assert client.post("/api/projects/add", json={"path": str(repo), "id": "alpha"}).status_code == 200
-    assert client.get("/api/project-groups").json()["icons"] == {}
-
-    robot = client.post(
-        "/api/project-groups",
-        json={"action": "icon", "project_id": "alpha", "avatar": "robot", "tone": "violet"},
-    )
-    assert robot.json()["icons"] == {"alpha": {"avatar": "robot", "tone": "violet"}}
-    text = client.post(
-        "/api/project-groups", json={"action": "icon", "project_id": "alpha", "text": "🚀"}
-    )
-    assert text.json()["icons"] == {"alpha": {"text": "🚀"}}
-    assert client.get("/api/project-groups").json()["icons"] == {"alpha": {"text": "🚀"}}
-
-    cleared = client.post("/api/project-groups", json={"action": "icon", "project_id": "alpha"})
-    assert cleared.json()["icons"] == {}
-
-
-@pytest.mark.parametrize(
-    "body",
-    [
-        {"project_id": "missing", "text": "A"},
-        {"project_id": "alpha", "avatar": "not-a-character"},
-        {"project_id": "alpha", "text": "far too long"},
-        {"project_id": "alpha", "text": "a\nb"},
-        {"project_id": "alpha", "text": "A", "tone": "chartreuse"},
-    ],
-)
-def test_project_icons_reject_bad_input(tmp_path, client, body):
-    repo = mkrepo(tmp_path, "alpha")
-    client.post("/api/projects/add", json={"path": str(repo), "id": "alpha"})
-    assert client.post("/api/project-groups", json={"action": "icon", **body}).status_code == 400
 
 
 def test_continuation_prompt_is_available_from_the_task_page_and_token_gated(tmp_path, client):
@@ -1494,3 +879,131 @@ def test_continuation_prompt_is_available_from_the_task_page_and_token_gated(tmp
     assert "Unsupported continuation target" in rejected.json()["error"]
 
     assert TestClient(client.app).get(base).status_code == 401
+
+
+# --- Tasks page: the same data ChatGPT reads -----------------------------------------------------
+
+
+def test_work_endpoints_start_list_rename_and_poll_by_revision(tmp_path, client):
+    repo = mkrepo(tmp_path, "work")
+    client.post("/api/projects/add", json={"path": str(repo), "id": "w1"})
+
+    empty = client.get("/api/projects/w1/work").json()
+    assert empty["groups"] == [] and empty["singles"] == []
+
+    started = client.post("/api/projects/w1/work/goals", json={
+        "requirement": "Build a small export tool for finance, with checks",
+        "request_key": "console-key-0001"}).json()
+    assert started["status"] == "created"
+    again = client.post("/api/projects/w1/work/goals", json={
+        "requirement": "Build a small export tool for finance, with checks",
+        "request_key": "console-key-0001"}).json()
+    assert again["status"] == "exists" and again["id"] == started["id"]
+
+    listing = client.get("/api/projects/w1/work").json()
+    assert [g["id"] for g in listing["groups"]] == [started["id"]]
+    revision = listing["revision"]
+    # Asking with the revision already held sends back nothing to repaint.
+    assert client.get(f"/api/projects/w1/work?rev={revision}").json() == {
+        "revision": revision, "unchanged": True}
+
+    renamed = client.post(f"/api/projects/w1/goals/{started['id']}/rename",
+                          json={"title": "Finance export"}).json()
+    assert renamed["title"] == "Finance export"
+    after = client.get(f"/api/projects/w1/work?rev={revision}").json()
+    assert after["revision"] != revision and after["groups"][0]["title"] == "Finance export"
+    # The name a person gave never replaces what was asked for.
+    assert client.get(f"/api/projects/w1/goals/{started['id']}").json()["requirement"].startswith(
+        "Build a small export tool")
+
+
+def test_work_endpoints_are_token_gated_and_refuse_unknown_fields(tmp_path, client):
+    repo = mkrepo(tmp_path, "gate")
+    client.post("/api/projects/add", json={"path": str(repo), "id": "w2"})
+    anonymous = TestClient(client.app)
+    assert anonymous.get("/api/projects/w2/work").status_code == 401
+    assert anonymous.post("/api/projects/w2/work/goals", json={"requirement": "x y z"}).status_code == 401
+    refused = client.post("/api/projects/w2/work/goals", json={"requirement": "do it", "approve": True})
+    assert refused.status_code == 400 and "Unknown fields" in refused.json()["error"]
+
+
+def test_the_console_cannot_start_a_goal_that_nobody_approved(tmp_path, client):
+    repo = mkrepo(tmp_path, "unapproved")
+    client.post("/api/projects/add", json={"path": str(repo), "id": "w3"})
+    goal = client.post("/api/projects/w3/work/goals", json={"requirement": "Ship the thing"}).json()
+    response = client.post(f"/api/projects/w3/goals/{goal['id']}/run", json={})
+    assert response.status_code == 400
+    assert client.get("/api/projects/w3/work").json()["groups"][0]["state"] == "DRAFT"
+
+
+# --- What was removed stays removed -----------------------------------------------------------
+
+
+@pytest.mark.parametrize("path", [
+    "/api/dashboard", "/api/dashboard/reliability", "/api/dashboard/account-usage",
+    "/api/docs/en/README", "/api/onboarding/status", "/api/skills", "/api/skills/discover",
+    "/api/mcp/calls", "/api/project-groups", "/api/projects/x/roles", "/api/projects/x/mcp",
+    "/api/projects/x/workflows", "/api/projects/x/context", "/api/projects/x/tasks/T/evaluations",
+])
+def test_removed_console_endpoints_are_gone_not_hidden(client, path):
+    assert client.get(path).status_code == 404
+
+
+async def test_removed_mcp_tools_are_not_offered_and_the_goal_tools_are(tmp_path):
+    from ccc_mcp.interfaces.server import create_server
+
+    names = {tool.name for tool in await create_server(tmp_path / "h").list_tools()}
+    assert not names & {
+        "evaluate_task", "reevaluate_execution", "get_task_evaluations", "get_agent_reliability",
+        "list_installed_mcp_tools", "call_installed_mcp_tool"}
+    assert {"start_goal", "plan_goal", "control_goal", "get_goal", "get_work_overview",
+            "request_goal_approval"} <= names
+
+
+def test_removed_cli_commands_are_gone(tmp_path):
+    from typer.testing import CliRunner
+
+    from ccc_mcp.interfaces.cli import app
+
+    runner = CliRunner()
+    shown = runner.invoke(app, ["--home", str(tmp_path / "h"), "--help"]).output
+    for gone in ("reputation", "compare-tokens", "validate-scoring"):
+        assert gone not in shown
+    for argv in (["reputation"], ["compare-tokens"], ["validate-scoring"], ["mcp", "list"],
+                 ["skill", "discover"], ["goal", "phase-start"]):
+        result = runner.invoke(app, ["--home", str(tmp_path / "h"), *argv])
+        assert result.exit_code != 0, argv
+
+
+# --- Advanced: roles and workflow, folded into the project page -----------------------------------
+
+
+def test_the_project_page_can_still_set_roles_workflow_and_review_gate(tmp_path, client):
+    repo = mkrepo(tmp_path, "adv")
+    client.post("/api/projects/add", json={"path": str(repo), "id": "adv1"})
+    settings = client.get("/api/projects/adv1/settings").json()
+    assert {"standard", "full"} <= {f["id"] for f in settings["workflow_choices"]}
+
+    assert client.post("/api/projects/adv1/config/role", json={
+        "role": "REVIEW", "provider": "claude", "effort": "high", "model": "", "quota_fallback": "chatgpt",
+    }).status_code == 200
+    role = client.get("/api/projects/adv1/settings").json()["editable"]["roles"]["REVIEW"]
+    assert (role["provider"], role["effort"], role["quota_fallback"]) == ("claude", "high", "chatgpt")
+
+    assert client.post("/api/projects/adv1/config/workflow", json={"workflow": "full"}).status_code == 200
+    assert client.get("/api/projects/adv1/settings").json()["editable"]["workflow"] == "full"
+    gate = client.post("/api/projects/adv1/config/review-gate",
+                       json={"ar_strictness": "strict", "max_rounds": 3, "escalation": "ask_user"})
+    assert gate.status_code == 200
+    assert client.get("/api/projects/adv1/settings").json()["editable"]["review_gate"]["max_rounds"] == 3
+
+
+def test_the_role_and_workflow_routes_refuse_bad_input_and_anonymous_callers(tmp_path, client):
+    repo = mkrepo(tmp_path, "adv2")
+    client.post("/api/projects/add", json={"path": str(repo), "id": "adv2"})
+    for path, body in (("role", {"role": "NOPE", "provider": "codex"}),
+                       ("role", {"role": "SA", "provider": "codex", "approve": True}),
+                       ("workflow", {"workflow": "does-not-exist"}),
+                       ("review-gate", {"max_rounds": 99})):
+        assert client.post(f"/api/projects/adv2/config/{path}", json=body).status_code == 400, (path, body)
+        assert TestClient(client.app).post(f"/api/projects/adv2/config/{path}", json=body).status_code == 401

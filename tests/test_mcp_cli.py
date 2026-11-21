@@ -232,17 +232,14 @@ async def test_mcp_tool_schemas_and_no_fake_human_approval(bridge):
         "get_context",
         "propose_context_patch",
         "commit_context_patch",
-        "get_context_history",
         "build_handoff",
         "list_projects",
         "start_project_request",
-        "create_task",
         "advance_project",
         "dispatch_agent",
         "get_task_status",
         "get_task_result",
         "review_changes",
-        "get_approval_status",
         "recover_workers",
     }
     assert required <= names
@@ -322,7 +319,7 @@ async def test_chatgpt_discover_then_list_and_write_without_initialize(bridge, h
         assert discovered["_meta"]["io.modelcontextprotocol/serverInfo"]["name"] == "ccc-mcp"
         listing = await exchange("tools/list")
         names = {tool["name"] for tool in listing["tools"]}
-        assert {"start_project_request", "create_task"} <= names
+        assert {"start_project_request", "start_goal"} <= names
         assert "write_workspace" not in names
         read = await exchange(
             "tools/call",
@@ -332,19 +329,18 @@ async def test_chatgpt_discover_then_list_and_write_without_initialize(bridge, h
         started = await exchange(
             "tools/call",
             {
-                "name": "create_task",
+                "name": "start_project_request",
                 "arguments": {
                     "project_id": "demo",
                     "requirement": "Analyze app.py before changing it",
                     "acceptance": [],
-                    "task_id": "TASK-legacy-client",
+                    "wait_seconds": 5,
                 },
             },
         )
         assert not started["isError"], started
         assert started["structuredContent"]["sa_execution"]["status"] == "AWAITING_CHATGPT"
-        assert started["structuredContent"]["task_id"] == "TASK-0001"
-        assert started["structuredContent"]["requested_task_id_ignored"] == "TASK-legacy-client"
+        assert started["structuredContent"]["workstream"]["id"] == "TASK-0001"
         assert len(bridge.list_tasks("demo")) == 1
         assert bridge.read_workspace("demo", "app.py")["content"] == read["structuredContent"]["content"]
     finally:

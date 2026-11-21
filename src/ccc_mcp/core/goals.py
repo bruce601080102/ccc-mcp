@@ -50,6 +50,7 @@ from ..infra.errors import (
 from ..infra.security import canonical, redact, reject_secrets
 from ..infra.telemetry import PROCESS_OBSERVER, audit_scope, is_quota_error
 from .context import identifier
+from .flows import goal_blocker
 from .goal_plan import (
     MAX_PHASES,
     DeliveryPMReport,
@@ -191,6 +192,8 @@ class GoalHub:
             "author": json.loads(row["author"]), "based_on": row["based_on"],
             "change_request": row["change_request"], "message": row["message"],
             "created": row["created"], "phase_count": len(content["phases"]),
+            "teams": {key: {"name": team["name"], "builtin": team["builtin"]}
+                      for key, team in json.loads(row["team_snapshots"] or "{}").items()},
         }
 
     def _summary(self, conn, goal):
@@ -213,7 +216,8 @@ class GoalHub:
         ).fetchone()
         state = _state(goal, live, approval, goal_run)
         return {
-            "id": goal["id"], "project_id": goal["project_id"], "title": goal["title"],
+            "id": goal["id"], "project_id": goal["project_id"],
+            "title": goal.get("display_title") or goal["title"],
             "state": state, "current_version": goal["current_version"],
             "approved_version": approval["plan_version"] if approval else None,
             "created": goal["created"], "updated": goal["updated"],
@@ -355,6 +359,21 @@ class GoalHub:
                             {"title": title, "requirement": requirement})
         return {**self.get_goal(project_id, goal_id), "created_now": created}
 
+    def rename_goal(self, project_id, goal_id, title):
+        """Change the name a goal is shown under. The original title and the requirement stay as
+        they were written; only `display_title` moves, and the change is an event."""
+        self.project(project_id)
+        title = _clean(title, "Title", TITLE_MAX)
+        reject_secrets(title)
+        actor = self._goal_actor()
+        with self.store.transaction() as conn:
+            goal = self._goal(conn, project_id, goal_id)
+            conn.execute(
+                "UPDATE goals SET display_title=?,updated=? WHERE project_id=? AND id=?",
+                (title, now(), project_id, goal["id"]))
+            self._event(conn, project_id, goal["id"], "renamed", actor, {"title": title})
+        return self.get_goal(project_id, goal_id)
+
     def cancel_goal(self, project_id, goal_id, reason=""):
         """Cancel a goal for good. Its history stays; a planning run in progress is stopped."""
         self.project(project_id)
@@ -414,11 +433,50 @@ class GoalHub:
 
     # ---- plan versions ----------------------------------------------------------------------
 
+    def selected_workflow_for_plans(self, project_id):
+        """The team selected by the local operator for phases with no explicit workflow."""
+        return self.get_project_settings(project_id)["workflow"]
+
+    def _with_project_workflow(self, project_id, plan):
+        """A plan written in a chat may say `workflow: "default"` (or leave it out): that phase then
+        runs the team selected in this project, including the person's own workflows and roles."""
+        if not isinstance(plan, dict) or not isinstance(plan.get("phases"), list):
+            return plan
+        chosen = self.selected_workflow_for_plans(project_id)
+        phases = [
+            {**phase, "workflow": chosen}
+            if isinstance(phase, dict) and phase.get("workflow") in (None, "", "default") else phase
+            for phase in plan["phases"]
+        ]
+        return {**plan, "phases": phases}
+
+    @staticmethod
+    def goal_plan_workflow(version, workflow):
+        snapshots = version.get("team_snapshots")
+        return json.loads(snapshots).get(workflow) if snapshots else None
+
     def _known_workflows(self, project_id):
         return {
             flow["id"] for flow in self.workflow_catalog(project_id)["workflows"]
-            if not flow.get("legacy")
         }
+
+    def _checked_plan(self, project_id, plan):
+        """Validate a plan, and refuse it now if a phase names a team that could never run it, so a
+        person is told when the plan is written, not after approving it and pressing start."""
+        model = validate_plan(plan, known_workflows=self._known_workflows(project_id))
+        catalog = {flow["id"]: flow for flow in self.workflow_catalog(project_id)["workflows"]}
+        problems = {}
+        for phase in model.phases:
+            blocker = goal_blocker(catalog[phase.workflow])
+            if blocker:
+                problems.setdefault(phase.workflow, (blocker, []))[1].append(phase.id)
+        if problems:
+            raise GoalPlanInvalid([
+                f"{blocker} (phases: {', '.join(ids)}). Choose a team with a developer step, or "
+                "change the project's selected team"
+                for blocker, ids in problems.values()
+            ])
+        return model
 
     def _commit_plan_version(
         self, conn, project_id, goal_id, model, *, source, author, based_on, expect_current,
@@ -438,11 +496,18 @@ class GoalHub:
         text, digest = plan_content(model)
         version = goal["current_version"] + 1
         stamp = now()
+        snapshots = {
+            workflow: self.freeze_workflow(
+                conn, project_id, (workflow, "goal_plan", "Selected in the goal plan")
+            )
+            for workflow in dict.fromkeys(phase.workflow for phase in model.phases)
+        }
         conn.execute(
             "INSERT INTO goal_plan_versions(project_id,goal_id,version,content,sha256,source,"
-            "author,based_on,change_request,message,run_id,created) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            "author,based_on,change_request,message,run_id,created,team_snapshots) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (project_id, goal["id"], version, text, digest, source, canonical(author), based_on,
-             change_request, message, run_id, stamp),
+             change_request, message, run_id, stamp, canonical(snapshots)),
         )
         for ordinal, phase_id, title, depends_on, content in phase_rows(model):
             conn.execute(
@@ -479,14 +544,16 @@ class GoalHub:
             raise BridgeError("base_version must be the current plan version (0 if there is none)")
         note = _clean(note or "", "Note", NOTE_MAX, required=False)
         reject_secrets(note)
-        model = validate_plan(plan, known_workflows=self._known_workflows(project_id))
         identity = self._goal_actor()
-        with self.store.transaction() as conn:
-            version, digest = self._commit_plan_version(
-                conn, project_id, goal_id, model, source="manual",
-                author={"kind": "manual", "identity": identity}, based_on=base_version,
-                expect_current=base_version, change_request=None, message=note or None,
-            )
+        with self.lock(project_id):
+            plan = self._with_project_workflow(project_id, plan)
+            model = self._checked_plan(project_id, plan)
+            with self.store.transaction() as conn:
+                version, digest = self._commit_plan_version(
+                    conn, project_id, goal_id, model, source="manual",
+                    author={"kind": "manual", "identity": identity}, based_on=base_version,
+                    expect_current=base_version, change_request=None, message=note or None,
+                )
         return {"version": version, "sha256": digest, "goal": self.get_goal(project_id, goal_id)}
 
     # ---- approval ---------------------------------------------------------------------------
@@ -797,16 +864,26 @@ class GoalHub:
                 "AND version=?", (project_id, goal["id"], run["base_version"]),
             )
             prior = json.loads(row["content"]) if row else None
-        catalog = self.workflow_catalog(project_id)["workflows"]
-        workflows = [
-            {"id": flow["id"], "name": flow["name"], "summary": flow.get("summary", ""),
-             "steps": [step["role"] for step in flow["steps"]]}
-            for flow in catalog if not flow.get("legacy")
-        ]
-        language = self.get_project_settings(project_id)["language"]
+        catalog = self.workflow_catalog(project_id)
+        settings = self.get_project_settings(project_id)
+        directory = {role["id"]: role for role in catalog["custom_roles"]}
+        workflows = []
+        for flow in catalog["workflows"]:
+            team = []
+            for step in flow["steps"]:
+                custom = directory.get(step.get("role_ref"))
+                runtime = (custom or {}).get("runtime") or settings["roles"][step["role"]]
+                team.append({"role": step["role"], "provider": runtime["provider"],
+                             "name": custom["name"] if custom else step["role"],
+                             "status": custom["status"] if custom else "active"})
+            workflows.append({"id": flow["id"], "name": flow["name"],
+                              "summary": flow.get("summary", ""), "steps": team,
+                              "goal_ready": goal_blocker(flow) is None})
+        language = settings["language"]
         content = {
             "goal": {"id": goal["id"], "title": goal["title"], "requirement": goal["requirement"]},
-            "workflows": workflows, "base_plan": prior, "change_request": run["request"],
+            "workflows": workflows, "selected_workflow": self.selected_workflow_for_plans(project_id),
+            "base_plan": prior, "change_request": run["request"],
             "limits": {"max_phases": MAX_PHASES},
         }
         return content, language
@@ -824,7 +901,10 @@ class GoalHub:
             "not use a fixed template. A phase is a stage that can be accepted on its own. Give each "
             "phase a short unique id, its scope, what it delivers (outputs), the ids of the phases it "
             "depends on (no cycles; an empty list for none), the workflow to use (one id from "
-            "context_package.content.workflows), a risk level, and acceptance criteria.\n"
+            "context_package.content.workflows; use selected_workflow unless the user explicitly "
+            "asked to use another team; only a workflow with goal_ready true can run a phase, "
+            "because a phase is accepted on host tests of what a developer changed), a risk "
+            "level, and acceptance criteria.\n"
             "Every criterion needs a verify block. Use kind host_test or host_command for anything a "
             "command can check: give `command` as an argument list (program first, never a shell "
             "string, no pipes or redirects, no git changes, no network or publishing tools) and "
@@ -954,8 +1034,8 @@ class GoalHub:
             message = parsed.message.strip()
             if not message or len(message) > 2000:
                 raise GoalPlanInvalid(["message must be 1 to 2000 characters"])
-            model = validate_plan(
-                parsed.plan.model_dump(), known_workflows=self._known_workflows(project_id))
+            model = self._checked_plan(
+                project_id, self._with_project_workflow(project_id, parsed.plan.model_dump()))
         except GoalPlanInvalid as exc:
             self._finish_run(run_id, "FAILED", "INVALID_OUTPUT", str(exc)[:1500], raw,
                              invocation=audit)
@@ -971,7 +1051,7 @@ class GoalHub:
                   "cli_version": audit.get("cli_version"),
                   "model": json.loads(run["settings"]).get("model")}
         try:
-            with self.store.transaction() as conn:
+            with self.lock(project_id), self.store.transaction() as conn:
                 live = conn.execute(
                     "SELECT * FROM goal_plan_runs WHERE id=?", (run_id,)).fetchone()
                 if live["status"] not in LIVE:

@@ -1,3 +1,0 @@
-[
-  {"old_key": "notes/storage.py::NotesStore.load_json", "new_key": "notes/migrate.py::JsonImporter.read", "decision": "confirm"}
-]

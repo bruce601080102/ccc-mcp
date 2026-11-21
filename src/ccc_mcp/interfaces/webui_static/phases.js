@@ -5,6 +5,8 @@
 // server is put into the page through esc(), never as raw markup.
 window.cccPhases = function (ctx) {
   "use strict";
+  // Assigning onclick replaces the previous handler, so binding again after an in-place update never stacks them.
+  const click = (element, handler) => { element.onclick = handler; };
   const { api, esc, UI, toast, showModal, whenHtml } = ctx;
   const T = (text) => esc(UI.translate(text));
 
@@ -126,7 +128,7 @@ window.cccPhases = function (ctx) {
       ["Plan hash (sha256)", run.plan_sha256], ["Approval", run.approval_id],
       ["Workflow", run.workflow_id], ["Test command", (run.test_command || []).join(" ")]];
     const executions = run.executions.map((e) => `<tr><td class="mono">${esc(e.id)}</td><td>${esc(e.role)}</td><td>${esc(e.agent)}</td><td>${esc(e.status)}</td></tr>`).join("");
-    const repairs = run.repairs.map((r) => `<li class="mono">${esc(r.id)} · ${esc(r.status)} · ${T("evidence hash")} ${esc(r.input_sha256)}${r.message_to_developer ? `<details><summary>${T("What the developer was told")}</summary>${codeBlock(r.message_to_developer)}</details>` : ""}</li>`).join("");
+    const repairs = run.repairs.map((r) => `<li class="mono">${esc(r.id)} · ${T(r.status)} · ${T("evidence hash")} ${esc(r.input_sha256)}${r.message_to_developer ? `<details><summary>${T("What the developer was told")}</summary>${codeBlock(r.message_to_developer)}</details>` : ""}</li>`).join("");
     return `<details class="goal-advanced phase-evidence"><summary>${T("Technical evidence")}</summary>
       <dl>${rows.map(([k, v]) => `<dt>${T(k)}</dt><dd class="mono">${esc(v)}</dd>`).join("")}</dl>
       ${host ? `<h4>${T("Latest host test")}</h4><p class="mono">${esc((host.command || []).join(" "))} · ${host.passed ? T("passed") : T("did not pass")}</p>${codeBlock((host.stdout || "") + (host.stderr ? "\n" + host.stderr : ""))}` : ""}
@@ -167,17 +169,6 @@ window.cccPhases = function (ctx) {
 
   function runsOf(goal) { return goal.phase_runs || []; }
 
-  function startHtml(goal, phase) {
-    if (goal.state !== "READY") return "";
-    const run = runsOf(goal).find((r) => r.phase_id === phase.id);
-    if (run) return `<div class="goal-phase-run">${runPill(run.status)} <button class="btn small" data-phase-show="${esc(run.id)}" type="button">${T("Show what happened")}</button></div>`;
-    const open = runsOf(goal).some((r) => OPEN.includes(r.status));
-    const blocked = phase.depends_on.filter((id) => !runsOf(goal).some((r) => r.phase_id === id && r.status === "PASSED"));
-    if (open) return `<div class="muted">${T("Another phase is still open.")}</div>`;
-    if (blocked.length) return `<div class="muted">${T("Waits for")} ${blocked.map(esc).join(", ")}</div>`;
-    return `<div class="goal-buttons"><button class="btn primary small" data-phase-start="${esc(phase.id)}" type="button">${T("Run this phase")}</button></div>`;
-  }
-
   async function load(path, goal) {
     const runs = await Promise.all(runsOf(goal).map((r) =>
       api(`/projects/${encodeURIComponent(goal.project_id)}/phase-runs/${encodeURIComponent(r.id)}`)));
@@ -203,24 +194,9 @@ window.cccPhases = function (ctx) {
       await reload();
     };
     root.querySelectorAll("[data-phase-show]").forEach((button) => {
-      button.addEventListener("click", () => {
+      click(button, () => {
         const panel = root.querySelector(`[data-run="${CSS.escape(button.dataset.phaseShow)}"]`);
         if (panel) panel.scrollIntoView({ behavior: "smooth", block: "start" });
-      });
-    });
-    root.querySelectorAll("[data-phase-start]").forEach((button) => {
-      button.addEventListener("click", () => {
-        const phase = button.dataset.phaseStart;
-        showModal({
-          title: "Run this phase",
-          body: "The developer role will change the project's files, and the project's own test command will run on your computer. Only this phase runs; attempts, agent runs and minutes are limited. Nothing is committed or pushed.",
-          confirmLabel: "Run this phase",
-          onSubmit: async () => {
-            await api(`${base}/goals/${encodeURIComponent(goal.id)}/phases/${encodeURIComponent(phase)}/start`, { method: "POST", body: {} });
-            toast("Phase started.");
-            await reload();
-          },
-        });
       });
     });
     root.querySelectorAll("[data-run]").forEach((panel) => {
@@ -228,7 +204,7 @@ window.cccPhases = function (ctx) {
       const url = (action) => `${base}/phase-runs/${encodeURIComponent(id)}/${action}`;
       const run = (env.runs || []).find((r) => r.id === id) || {};
       panel.querySelectorAll("[data-phase-act]").forEach((button) => {
-        button.addEventListener("click", () => {
+        click(button, () => {
           const act = button.dataset.phaseAct;
           if (act === "pause") send(url("pause"));
           else if (act === "recover") send(`${base}/phase-runs/recover`);
@@ -273,5 +249,5 @@ window.cccPhases = function (ctx) {
     });
   }
 
-  return { panelHtml, startHtml, load, signature, anyActive, bind, runsOf };
+  return { panelHtml, load, signature, anyActive, bind, runsOf };
 };

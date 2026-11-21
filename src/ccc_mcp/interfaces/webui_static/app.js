@@ -26,12 +26,15 @@
       headers["Content-Type"] = "application/json";
       body = JSON.stringify(body);
     }
-    const res = await fetch("/api" + path, { method: opts.method || "GET", headers, body });
+    const method = opts.method || "GET";
+    // A stalled read must release the background poll. Mutating requests are never retried here.
+    const signal = method === "GET" ? AbortSignal.timeout(8000) : undefined;
+    const res = await fetch("/api" + path, { method, headers, body, signal });
     const text = await res.text();
     let data = null;
     try { data = text ? JSON.parse(text) : null; } catch (e) { data = { error: text }; }
     if (!res.ok) {
-      const err = new Error((data && data.error) || ("Request failed: " + res.status));
+      const err = new Error(UI.error(data?.error || ("Request failed: " + res.status), res.status));
       err.status = res.status;
       err.path = "/api" + path;
       throw err;
@@ -64,15 +67,6 @@
     return `<time datetime="${esc(iso)}" title="${esc(date.toLocaleString(locale))}" data-no-i18n>${esc(text)}</time>`;
   }
 
-  // A project's icon in lists: a pixel character or a short text/emoji in a color, else its first letter.
-  const ICON_TONES = ["green", "blue", "violet", "rose", "orange", "amber", "teal", "slate"];
-  function projectIconHtml(id, icon, size = "small") {
-    const tone = icon && icon.tone ? ` tone-${icon.tone}` : "";
-    if (icon && icon.avatar) return `<span class="project-avatar project-sprite ${size}${tone}" aria-hidden="true">${spriteFor(icon.avatar)}</span>`;
-    const text = icon && icon.text ? icon.text : id.slice(0, 1).toUpperCase();
-    return `<span class="project-avatar ${size}${tone}${icon && icon.text ? " is-text" : ""}" aria-hidden="true" data-no-i18n>${esc(text)}</span>`;
-  }
-
   // A page-shaped placeholder: the layout does not jump when real content arrives.
   const loadingView = () => `<div class="loading-skeleton" role="status" aria-live="polite"><span class="sr-only">${esc(UI.translate("Loading…"))}</span><div class="sk sk-title"></div><div class="sk sk-line"></div><div class="sk sk-card"></div><div class="sk sk-card short"></div></div>`;
 
@@ -93,7 +87,7 @@
       document.body.appendChild(el);
     }
     el.className = "toast" + (isError ? " error" : "");
-    el.textContent = UI.translate(message);
+    el.textContent = isError ? UI.error(message) : UI.translate(message);
     el.style.display = "block";
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => { el.style.display = "none"; }, 4200);
@@ -120,7 +114,7 @@
   document.addEventListener("keydown", (event) => {
     const overlay = document.getElementById("modal-overlay");
     if (!overlay) return;
-    if (event.key === "Escape") { closeModal(); return; }
+    if (event.key === "Escape") { if (!overlay.querySelector("#modal-confirm:disabled")) closeModal(); return; }
     if (event.key !== "Tab") return;
     const focusable = [...overlay.querySelectorAll('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex="-1"])')]
       .filter((element) => element.getClientRects().length);
@@ -211,42 +205,43 @@
   let renderGen = 0;
   function stale(gen) { return gen !== renderGen; }
 
+  const GOAL_ID = /^GOAL-\d+$/;
+  const LAST_PROJECT_KEY = "ccc_last_project";
+  const rememberProject = (id) => { try { localStorage.setItem(LAST_PROJECT_KEY, id); } catch (e) {} };
+  const rememberedProject = () => { try { return localStorage.getItem(LAST_PROJECT_KEY) || ""; } catch (e) { return ""; } };
+
+  // The console has three places: Tasks (every piece of work, grouped), Projects (what ccc-mcp may
+  // touch) and Settings (the connection to ChatGPT and the AI tools). Old addresses still resolve,
+  // to the page that now holds that content; they never open a second way of doing the same thing.
   function parseRoute() {
     const hash = location.hash.replace(/^#/, "") || "/";
-    const [path, query] = hash.split("?", 2);
-    const parts = path.split("/").filter(Boolean);
-    if (parts[0] === "docs") return { view: "docs", sub: parts[1] || "README", anchor: new URLSearchParams(query || "").get("anchor") };
+    const parts = hash.split("?", 2)[0].split("/").filter(Boolean);
     if (parts[0] === "p" && parts[1]) {
-      return { project: decodeURIComponent(parts[1]), view: parts[2] || "overview", sub: parts[3] ? decodeURIComponent(parts[3]) : undefined };
+      const project = decodeURIComponent(parts[1]);
+      const view = parts[2] || "overview";
+      const sub = parts[3] ? decodeURIComponent(parts[3]) : undefined;
+      if (view === "tasks" || view === "goals") {
+        if (sub && GOAL_ID.test(sub)) return { project, view: "goal", sub };
+        return { project, view: sub ? "task" : "tasks", sub };
+      }
+      return { project, view: "overview" };
     }
-    if (parts[0] === "start") return { view: "start", sub: parts[1] ? decodeURIComponent(parts[1]) : undefined };
-    if (parts[0] === "demo") return { view: "demo" };
-    if (parts[0] === "connect") return { view: "connect" };
-    if (parts[0] === "global-skills") return { view: "global-skills" };
-    if (parts[0] === "dashboard") return { view: "dashboard" };
+    if (parts[0] === "tasks") return { view: "tasks-home" };
+    if (parts[0] === "settings" || parts[0] === "connect") return { view: "settings" };
     return { view: "projects" };
   }
-
+  const routeKey = (r) => [r.view, r.project || "", r.sub || ""].join("|");
   function navTo(path) { location.hash = path; }
 
   const ICON = {
     projects: `<svg class="icon" viewBox="0 0 16 16"><path d="M1.5 4.5a1 1 0 0 1 1-1h3l1.2 1.5H13.5a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1v-7.5Z"/></svg>`,
-    dashboard: `<svg class="icon" viewBox="0 0 16 16"><path d="M2 13.5h12M3.5 11V8M7.5 11V4M11.5 11V6"/><path d="M3.5 8h2v3h-2zM7.5 4h2v7h-2zM11.5 6h2v5h-2z"/></svg>`,
-    overview: `<svg class="icon" viewBox="0 0 16 16"><path d="M2 8.5 8 3l6 5.5"/><path d="M3.5 7.5V13a.5.5 0 0 0 .5.5h3v-4h2v4h3a.5.5 0 0 0 .5-.5V7.5"/></svg>`,
     tasks: `<svg class="icon" viewBox="0 0 16 16"><path d="M3 4.5h10M3 8h10M3 11.5h6"/></svg>`,
-    goals: `<svg class="icon" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5"/><circle cx="8" cy="8" r="2.2"/></svg>`,
     settings: `<svg class="icon" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.1"/><path d="M8 2v1.6M8 12.4V14M13.3 5.3l-1.3.8M4 9.9l-1.3.8M14 8h-1.6M3.6 8H2M13.3 10.7l-1.3-.8M4 6.1l-1.3-.8"/></svg>`,
-    context: `<svg class="icon" viewBox="0 0 16 16"><path d="M4 1.8h5.5L12.3 4.5V14a.5.5 0 0 1-.5.5h-7.8a.5.5 0 0 1-.5-.5V2.3a.5.5 0 0 1 .5-.5Z"/><path d="M6 8h4M6 10.3h4"/></svg>`,
-    skills: `<svg class="icon" viewBox="0 0 16 16"><path d="M5.7 2.3a1.3 1.3 0 0 1 2.6 0c0 .5-.3.8-.3 1.3 0 .4.3.7.7.7h1.6a.7.7 0 0 1 .7.7v1.6c0 .4.3.7.7.7.5 0 .8-.3 1.3-.3a1.3 1.3 0 0 1 0 2.6c-.5 0-.8-.3-1.3-.3-.4 0-.7.3-.7.7v1.6a.7.7 0 0 1-.7.7H8.7c-.4 0-.7-.3-.7-.7 0-.5.3-.8.3-1.3a1.3 1.3 0 0 0-2.6 0c0 .5.3.8.3 1.3 0 .4-.3.7-.7.7H3.7a.7.7 0 0 1-.7-.7v-1.6c0-.4-.3-.7-.7-.7-.5 0-.8.3-1.3.3a1.3 1.3 0 0 1 0-2.6c.5 0 .8.3 1.3.3.4 0 .7-.3.7-.7V5c0-.4.3-.7.7-.7h1.6c.4 0 .7-.3.7-.7 0-.5-.3-.8-.3-1.3Z"/></svg>`,
-    docs: `<svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3.5c-2-1-4-1-6-.5v9.5c2-.5 4-.5 6 .5 2-1 4-1 6-.5V3c-2-.5-4-.5-6 .5Z"/><path d="M8 3.5V13"/></svg>`,
-    connect: `<svg class="icon" viewBox="0 0 16 16"><path d="M6.3 9.7 3.9 12a2 2 0 1 1-2.8-2.8l2.3-2.4M9.7 6.3 12 3.9a2 2 0 1 1 2.8 2.8l-2.3 2.4M5.5 10.5l5-5"/></svg>`,
     up: `<svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 13V3M4.5 6.5 8 3l3.5 3.5"/></svg>`,
     down: `<svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10m-3.5-3.5L8 13l3.5-3.5"/></svg>`,
     back: `<svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M13 8H3m3.5-3.5L3 8l3.5 3.5"/></svg>`,
     sun: `<svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="3"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.5 3.5l1.4 1.4M11.1 11.1l1.4 1.4M3.5 12.5l1.4-1.4M11.1 4.9l1.4-1.4"/></svg>`,
     moon: `<svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M13.5 9.5A5.8 5.8 0 0 1 6.5 2.5 5.8 5.8 0 1 0 13.5 9.5Z"/></svg>`,
-    studio: `<svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="5" r="2.6"/><path d="M2.8 13.5c.4-2.6 2.4-4 5.2-4s4.8 1.4 5.2 4"/><path d="M12.6 1.8v2.4M11.4 3h2.4"/></svg>`,
-    start: `<svg class="icon" viewBox="0 0 16 16"><path d="M8 1.5c2 2 3 4.3 3 6.5a3 3 0 1 1-6 0c0-2.2 1-4.5 3-6.5Z"/><path d="M5.3 11.3 4 14.5l3-1 1 1 1-1 3 1-1.3-3.2"/></svg>`,
   };
 
   function currentTheme() {
@@ -261,7 +256,7 @@
   let providerInfoCache = {};
   let activeTimers = [];
   function stopPolling() {
-    activeTimers.forEach(clearInterval);
+    activeTimers.forEach((timer) => (typeof timer === "object" ? timer.stop() : clearInterval(timer)));
     activeTimers = [];
   }
   function trackTimer(id) {
@@ -269,37 +264,47 @@
     return id;
   }
 
-  /** Quietly re-fetches `fetchFn` every `intervalMs` and, the first time the result
-   * differs from what the page last showed, surfaces a small "new data" banner
-   * instead of silently replacing content under the user (which could wipe an
-   * open dropdown, an in-progress drag, or text they are mid-typing). Clicking
-   * the banner runs `onReload`, normally the same render* function that built
-   * the current page. This is the "auto-detect environment changes and offer to
-   * reload" behavior — detection is automatic, applying the change is not. */
-  function watchForChanges(gen, fetchFn, onReload, intervalMs = 8000) {
-    let baseline = null;
-    trackTimer(setInterval(async () => {
-      if (stale(gen)) return;
-      let fresh;
-      try { fresh = await fetchFn(); } catch (e) { return; }
-      const serialized = JSON.stringify(fresh);
-      if (baseline === null) { baseline = serialized; return; }
-      if (serialized !== baseline && !document.getElementById("reload-banner")) {
-        showReloadBanner(onReload);
-      }
-    }, intervalMs));
+  // ---- background updates ----------------------------------------------------------------
+  // A page never reloads to show new information. It asks the server cheaply whether anything
+  // changed (`tick`) and patches only what moved. A failed request keeps the screen exactly as it
+  // is, retries with a growing delay, and shows a small "reconnecting" note until one succeeds.
+  function setOffline(offline) {
+    let note = document.getElementById("live-offline");
+    if (!offline) { if (note) note.remove(); return; }
+    if (note) return;
+    note = document.createElement("div");
+    note.id = "live-offline";
+    note.className = "live-offline";
+    note.setAttribute("role", "status");
+    note.textContent = UI.translate("Reconnecting… the page below is the last saved state.");
+    document.body.appendChild(note);
   }
 
-  function showReloadBanner(onReload) {
-    if (document.getElementById("reload-banner")) return;
-    const content = document.querySelector(".content");
-    if (!content) return;
-    const banner = document.createElement("div");
-    banner.id = "reload-banner";
-    banner.className = "reload-banner";
-    banner.innerHTML = `<span><span class="status-dot pending"></span> ${esc(UI.translate("New data is available."))}</span><button class="btn small primary" id="reload-banner-btn">${esc(UI.translate("Refresh"))}</button>`;
-    content.prepend(banner);
-    document.getElementById("reload-banner-btn").addEventListener("click", onReload);
+  function livePoll(gen, tick, interval) {
+    interval = interval || 2500;
+    let delay = interval, failures = 0, timer = null, running = false, stopped = false;
+    const schedule = () => {
+      if (stopped || stale(gen)) return;
+      timer = setTimeout(run, document.hidden ? Math.max(delay, 10000) : delay);
+    };
+    const run = async () => {
+      if (stopped || stale(gen) || running) return;
+      running = true;
+      try { await tick(); failures = 0; delay = interval; setOffline(false); }
+      catch (err) { failures += 1; delay = Math.min(30000, interval * 2 ** failures); if (failures >= 2) setOffline(true); }
+      finally { running = false; schedule(); }
+    };
+    const onVisible = () => { if (!document.hidden && !running) { clearTimeout(timer); run(); } };
+    document.addEventListener("visibilitychange", onVisible);
+    trackTimer({ stop: () => { stopped = true; clearTimeout(timer); document.removeEventListener("visibilitychange", onVisible); setOffline(false); } });
+    schedule();
+    return { now: run };
+  }
+
+  // Update the page that is on screen without touching what the person is doing in it.
+  function morphContent(html) {
+    const content = document.querySelector("#sheet .content");
+    if (content) window.cccMorph.morph(content, html, UI.localize);
   }
 
   async function refreshConnectDot() {
@@ -310,65 +315,76 @@
     dot.className = "dot" + (lastConnectStatus.state === "connected" ? " on" : lastConnectStatus.state === "error" ? " err" : "");
   }
 
-  function layout(contentHtml, opts) {
-    const narrow = opts && opts.narrow;
-    stopPolling();
-    const currentRoute = parseRoute();
-    const currentProjectId = currentRoute.project || null;
-    const p = currentProjectId ? encodeURIComponent(currentProjectId) : "";
-    const projectNav = currentProjectId ? `
-      <div class="nav-group-label">${esc(currentProjectId)}</div>
-      <a class="nav-item ${currentRoute.view === "overview" ? "active" : ""}" href="#/p/${p}/overview">${ICON.overview}Overview</a>
-      <a class="nav-item ${currentRoute.view === "tasks" ? "active" : ""}" href="#/p/${p}/tasks">${ICON.tasks}Tasks</a>
-      <a class="nav-item ${currentRoute.view === "goals" ? "active" : ""}" href="#/p/${p}/goals">${ICON.goals}Goals</a>
-      <a class="nav-item ${currentRoute.view === "settings" ? "active" : ""}" href="#/p/${p}/settings">${ICON.settings}Settings</a>
-      <a class="nav-item ${currentRoute.view === "roles" ? "active" : ""}" href="#/p/${p}/roles">${ICON.studio}Role Studio</a>
-      <a class="nav-item ${currentRoute.view === "context" ? "active" : ""}" href="#/p/${p}/context">${ICON.context}Context</a>
-      <a class="nav-item ${currentRoute.view === "skills" ? "active" : ""}" href="#/p/${p}/skills">${ICON.skills}Skills &amp; MCP</a>
-    ` : "";
-    const dotClass = "dot" + (lastConnectStatus && lastConnectStatus.state === "connected" ? " on" : lastConnectStatus && lastConnectStatus.state === "error" ? " err" : "");
-    root.innerHTML = `
-      <button type="button" class="skip-link" id="skip-link">Skip to content</button>
-      <nav class="sidebar" aria-label="Main">
-        <div class="brand"><span class="mark">C</span><span>ccc-mcp<small>CONTROL CENTER <span id="app-version" data-no-i18n>${appVersion ? `· v${esc(appVersion)}` : ""}</span></small></span></div>
-        <a class="nav-item ${currentRoute.view === "start" ? "active" : ""}" href="#/start">${ICON.start}Get started</a>
-        <a class="nav-item ${currentRoute.view === "projects" ? "active" : ""}" href="#/">${ICON.projects}All projects</a>
-        <a class="nav-item ${currentRoute.view === "dashboard" ? "active" : ""}" href="#/dashboard">${ICON.dashboard}Command center</a>
-        <a class="nav-item ${currentRoute.view === "global-skills" ? "active" : ""}" href="#/global-skills">${ICON.skills}Global Skills</a>
-        ${projectNav}
-        <div class="nav-group-label">&nbsp;</div>
-        <a class="nav-item ${currentRoute.view === "connect" ? "active" : ""}" href="#/connect">${ICON.connect}Connect<span id="nav-connect-dot" class="${dotClass}"></span></a>
-        <a class="nav-item ${currentRoute.view === "docs" ? "active" : ""}" href="#/docs">${ICON.docs}Documentation</a>
-        <div class="sidebar-spacer"></div>
-        <button type="button" id="theme-toggle" class="nav-item" aria-pressed="${currentTheme() === "dark"}" aria-label="Toggle dark mode">${currentTheme() === "dark" ? ICON.moon : ICON.sun}<span>Dark mode</span><span class="dot${currentTheme() === "dark" ? " on" : ""}"></span></button>
-        <div class="sidebar-locale"><span>Interface language</span><select id="ui-locale" aria-label="Interface language"><option value="zh-TW">繁體中文</option><option value="en">English</option></select></div>
-        <div class="sidebar-foot">LOCAL CONSOLE <span class="status-dot on"></span></div>
-      </nav>
-      <div class="frame"><main class="sheet" id="sheet" tabindex="-1"><div class="content${narrow ? " narrow" : ""}${opts && opts.contentClass ? " " + opts.contentClass : ""}">${contentHtml}</div></main></div>
-    `;
-    document.getElementById("skip-link").addEventListener("click", () => document.getElementById("sheet").focus());
-    // On a phone the sidebar is a horizontal strip; keep the current page visible in it.
+  // The sidebar is built once and only its highlight changes when you move between pages, so
+  // navigating never rebuilds the frame around the page.
+  let shellLocale = null;
+  function ensureShell() {
+    const r = parseRoute();
+    if (!document.getElementById("sheet") || shellLocale !== UI.getLocale()) {
+      shellLocale = UI.getLocale();
+      const dotClass = "dot" + (lastConnectStatus && lastConnectStatus.state === "connected" ? " on" : lastConnectStatus && lastConnectStatus.state === "error" ? " err" : "");
+      root.innerHTML = `
+        <button type="button" class="skip-link" id="skip-link">Skip to content</button>
+        <nav class="sidebar" aria-label="Main">
+          <div class="brand"><span class="mark">C</span><span>ccc-mcp<small>CONTROL CENTER <span id="app-version" data-no-i18n>${appVersion ? `· v${esc(appVersion)}` : ""}</span></small></span></div>
+          <a class="nav-item" data-nav="tasks" href="#/tasks">${ICON.tasks}Tasks<span id="nav-needs-badge" class="nav-badge" hidden></span></a>
+          <a class="nav-item" data-nav="projects" href="#/">${ICON.projects}Projects</a>
+          <a class="nav-item" data-nav="settings" href="#/settings">${ICON.settings}Settings<span id="nav-connect-dot" class="${dotClass}"></span></a>
+          <div class="sidebar-spacer"></div>
+          <button type="button" id="theme-toggle" class="nav-item" aria-pressed="${currentTheme() === "dark"}" aria-label="Toggle dark mode">${currentTheme() === "dark" ? ICON.moon : ICON.sun}<span>Dark mode</span><span class="dot${currentTheme() === "dark" ? " on" : ""}"></span></button>
+          <div class="sidebar-locale"><span>Interface language</span><select id="ui-locale" aria-label="Interface language"><option value="zh-TW">繁體中文</option><option value="en">English</option></select></div>
+          <div class="sidebar-foot">LOCAL CONSOLE <span class="status-dot on"></span></div>
+        </nav>
+        <div class="frame"><main class="sheet" id="sheet" tabindex="-1"><div class="content"></div></main></div>
+      `;
+      document.getElementById("skip-link").addEventListener("click", () => document.getElementById("sheet").focus());
+      const localeSelect = document.getElementById("ui-locale");
+      localeSelect.value = UI.getLocale();
+      localeSelect.addEventListener("change", () => {
+        UI.setLocale(localeSelect.value);
+        closeModal();
+        route();
+      });
+      const themeToggle = document.getElementById("theme-toggle");
+      themeToggle.addEventListener("click", () => {
+        const next = currentTheme() === "dark" ? "light" : "dark";
+        setTheme(next);
+        themeToggle.setAttribute("aria-pressed", String(next === "dark"));
+        themeToggle.innerHTML = `${next === "dark" ? ICON.moon : ICON.sun}<span>${UI.translate("Dark mode")}</span><span class="dot${next === "dark" ? " on" : ""}"></span>`;
+      });
+      UI.localize(root);
+    }
+    const active = r.view === "settings" ? "settings" : ["projects", "overview"].includes(r.view) ? "projects" : "tasks";
+    root.querySelectorAll(".sidebar .nav-item[data-nav]").forEach((item) => item.classList.toggle("active", item.dataset.nav === active));
     const activeNav = root.querySelector(".sidebar .nav-item.active");
     if (activeNav && activeNav.scrollIntoView) activeNav.scrollIntoView({ block: "nearest", inline: "center" });
-    const localeSelect = document.getElementById("ui-locale");
-    localeSelect.value = UI.getLocale();
-    localeSelect.addEventListener("change", () => {
-      UI.setLocale(localeSelect.value);
-      closeModal();
-      route();
-    });
-    const themeToggle = document.getElementById("theme-toggle");
-    themeToggle.addEventListener("click", () => {
-      const next = currentTheme() === "dark" ? "light" : "dark";
-      setTheme(next);
-      themeToggle.setAttribute("aria-pressed", String(next === "dark"));
-      themeToggle.innerHTML = `${next === "dark" ? ICON.moon : ICON.sun}<span>${UI.translate("Dark mode")}</span><span class="dot${next === "dark" ? " on" : ""}"></span>`;
-    });
-    UI.localize(root);
+  }
+
+  let lastRouteKey = "";
+  const isLoading = (html) => html.includes("loading-skeleton");
+  function layout(contentHtml, opts) {
+    opts = opts || {};
+    const r = parseRoute();
+    if (r.project) rememberProject(r.project);
+    const key = routeKey(r);
+    stopPolling();
+    ensureShell();
+    const sheet = document.getElementById("sheet");
+    const content = sheet.querySelector(".content");
+    const showingThisPage = content.dataset.route === key && !content.querySelector(".loading-skeleton");
+    // A page that is already on screen is not blanked out while it fetches again.
+    if (isLoading(contentHtml) && showingThisPage) return;
+    const keep = key === lastRouteKey ? sheet.scrollTop : 0;
+    content.className = "content" + (opts.narrow ? " narrow" : "") + (opts.contentClass ? " " + opts.contentClass : "");
+    content.dataset.route = key;
+    content.innerHTML = contentHtml;
+    UI.localize(content);
+    sheet.scrollTop = keep;
+    lastRouteKey = key;
   }
 
   function errorView(err) {
-    layout(`<div class="empty">${esc(err.message)}</div>`);
+    layout(`<div class="empty">${esc(UI.error(err.message, err.status))}</div>`);
   }
 
   function accessPill(access) {
@@ -402,492 +418,6 @@
     FAILED: "Execution failed",
     AGENT_RUNNING: "Agent running",
   };
-
-  function dashboardTestPill(tests, finished) {
-    if (!tests?.executed_by_host) return finished ? `<span class="dashboard-evidence muted">${esc(UI.translate("No host test evidence"))}</span>` : "";
-    if (tests.no_tests_collected) return `<span class="pill warning">${esc(UI.translate("No tests collected"))}</span>`;
-    return tests.passed
-      ? `<span class="pill positive">${esc(UI.translate("Host tests passed"))}</span>`
-      : `<span class="pill negative">${esc(UI.translate("Host tests failed"))}</span>`;
-  }
-
-  function dashboardTaskRow(task) {
-    const brief = task.brief || {};
-    const waiting = brief.waiting_on || task.state;
-    const label = WAITING_LABELS[waiting] || task.state;
-    const finished = TERMINAL_STATES.has(task.state);
-    const tone = waiting === "AGENT_RUNNING" ? "accent"
-      : waiting === "COMPLETED" ? "positive"
-      : waiting === "CANCELLED" || waiting === "REJECTED" ? "neutral"
-      : waiting === "FAILED" || waiting === "BLOCKED" ? "negative" : "warning";
-    const detail = brief.error || (waiting === "AGENT_RUNNING"
-      ? [brief.agent, brief.role].filter(Boolean).join(" · ")
-      : finished ? brief.summary || "" : brief.next_action || "");
-    const link = `#/p/${encodeURIComponent(task.project_id)}/tasks/${encodeURIComponent(task.task_id)}`;
-    return `<a class="dashboard-task" href="${link}">
-      <span class="dashboard-task-main">
-        <span class="dashboard-task-meta"><strong data-no-i18n>${esc(task.project_id)}</strong><span class="mono">${esc(task.task_id)}</span></span>
-        <span class="dashboard-task-title" data-no-i18n>${esc(task.requirement)}</span>
-        ${detail ? `<span class="dashboard-task-detail" data-no-i18n>${esc(detail)}</span>` : ""}
-      </span>
-      <span class="dashboard-task-status"><span class="pill ${tone}">${esc(UI.translate(label))}</span>${dashboardTestPill(brief.tests, finished)}</span>
-    </a>`;
-  }
-
-  function dashboardActivityChart(activity) {
-    const points = activity || [];
-    const highest = Math.max(1, ...points.map((day) => Math.max(day.created, day.completed)));
-    const top = Math.max(3, Math.ceil(highest / 3) * 3);
-    const base = 218;
-    const chartHeight = 170;
-    const step = 600 / Math.max(points.length, 1);
-    const grid = [0, 1, 2, 3].map((index) => {
-      const y = base - index * chartHeight / 3;
-      return `<line x1="32" y1="${y}" x2="640" y2="${y}" class="dashboard-chart-grid" />
-        <text x="24" y="${y + 4}" text-anchor="end" class="dashboard-chart-label">${Math.round(top * index / 3)}</text>`;
-    }).join("");
-    const bars = points.map((day, index) => {
-      const x = 36 + index * step;
-      const createdHeight = day.created ? Math.max(4, day.created / top * chartHeight) : 0;
-      const completedHeight = day.completed ? Math.max(4, day.completed / top * chartHeight) : 0;
-      const date = new Date(`${day.date}T00:00:00Z`).toLocaleDateString(UI.getLocale(), { month: "numeric", day: "numeric", timeZone: "UTC" });
-      return `<rect x="${x}" y="${base - createdHeight}" width="11" height="${createdHeight}" rx="2" class="dashboard-bar-created"><title>${esc(`${date}: ${day.created} ${UI.translate("Started")}`)}</title></rect>
-        <rect x="${x + 14}" y="${base - completedHeight}" width="11" height="${completedHeight}" rx="2" class="dashboard-bar-completed"><title>${esc(`${date}: ${day.completed} ${UI.translate("Completed")}`)}</title></rect>
-        ${index % 3 === 0 ? `<text x="${x + 13}" y="244" text-anchor="middle" class="dashboard-chart-label">${esc(date)}</text>` : ""}`;
-    }).join("");
-    const empty = points.every((day) => !day.created && !day.completed)
-      ? `<text x="335" y="126" text-anchor="middle" class="dashboard-chart-empty-label">${esc(UI.translate("No task activity in this period."))}</text>` : "";
-    return `<svg class="dashboard-activity-chart" viewBox="0 0 650 260" role="img" aria-label="${esc(UI.translate("Tasks started and completed over the last 14 days"))}">${grid}${bars}${empty}</svg>`;
-  }
-
-  function dashboardStatusChart(attention, running) {
-    const blocked = attention.filter((task) => ["BLOCKED", "FAILED"].includes(task.brief.waiting_on)).length;
-    const waiting = attention.length - blocked;
-    const total = attention.length + running.length;
-    const blockedAngle = total ? blocked / total * 360 : 0;
-    const waitingAngle = total ? (blocked + waiting) / total * 360 : 0;
-    return `<div class="dashboard-status-chart">
-      <div class="dashboard-donut${total ? "" : " empty"}" style="--blocked-angle:${blockedAngle}deg;--waiting-angle:${waitingAngle}deg" role="img" aria-label="${esc(`${total} ${UI.translate("Open tasks")}: ${blocked} ${UI.translate("Blocked or failed")}, ${waiting} ${UI.translate("Waiting for action")}, ${running.length} ${UI.translate("Agents running")}`)}">
-        <div class="dashboard-donut-hole"><strong class="num">${total}</strong><span>${esc(UI.translate("Open tasks"))}</span></div>
-      </div>
-      <div class="dashboard-status-legend">
-        <div><i class="blocked"></i><span>${esc(UI.translate("Blocked or failed"))}</span><strong class="num">${blocked}</strong></div>
-        <div><i class="waiting"></i><span>${esc(UI.translate("Waiting for action"))}</span><strong class="num">${waiting}</strong></div>
-        <div><i class="running"></i><span>${esc(UI.translate("Agents running"))}</span><strong class="num">${running.length}</strong></div>
-      </div>
-    </div>`;
-  }
-
-  function dashboardProjectLoad(projects, openTasks) {
-    const rows = projects.map((project) => ({
-      id: project.id,
-      count: openTasks.filter((task) => task.project_id === project.id).length,
-    })).sort((a, b) => b.count - a.count || a.id.localeCompare(b.id)).slice(0, 6);
-    const max = Math.max(1, ...rows.map((row) => row.count));
-    return rows.length ? `<div class="dashboard-project-load">${rows.map((row) => `
-      <a href="#/p/${encodeURIComponent(row.id)}/tasks" class="dashboard-load-row">
-        <span class="dashboard-load-name" data-no-i18n>${esc(row.id)}</span><span class="dashboard-load-track"><span style="width:${row.count / max * 100}%"></span></span><strong class="num">${row.count}</strong>
-      </a>`).join("")}</div>` : `<div class="dashboard-empty">${esc(UI.translate("No projects yet. Add an existing folder or create a new one."))}</div>`;
-  }
-
-  const CLAUDE_PROBE_REASONS = {
-    claude_unavailable: "Claude Code CLI was not found on this computer.",
-    not_signed_in: "Claude Code is not signed in. Sign in once with a Claude subscription, then check again.",
-    no_rate_limit_data: "Claude answered but reported no plan limits. Limits exist for subscription sign-ins, not API keys.",
-    timeout: "Claude Code did not respond in time. Click Check now to retry.",
-    session_ended: "Claude Code closed unexpectedly. Click Check now to retry.",
-    busy: "A check is already running.",
-    unsupported: "Automatic checks are not supported on this system yet; open Claude Code in a terminal once instead.",
-    sync_disabled: "Claude quota sync is off.",
-  };
-  const USAGE_WINDOWS = ["5m", "15m", "1h", "1d", "1w", "1mo"];
-  let dashboardUsageWindow = (() => {
-    try { return USAGE_WINDOWS.includes(localStorage.getItem("ccc_usage_window")) ? localStorage.getItem("ccc_usage_window") : "1d"; }
-    catch (e) { return "1d"; }
-  })();
-  let accountUsageCache = null, accountUsageAt = 0, accountUsagePending = null;
-  const CLAUDE_AUTO_CHOICES = [0, 15, 30, 60];
-  let claudeAutoAttemptAt = 0;
-  function claudeAutoMinutes() {
-    try {
-      const value = Number(localStorage.getItem("ccc_claude_auto_check"));
-      return CLAUDE_AUTO_CHOICES.includes(value) ? value : 0;
-    } catch (e) { return 0; }
-  }
-
-  function codexReason(data) {
-    if (data?.reason === "codex_unavailable") return "Codex CLI was not found on this computer.";
-    if (data?.available === false) return "Couldn't read Codex limits just now. Click Check now to retry.";
-    return "Codex returned no plan limits. Limits only exist for ChatGPT-plan sign-ins, not API keys.";
-  }
-
-  function dashboardAccountUsage(data, providers, claudeUsage) {
-    const number = new Intl.NumberFormat(UI.getLocale());
-    const codex = providers?.codex || {};
-    const claude = providers?.claude || {};
-    const status = (item) => !item.installed ? "CLI not installed" : item.logged_in ? "Signed in" : "Sign in required";
-    const renderWindows = (rows) => (rows || []).map((row) => {
-      const remaining = Math.max(0, 100 - row.used_percent);
-      const reset = row.resets_at ? new Date(row.resets_at * 1000).toLocaleString(UI.getLocale()) : "—";
-      return `<div class="quota-window"><div><strong>${esc(UI.translate(row.name))}</strong><span>${row.duration_mins ? esc(`${row.duration_mins} ${UI.translate("minutes")}`) : ""}</span><b class="num">${number.format(remaining)}% ${esc(UI.translate("remaining"))}</b></div><div class="quota-track" role="meter" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${remaining}" aria-label="${esc(UI.translate(row.name))} ${esc(UI.translate("remaining"))}"><span style="width:${remaining}%"></span></div><small>${esc(UI.translate("Resets"))}: ${esc(reset)}</small></div>`;
-    }).join("");
-    const windows = renderWindows(data?.rate_limits);
-    const claudeWindows = renderWindows(claudeUsage?.windows);
-    const claudeUpdated = claudeUsage?.captured_at ? new Date(claudeUsage.captured_at * 1000).toLocaleString(UI.getLocale()) : "";
-    const claudeState = claudeUsage?.backend_outdated
-      ? `<div class="quota-unavailable"><strong>${esc(UI.translate("Console restart required"))}</strong><span>${esc(UI.translate("This page has newer Claude controls than the running ccc-mcp server. Restart ccc-mcp ui and open its new URL."))}</span></div>`
-      : claudeUsage?.enabled
-      ? `${claudeWindows || `<div class="quota-unavailable"><strong>${esc(UI.translate("Waiting for Claude usage"))}</strong><span>${esc(UI.translate("Click Check now. ccc-mcp quietly opens a short Claude Code session in the background (about 10 seconds, one tiny Haiku message) and reads your plan limits. No terminal needed."))}</span></div>`}
-         ${claudeUpdated ? `<p class="quota-source ${claudeUsage.stale ? "stale" : ""}">${esc(UI.translate(claudeUsage.stale ? "Last observed · may be stale" : "Observed from Claude Code"))}: ${esc(claudeUpdated)}</p>` : ""}
-         <label class="quota-auto"><span>${esc(UI.translate("Auto-check while this page is open"))}</span><select data-claude-auto-check>${CLAUDE_AUTO_CHOICES.map((m) => `<option value="${m}" ${claudeAutoMinutes() === m ? "selected" : ""}>${esc(m ? UI.translate("Every {n} min").replace("{n}", m) : UI.translate("Off"))}</option>`).join("")}</select></label>
-         <p class="quota-source">${esc(UI.translate("Each check uses one tiny Haiku message from your Claude plan."))}</p>
-         <div class="quota-actions"><button class="btn small ghost" data-claude-usage-action="refresh">${esc(UI.translate("Check now"))}</button><button class="btn small ghost" data-claude-usage-action="disable">${esc(UI.translate("Disable Claude quota sync"))}</button></div>`
-      : `<div class="quota-unavailable"><strong>${esc(UI.translate("Claude quota sync is off"))}</strong><span>${esc(UI.translate("Read official 5-hour and 7-day plan limits from Claude Code's status line. No credentials or prompts are collected."))}</span></div>
-         <button class="btn small quota-action" data-claude-usage-action="enable">${esc(UI.translate("Enable Claude quota sync"))}</button>`;
-    const total = data?.tokens_available ? data.summary?.lifetimeTokens : null;
-    const days = dashboardUsageWindow === "1mo" ? 30 : dashboardUsageWindow === "1w" ? 7 : dashboardUsageWindow === "1d" ? 1 : 0;
-    const daily = days ? (data?.daily || []).slice(-days) : [];
-    const max = Math.max(1, ...daily.map((row) => row.tokens));
-    const chart = daily.length ? `<div class="dashboard-account-chart" role="img" aria-label="${esc(UI.translate("Daily account token activity"))}">${daily.map((row) => `<div class="dashboard-account-day" title="${esc(row.date)} · ${number.format(row.tokens)}"><span style="height:${Math.max(3, row.tokens / max * 100)}%"></span></div>`).join("")}</div>` : `<p class="dashboard-account-no-chart">${esc(UI.translate(days ? "Daily account history is unavailable." : "Account history has daily resolution; choose one day or longer."))}</p>`;
-    return `<div class="quota-grid">
-      <div class="quota-provider"><div class="quota-provider-head"><strong>Codex</strong><span>${esc(UI.translate(status(codex)))}</span></div><p>${esc(UI.translate("ChatGPT account plan window · all Codex activity"))}</p>${windows || `<div class="quota-unavailable"><strong>${esc(UI.translate(codexReason(data)))}</strong></div><div class="quota-actions"><button class="btn small ghost" data-claude-usage-action="refresh-codex">${esc(UI.translate("Check now"))}</button></div>`}</div>
-      <div class="quota-provider"><div class="quota-provider-head"><strong>Claude Code</strong><span>${esc(UI.translate(status(claude)))}</span></div><p>${esc(UI.translate("Claude plan allowance"))}</p>${claudeState}</div>
-    </div><details class="account-history"><summary>${esc(UI.translate("Account-wide token history"))} · ${total === null ? "—" : number.format(total)} ${esc(UI.translate("lifetime tokens"))}</summary><p>${esc(UI.translate("This is the signed-in ChatGPT account across apps and all time. It cannot be attributed to this workspace, and is not a remaining allowance."))}</p>${chart}</details>`;
-  }
-
-  function loadDashboardAccountUsage(gen, force=false) {
-    const target = document.getElementById("dashboard-account-usage");
-    if (!target) return;
-    if (force || !accountUsageCache || Date.now() - accountUsageAt > 300000) {
-      if (!accountUsagePending) accountUsagePending = Promise.all([
-        api("/dashboard/account-usage").catch(() => ({ available: false })),
-        api("/connect/providers").catch(() => ({ providers: {} })),
-        api("/dashboard/claude-usage").catch((err) => ({
-          enabled: false, windows: [], backend_outdated: err.status === 404 || err.status === 405,
-        })),
-      ]).then(([data, providerData, claudeUsage]) => {
-        accountUsageCache = { data, providers: providerData.providers || {}, claudeUsage }; accountUsageAt = Date.now(); accountUsagePending = null; return accountUsageCache;
-      }).catch((err) => { accountUsagePending = null; throw err; });
-    }
-    const pending = accountUsagePending || Promise.resolve(accountUsageCache);
-    pending.then((value) => {
-      if (stale(gen) || !target.isConnected) return;
-      target.innerHTML = dashboardAccountUsage(value.data, value.providers, value.claudeUsage);
-      target.querySelector("[data-claude-auto-check]")?.addEventListener("change", (event) => {
-        try { localStorage.setItem("ccc_claude_auto_check", event.target.value); } catch (e) {}
-        claudeAutoAttemptAt = Date.now();
-      });
-      target.querySelectorAll("[data-claude-usage-action]").forEach((button) => button.addEventListener("click", async (event) => {
-        const button = event.currentTarget;
-        const action = button.dataset.claudeUsageAction;
-        const label = button.textContent;
-        button.disabled = true;
-        try {
-          if (action === "refresh" || action === "enable" || action === "disable") {
-            if (action === "enable" || action === "disable")
-              await api(`/dashboard/claude-usage/${action}`, { method: "POST" });
-            if (action !== "disable") {
-              button.textContent = UI.translate("Checking Claude…");
-              const outcome = (await api("/dashboard/claude-usage/probe", { method: "POST" })).probe;
-              if (outcome && !outcome.ok) toast(UI.translate(CLAUDE_PROBE_REASONS[outcome.reason] || CLAUDE_PROBE_REASONS.timeout), true);
-            }
-          }
-          accountUsageCache = null;
-          loadDashboardAccountUsage(gen, true);
-        } catch (err) {
-          toast(UI.translate(err.status === 404 || err.status === 405
-            ? "This console is running an older backend. Restart ccc-mcp ui and open the new URL."
-            : err.message), true);
-          button.disabled = false;
-          button.textContent = label;
-        }
-      }));
-    }).catch((err) => toast(err.message, true));
-  }
-
-  function dashboardUsagePanel(usage) {
-    const data = usage || {};
-    const providers = data.providers || [];
-    const number = new Intl.NumberFormat(UI.getLocale());
-    const field = (provider, name) => {
-      const observed = provider.fields?.[name];
-      return observed?.executions ? number.format(observed.total) : "—";
-    };
-    const card = (name, label, extras) => {
-      const provider = providers.find((item) => item.provider === name) || { executions: 0, fields: {} };
-      return `<div class="dashboard-usage-provider">
-        <div class="dashboard-usage-provider-head"><strong>${esc(label)}</strong><span>${number.format(provider.executions)} ${esc(UI.translate("measured runs"))}</span></div>
-        <div class="dashboard-token-pair">
-          <div><strong class="num">${field(provider, "input_tokens")}</strong><span>${esc(UI.translate("Input tokens"))}</span></div>
-          <div><strong class="num">${field(provider, "output_tokens")}</strong><span>${esc(UI.translate("Output tokens"))}</span></div>
-        </div>
-        <div class="dashboard-token-extras">${extras.map(([key, title]) => `<span>${esc(UI.translate(title))} <strong class="num">${field(provider, key)}</strong></span>`).join("")}</div>
-      </div>`;
-    };
-    return `<p class="usage-scope">${esc(UI.translate("Only completed ccc-mcp CLI executions in the selected period. This excludes Codex or Claude work outside this workspace."))}</p><div class="dashboard-usage-grid">
-      ${card("codex", "Codex CLI", [["cached_input_tokens", "Cached input"], ["reasoning_output_tokens", "Reasoning output"]])}
-      ${card("claude", "Claude Code CLI", [["cache_read_input_tokens", "Cache read"], ["cache_creation_input_tokens", "Cache creation"]])}
-    </div>
-    <div class="dashboard-usage-coverage"><span>${number.format(data.unmeasured_native_executions || 0)} ${esc(UI.translate("native runs without token data"))}</span><span>${number.format(data.chatgpt_executions || 0)} ${esc(UI.translate("ChatGPT runs without per-run token data"))}</span></div>
-    <p class="dashboard-usage-note">${esc(UI.translate("Cache fields are shown separately and may already be included in the provider's input total. Do not add them to the account history or each other."))}</p>`;
-  }
-
-  function dashboardReliability(rows) {
-    if (!rows?.length) return `<div class="dashboard-empty">${esc(UI.translate("No evaluated executions yet. Enable evaluation in project settings, then evaluate a task."))}</div>`;
-    return `<div class="reliability-list">${rows.slice(0, 8).map((row) => `<div class="reliability-row"><div><strong>${esc(row.agent)} · ${esc(row.role)}</strong><small>${esc(row.model || "")} · ${esc(row.task_type)}</small></div><strong class="num">${Math.round(row.reliability_score * 100)}%</strong><span>${esc(row.sample_count)} ${esc(UI.translate("evaluated outcomes"))}${row.low_sample ? ` · ${esc(UI.translate("small sample"))}` : ""}</span></div>`).join("")}</div><p class="dashboard-usage-note">${esc(UI.translate("Rule-based outcome history, not an independent benchmark or calibrated confidence score."))}</p>`;
-  }
-
-  async function loadDashboardReliability(gen) {
-    const target = document.getElementById("dashboard-reliability");
-    if (!target) return;
-    try {
-      const rows = await api("/dashboard/reliability");
-      if (!stale(gen) && target.isConnected) target.innerHTML = dashboardReliability(rows);
-    } catch (err) {
-      if (!stale(gen) && target.isConnected) target.textContent = err.message;
-    }
-  }
-
-  function renderDashboard() { return renderWorkspace(true); }
-  function renderProjects() { return renderWorkspace(false); }
-
-  async function renderWorkspace(isDashboard) {
-    const gen = renderGen;
-    layout(loadingView());
-    let projects = [], organization = { groups: [], assignments: {} }, snapshot = { tasks: [], open_count: 0 };
-    try {
-      if (isDashboard) [projects, snapshot] = await Promise.all([api("/projects"), api(`/dashboard?usage_window=${dashboardUsageWindow}`)]);
-      else [projects, organization] = await Promise.all([api("/projects"), api("/project-groups")]);
-    } catch (err) {
-      if (!stale(gen)) errorView(err);
-      return;
-    }
-    if (stale(gen)) return;
-    const writable = projects.filter((p) => p.access.mode === "read-write").length;
-    const attention = snapshot.tasks.filter((t) => !TERMINAL_STATES.has(t.state) && t.brief.waiting_on !== "AGENT_RUNNING");
-    const running = snapshot.tasks.filter((t) => t.brief.waiting_on === "AGENT_RUNNING");
-    const recent = snapshot.tasks.filter((t) => TERMINAL_STATES.has(t.state)).slice(0, 8);
-    const openTasks = [...attention, ...running];
-    const queue = [...attention].sort((a, b) => Number(["BLOCKED", "FAILED"].includes(b.brief.waiting_on)) - Number(["BLOCKED", "FAILED"].includes(a.brief.waiting_on))).concat(running);
-    const activity = snapshot.activity || [];
-    const completedWeek = activity.slice(-7).reduce((total, day) => total + day.completed, 0);
-    const startedWeek = activity.slice(-7).reduce((total, day) => total + day.created, 0);
-    const groups = organization.groups || [];
-    const assignments = organization.assignments || {};
-    const icons = organization.icons || {};
-    const groupName = (group) => group[UI.getLocale() === "zh-TW" ? "name_zh" : "name_en"] || group.name;
-    const groupFields = (group) => {
-      const legacyName = group && group.name_zh === undefined && group.name_en === undefined ? group.name : "";
-      return [
-        { label: "Chinese name", value: group?.name_zh || (/\p{Script=Han}/u.test(legacyName) ? legacyName : ""), hint: "Shown when the interface is in Traditional Chinese." },
-        { label: "English name", value: group?.name_en || (legacyName && !/\p{Script=Han}/u.test(legacyName) ? legacyName : ""), hint: "Shown when the interface is in English." },
-      ];
-    };
-    const saveGroupNames = ([name_zh, name_en]) => {
-      if (!name_zh.trim() && !name_en.trim()) throw new Error(UI.translate("Enter a Chinese or English group name"));
-      return { name_zh, name_en };
-    };
-    const groupOptions = (selected) => `<option value="" ${!selected ? "selected" : ""}>${esc(UI.translate("Ungrouped"))}</option>` + groups.map((g) => `<option data-no-i18n value="${esc(g.id)}" ${selected === g.id ? "selected" : ""}>${esc(groupName(g))}</option>`).join("");
-    const row = (p) => `
-      <div class="project-row" draggable="true" data-drag-project="${esc(p.id)}">
-        <button type="button" class="project-icon-button" data-project-icon="${esc(p.id)}" aria-label="${esc(UI.translate("Change project icon"))}: ${esc(p.id)}" title="${esc(UI.translate("Change project icon"))}">${projectIconHtml(p.id, icons[p.id])}</button>
-        <a class="project-row-link" href="#/p/${encodeURIComponent(p.id)}/overview">
-          <span class="project-row-text">
-            <span class="project-row-name" data-no-i18n>${esc(p.id)}</span>
-            <span class="project-row-path mono">${esc(p.root)}</span>
-          </span>
-        </a>
-        <span class="project-row-meta">
-          ${accessPill(p.access)}
-          <label class="project-move-label" for="move-${esc(p.id)}">${esc(UI.translate("Group"))}</label>
-          <select id="move-${esc(p.id)}" class="project-move" data-project-id="${esc(p.id)}" aria-label="${esc(UI.translate("Move project to group"))}">${groupOptions(assignments[p.id])}</select>
-        </span>
-      </div>`;
-    const section = (group, index) => {
-      const groupId = group ? group.id : "";
-      const members = projects.filter((p) => (assignments[p.id] || "") === groupId);
-      const title = group ? `<span data-no-i18n>${esc(groupName(group))}</span>` : esc(UI.translate("Ungrouped"));
-      const actions = group ? `<div class="group-actions">${index > 0 ? `<button class="btn small ghost icon-button" data-group-up="${esc(group.id)}" aria-label="${esc(UI.translate("Move group up"))}" title="${esc(UI.translate("Move group up"))}">${ICON.up}</button>` : ""}${index < groups.length - 1 ? `<button class="btn small ghost icon-button" data-group-down="${esc(group.id)}" aria-label="${esc(UI.translate("Move group down"))}" title="${esc(UI.translate("Move group down"))}">${ICON.down}</button>` : ""}<button class="btn small" data-group-rename="${esc(group.id)}">${esc(UI.translate("Rename"))}</button><button class="btn small danger" data-group-delete="${esc(group.id)}">${esc(UI.translate("Delete group"))}</button></div>` : "";
-      return pageCard(group ? "folder" : "inbox", title, `${members.length} ${esc(UI.translate("registered projects"))}`,
-        `<div class="project-list" data-drop-group="${esc(groupId)}">${members.length ? members.map(row).join("") : `<div class="group-empty">${esc(UI.translate("Drag projects here, or use Move to on a card."))}</div>`}</div>`,
-        "", { actions, flush: true });
-    };
-    const dashboardHtml = isDashboard ? `
-      <header class="dashboard-command">
-        <div class="dashboard-command-copy">
-          <div class="dashboard-eyebrow"><span class="status-dot on"></span>${esc(UI.translate("LOCAL WORKSPACE"))}<span class="dashboard-eyebrow-separator">/</span>${projects.length} ${esc(UI.translate("Projects"))}</div>
-          <h1>${esc(UI.translate("Command center"))}</h1>
-          <p>${esc(UI.translate("A live view of delivery, blockers, and verified outcomes across your projects."))}</p>
-        </div>
-        <div class="dashboard-command-signal"><span>${esc(UI.translate("REQUIRES ACTION"))}</span><strong class="num">${attention.length}</strong><small>${esc(UI.translate("tasks waiting on a decision or recovery"))}</small></div>
-      </header>
-      <div class="dashboard-metrics" aria-label="${esc(UI.translate("Workflow summary"))}">
-        <div class="dashboard-metric critical"><span>${esc(UI.translate("Needs attention"))}</span><strong class="num">${attention.length}</strong><small>${esc(UI.translate("Decisions and blockers"))}</small></div>
-        <div class="dashboard-metric live"><span>${esc(UI.translate("Agents running"))}</span><strong class="num">${running.length}</strong><small>${esc(UI.translate("Active executions"))}</small></div>
-        <div class="dashboard-metric"><span>${esc(UI.translate("Completed in 7 days"))}</span><strong class="num">${completedWeek}</strong><small>${startedWeek} ${esc(UI.translate("started in the same period"))}</small></div>
-        <div class="dashboard-metric"><span>${esc(UI.translate("Open tasks"))}</span><strong class="num">${snapshot.open_count}</strong><small>${projects.length} ${esc(UI.translate("Projects"))} · ${writable} ${esc(UI.translate("read-write"))}</small></div>
-      </div>
-      <div class="dashboard-grid dashboard-operations">
-        <section class="dashboard-panel dashboard-panel-wide">
-          <div class="dashboard-panel-head"><div><span class="dashboard-panel-kicker">01 / ${esc(UI.translate("OPERATIONS"))}</span><h2>${esc(UI.translate("Action queue"))}</h2><p>${esc(UI.translate("Blocked work first, then decisions and active agents."))}</p></div><strong class="dashboard-panel-count num">${queue.length}</strong></div>
-          ${queue.length ? `<div class="dashboard-task-list dashboard-queue">${queue.map(dashboardTaskRow).join("")}</div>` : `<div class="dashboard-empty">${esc(UI.translate("Nothing needs attention right now."))}</div>`}
-        </section>
-        <section class="dashboard-panel">
-          <div class="dashboard-panel-head"><div><span class="dashboard-panel-kicker">02 / ${esc(UI.translate("PROJECT LOAD"))}</span><h2>${esc(UI.translate("Work by project"))}</h2><p>${esc(UI.translate("Open tasks in the six busiest projects."))}</p></div></div>
-          ${dashboardProjectLoad(projects, openTasks)}
-        </section>
-      </div>
-      <div class="dashboard-grid">
-        <section class="dashboard-panel dashboard-panel-wide">
-          <div class="dashboard-panel-head"><div><span class="dashboard-panel-kicker">03 / ${esc(UI.translate("THROUGHPUT"))}</span><h2>${esc(UI.translate("14-day activity"))}</h2><p>${esc(UI.translate("Tasks started and completed each day (UTC)."))}</p></div><div class="dashboard-chart-key"><span><i class="created"></i>${esc(UI.translate("Started"))}</span><span><i class="completed"></i>${esc(UI.translate("Completed"))}</span></div></div>
-          ${dashboardActivityChart(activity)}
-        </section>
-        <section class="dashboard-panel">
-          <div class="dashboard-panel-head"><div><span class="dashboard-panel-kicker">04 / ${esc(UI.translate("CURRENT STATE"))}</span><h2>${esc(UI.translate("Open task mix"))}</h2><p>${esc(UI.translate("Where active work is waiting now."))}</p></div></div>
-          ${dashboardStatusChart(attention, running)}
-        </section>
-      </div>
-      <section class="dashboard-panel dashboard-usage">
-        <div class="dashboard-panel-head"><div><h2>${esc(UI.translate("Usage and remaining allowance"))}</h2><p>${esc(UI.translate("Plan windows come from the account; the time filter applies to workspace CLI records and available daily history."))}</p></div><div class="usage-window-picker" role="group" aria-label="${esc(UI.translate("Workspace CLI period"))}">${USAGE_WINDOWS.map((window) => `<button class="usage-window-button ${dashboardUsageWindow === window ? "active" : ""}" data-usage-window="${window}" aria-pressed="${dashboardUsageWindow === window}">${esc(UI.translate(window))}</button>`).join("")}</div></div>
-        <p class="quota-refresh-note">${esc(UI.translate("This page re-reads Codex every five minutes. Claude limits refresh when you click Check now."))}</p>
-        <div id="dashboard-account-usage" class="dashboard-account-usage">${esc(UI.translate("Loading account usage…"))}</div>
-        <div class="dashboard-usage-subhead">${esc(UI.translate("This workspace · CLI runs"))} · ${esc(UI.translate(dashboardUsageWindow))}</div>
-        <div id="dashboard-cli-usage">${dashboardUsagePanel(snapshot.usage)}</div>
-      </section>
-      <section class="dashboard-panel dashboard-outcomes">
-        <div class="dashboard-panel-head"><div><h2>${esc(UI.translate("Evidence and agent reliability"))}</h2><p>${esc(UI.translate("Verified task outcomes grouped by agent and role. Open a task to inspect the evidence behind a score."))}</p></div></div>
-        <div id="dashboard-reliability">${esc(UI.translate("Loading…"))}</div>
-      </section>
-      <section class="dashboard-panel dashboard-outcomes">
-        <div class="dashboard-panel-head"><div><span class="dashboard-panel-kicker">05 / ${esc(UI.translate("VERIFICATION"))}</span><h2>${esc(UI.translate("Recent outcomes"))}</h2><p>${esc(UI.translate("Finished work and host test evidence, shown separately."))}</p></div></div>
-        ${recent.length ? `<div class="dashboard-task-list">${recent.map(dashboardTaskRow).join("")}</div>` : `<div class="dashboard-empty">${esc(UI.translate("No finished tasks yet."))}</div>`}
-      </section>
-    ` : "";
-    const projectsHtml = isDashboard ? "" : `
-      <div class="title-row">
-        <div><h1>${esc(UI.translate("Projects"))}</h1><div class="sub">${esc(UI.translate("Every project registered with this ccc-mcp home."))}</div></div>
-        <div class="title-actions"><button class="btn" id="btn-group">${esc(UI.translate("New group"))}</button><button class="btn" id="btn-import">${esc(UI.translate("Import backup…"))}</button><button class="btn" id="btn-add">${ICON.projects}${esc(UI.translate("Add existing folder"))}</button><button class="btn primary" id="btn-create">${esc(UI.translate("Create new project"))}</button></div>
-      </div>
-      ${projects.length ? `<div class="kpi-strip">
-        <div class="kpi"><div class="v num">${projects.length}</div><div class="l">${esc(UI.translate("Projects"))}</div></div>
-        <div class="kpi"><div class="v num">${writable}</div><div class="l">${esc(UI.translate("Read-write"))}</div></div>
-        <div class="kpi"><div class="v num">${projects.length - writable}</div><div class="l">${esc(UI.translate("Read-only"))}</div></div>
-      </div>` : ""}
-      ${projects.length || groups.length ? `<div class="settings-stack">${groups.map(section).join("") + section(null, groups.length)}</div>` : `<div class="empty">No projects yet. Add an existing folder or create a new one.<br><a href="#/start">${esc(UI.translate("See the getting-started guide first"))}</a></div>`}
-    `;
-    layout(isDashboard ? dashboardHtml : projectsHtml);
-    if (isDashboard) {
-      loadDashboardAccountUsage(gen);
-      loadDashboardReliability(gen);
-      document.querySelectorAll("[data-usage-window]").forEach((button) => button.addEventListener("click", () => {
-        dashboardUsageWindow = button.dataset.usageWindow;
-        try { localStorage.setItem("ccc_usage_window", dashboardUsageWindow); } catch (e) {}
-        renderDashboard();
-      }));
-      trackTimer(setInterval(async () => {
-        if (stale(gen)) return;
-        const minutes = claudeAutoMinutes();
-        const claude = accountUsageCache?.claudeUsage;
-        const observed = (claude?.captured_at || 0) * 1000;
-        const due = Math.max(observed, claudeAutoAttemptAt) + minutes * 60000;
-        if (minutes && claude?.enabled && Date.now() >= due) {
-          claudeAutoAttemptAt = Date.now();
-          try { await api("/dashboard/claude-usage/probe", { method: "POST" }); } catch (e) {}
-          accountUsageCache = null;
-        }
-        loadDashboardAccountUsage(gen, true);
-        loadDashboardReliability(gen);
-        try {
-          const fresh = await api(`/dashboard?usage_window=${dashboardUsageWindow}`);
-          const target = document.getElementById("dashboard-cli-usage");
-          if (!stale(gen) && target) target.innerHTML = dashboardUsagePanel(fresh.usage);
-        } catch (e) {}
-      }, 300000));
-      watchForChanges(gen, () => Promise.all([api("/projects"), api(`/dashboard?usage_window=${dashboardUsageWindow}`)]), renderDashboard);
-      return;
-    }
-    document.getElementById("btn-add").addEventListener("click", openAddProjectModal);
-    document.getElementById("btn-create").addEventListener("click", openCreateProjectModal);
-    document.getElementById("btn-import").addEventListener("click", openImportProjectModal);
-    document.getElementById("btn-group").addEventListener("click", () => showModal({
-      title: "New group", body: "Group projects on this device without changing their folders or settings.",
-      fields: groupFields(null), confirmLabel: "Create", onSubmit: async (values) => {
-        await api("/project-groups", { method: "POST", body: { action: "create", ...saveGroupNames(values) } });
-        renderProjects();
-      },
-    }));
-    const update = async (body) => {
-      try { await api("/project-groups", { method: "POST", body }); renderProjects(); }
-      catch (err) { toast(err.message, true); }
-    };
-    document.querySelectorAll("[data-project-icon]").forEach((button) => button.addEventListener("click", () => {
-      const projectId = button.dataset.projectIcon;
-      const chosen = { ...(icons[projectId] || {}) };
-      const overlay = showModal({ title: "Project icon", body: "Pick a pixel character or type a short text or emoji, then a color.", fields: [], confirmLabel: "Save", onSubmit: async () => {
-        await api("/project-groups", { method: "POST", body: { action: "icon", project_id: projectId, avatar: chosen.avatar || undefined, text: chosen.avatar ? undefined : chosen.text || undefined, tone: chosen.tone || undefined } });
-        renderProjects();
-      } });
-      const area = overlay.querySelector(".fields");
-      area.innerHTML = `<div class="icon-picker">
-        <div class="icon-preview" id="icon-preview"></div>
-        <div class="field"><label>${esc(UI.translate("Pixel character"))}</label><div class="avatar-picker" id="icon-avatars" role="radiogroup" aria-label="${esc(UI.translate("Pixel character"))}">${AVATAR_ORDER.map((avatar) => `<button type="button" class="avatar-option" role="radio" data-avatar="${avatar}" title="${esc(UI.translate(avatar))}"><span class="chat-avatar av-pm" aria-hidden="true">${spriteFor(avatar)}</span></button>`).join("")}</div></div>
-        <div class="field"><label for="icon-text">${esc(UI.translate("Text or emoji"))}</label><input type="text" id="icon-text" maxlength="4" autocomplete="off" value="${esc(chosen.text || "")}" placeholder="${esc(projectId.slice(0, 1).toUpperCase())}" data-no-i18n /><div class="hint">${esc(UI.translate("Up to 4 characters. Leave empty to use the first letter."))}</div></div>
-        <div class="field"><label>${esc(UI.translate("Color"))}</label><div class="tone-picker" id="icon-tones" role="radiogroup" aria-label="${esc(UI.translate("Color"))}">${ICON_TONES.map((tone) => `<button type="button" class="tone-swatch tone-${tone}" role="radio" data-tone="${tone}" aria-label="${esc(tone)}"></button>`).join("")}</div></div>
-        <button type="button" class="btn small ghost" id="icon-reset">${esc(UI.translate("Use the first letter"))}</button>
-      </div>`;
-      UI.localize(area);
-      const paint = () => {
-        document.getElementById("icon-preview").innerHTML = projectIconHtml(projectId, chosen, "big");
-        area.querySelectorAll("[data-avatar]").forEach((el) => { const on = el.dataset.avatar === chosen.avatar; el.classList.toggle("selected", on); el.setAttribute("aria-checked", String(on)); });
-        area.querySelectorAll("[data-tone]").forEach((el) => { const on = el.dataset.tone === chosen.tone; el.classList.toggle("selected", on); el.setAttribute("aria-checked", String(on)); });
-      };
-      area.querySelectorAll("[data-avatar]").forEach((el) => el.addEventListener("click", () => { chosen.avatar = el.dataset.avatar; delete chosen.text; document.getElementById("icon-text").value = ""; paint(); }));
-      area.querySelectorAll("[data-tone]").forEach((el) => el.addEventListener("click", () => { chosen.tone = el.dataset.tone; paint(); }));
-      document.getElementById("icon-text").addEventListener("input", (event) => {
-        const value = event.target.value.trim();
-        if (value) { chosen.text = value; delete chosen.avatar; } else delete chosen.text;
-        paint();
-      });
-      document.getElementById("icon-reset").addEventListener("click", () => { for (const key of Object.keys(chosen)) delete chosen[key]; document.getElementById("icon-text").value = ""; paint(); });
-      paint();
-    }));
-    document.querySelectorAll(".project-move").forEach((select) => select.addEventListener("change", () => update({ action: "move", project_id: select.dataset.projectId, group_id: select.value })));
-    document.querySelectorAll("[data-group-rename]").forEach((btn) => btn.addEventListener("click", () => {
-      const group = groups.find((g) => g.id === btn.dataset.groupRename);
-      showModal({ title: "Rename group", body: "Set the names shown for each interface language.", fields: groupFields(group), confirmLabel: "Save", onSubmit: async (values) => {
-        await api("/project-groups", { method: "POST", body: { action: "rename", group_id: group.id, ...saveGroupNames(values) } });
-        renderProjects();
-      } });
-    }));
-    document.querySelectorAll("[data-group-delete]").forEach((btn) => btn.addEventListener("click", () => {
-      const group = groups.find((g) => g.id === btn.dataset.groupDelete);
-      showModal({ title: "Delete group", body: "Projects in this group will become ungrouped. No project files are deleted.", confirmLabel: "Delete group", danger: true, onSubmit: async () => {
-        await api("/project-groups", { method: "POST", body: { action: "delete", group_id: group.id } });
-        renderProjects();
-      } });
-    }));
-    for (const direction of ["up", "down"]) document.querySelectorAll(`[data-group-${direction}]`).forEach((btn) => btn.addEventListener("click", () => {
-      const ids = groups.map((g) => g.id);
-      const index = ids.indexOf(btn.dataset[direction === "up" ? "groupUp" : "groupDown"]);
-      const other = index + (direction === "up" ? -1 : 1);
-      [ids[index], ids[other]] = [ids[other], ids[index]];
-      update({ action: "reorder", group_ids: ids });
-    }));
-    document.querySelectorAll("[data-drag-project]").forEach((tile) => {
-      tile.addEventListener("dragstart", (event) => { event.dataTransfer.setData("text/plain", tile.dataset.dragProject); event.dataTransfer.effectAllowed = "move"; tile.classList.add("dragging"); });
-      tile.addEventListener("dragend", () => tile.classList.remove("dragging"));
-    });
-    document.querySelectorAll("[data-drop-group]").forEach((target) => {
-      target.addEventListener("dragover", (event) => { event.preventDefault(); target.classList.add("drop-ready"); });
-      target.addEventListener("dragleave", (event) => { if (!target.contains(event.relatedTarget)) target.classList.remove("drop-ready"); });
-      target.addEventListener("drop", (event) => {
-        event.preventDefault(); target.classList.remove("drop-ready");
-        const projectId = event.dataTransfer.getData("text/plain");
-        if (projects.some((p) => p.id === projectId)) update({ action: "move", project_id: projectId, group_id: target.dataset.dropGroup });
-      });
-    });
-    watchForChanges(gen, () => Promise.all([api("/projects"), api("/project-groups")]), renderProjects);
-  }
 
   async function browseFolder(path) {
     let data;
@@ -1109,29 +639,10 @@
   const baseOfRole = (role) => (customRoleMap[role] ? customRoleMap[role].base_role : role);
   const roleName = (role) => customRoleMap[role]?.name || activeRoleNames[role] || (ROLE_FRIENDLY[role] ? UI.translate(ROLE_FRIENDLY[role]) : ROLE_ABBREVIATIONS[role] || role);
   const roleAvatarTone = (role) => (ROLE_AVATARS[baseOfRole(role)] || ROLE_AVATARS.SA)[0];
-  // Ability charts. Every role scores 0-5 on six abilities (the backend owns the numbers, see
-  // core/roles.py); a workflow's chart combines its roles the same way team_stats() does there:
-  // the strongest member sets an ability and each other strong member adds a little.
-  const STAT_ORDER = ["research", "analysis", "planning", "creation", "verification", "risk"];
-  const STAT_NAMES = { research: "Research", analysis: "Reasoning", planning: "Planning", creation: "Creation", verification: "Verification", risk: "Risk sense" };
-  const STAT_MAX = 5, STAT_STRONG = 3, STAT_BACKUP = 0.5, STAT_GAP = 1;
-  let roleStatsMap = {};
-  const round1 = (value) => Math.round(value * 10) / 10;
-  function teamStats(roles, map = roleStatsMap) {
-    const distinct = [...new Set(roles)].filter((role) => map[role]);
-    const team = {};
-    for (const axis of STAT_ORDER) {
-      const scores = distinct.map((role) => map[role][axis]).sort((a, b) => b - a);
-      const backups = scores.slice(1).filter((score) => score >= STAT_STRONG).length;
-      team[axis] = Math.min(STAT_MAX, round1((scores[0] || 0) + STAT_BACKUP * backups));
-    }
-    return { team, power: round1(STAT_ORDER.reduce((sum, axis) => sum + team[axis], 0)), gaps: STAT_ORDER.filter((axis) => team[axis] <= STAT_GAP) };
-  }
   // Replace the registry of the project's custom roles; their declared abilities join the chart maths.
   function setCustomRoles(list) {
-    for (const key of Object.keys(customRoleMap)) delete roleStatsMap[key];
     customRoleMap = {};
-    for (const role of list || []) { customRoleMap[role.id] = role; if (role.stats) roleStatsMap[role.id] = role.stats; }
+    for (const role of list || []) customRoleMap[role.id] = role;
   }
   // A history entry carries the role's name as it was then; remember it if the role is gone.
   function rememberEventRole(event) {
@@ -1139,57 +650,6 @@
       customRoleMap[event.role_ref] = { id: event.role_ref, name: event.role_name || event.role_ref, base_role: event.role, avatar: event.role_avatar || null, status: "unknown" };
     }
   }
-  const statSummary = (values) => STAT_ORDER.map((axis) => `${UI.translate(STAT_NAMES[axis])} ${values[axis]}`).join(", ");
-  // A hexagon radar. `ghost` is a second, dashed outline (the whole team while only part of it
-  // has finished); `labels` adds the ability names and scores around it.
-  function radarSvg(values, { size = 120, labels = false, ghost = null } = {}) {
-    const pad = labels === true ? 58 : labels === "short" ? (UI.getLocale() === "zh-TW" ? 20 : 28) : 6;
-    const centre = size / 2, radius = size / 2 - pad;
-    const point = (index, level) => {
-      const angle = (-90 + index * 60) * Math.PI / 180;
-      const length = radius * Math.max(0, Math.min(level, STAT_MAX)) / STAT_MAX;
-      return [centre + length * Math.cos(angle), centre + length * Math.sin(angle)];
-    };
-    const ring = (level) => STAT_ORDER.map((_, index) => point(index, level).map((n) => n.toFixed(1)).join(",")).join(" ");
-    const shape = (data) => STAT_ORDER.map((axis, index) => point(index, data[axis]).map((n) => n.toFixed(1)).join(",")).join(" ");
-    const rings = (labels === true ? [1, 2, 3, 4, 5] : [2.5, 5]).map((level) => `<polygon class="radar-ring${level === STAT_MAX ? " outer" : ""}" points="${ring(level)}"/>`).join("");
-    const spokes = STAT_ORDER.map((_, index) => { const [x, y] = point(index, STAT_MAX); return `<line class="radar-spoke" x1="${centre}" y1="${centre}" x2="${x.toFixed(1)}" y2="${y.toFixed(1)}"/>`; }).join("");
-    const shortNames = labels === "short" ? STAT_ORDER.map((axis, index) => {
-      const [x, y] = point(index, STAT_MAX * (1 + 8 / radius));
-      const name = UI.translate(STAT_NAMES[axis]);
-      const anchor = Math.abs(x - centre) < 4 ? "middle" : x > centre ? "start" : "end";
-      return `<text class="radar-label short" x="${x.toFixed(1)}" y="${(y + (index === 0 ? -1 : index === 3 ? 9 : 4)).toFixed(1)}" text-anchor="${anchor}">${esc(UI.getLocale() === "zh-TW" ? name.slice(0, 1) : name.slice(0, 3))}</text>`;
-    }).join("") : "";
-    const names = labels === true ? STAT_ORDER.map((axis, index) => {
-      const [x, y] = point(index, STAT_MAX + 1.5);
-      const anchor = Math.abs(x - centre) < 4 ? "middle" : x > centre ? "start" : "end";
-      return `<text class="radar-label" x="${x.toFixed(1)}" y="${(y + (index === 0 ? 0 : index === 3 ? 10 : 4)).toFixed(1)}" text-anchor="${anchor}">${esc(UI.translate(STAT_NAMES[axis]))} <tspan class="radar-score">${values[axis]}</tspan></text>`;
-    }).join("") : "";
-    const dots = labels === true ? STAT_ORDER.map((axis, index) => { const [x, y] = point(index, values[axis]); return `<circle class="radar-dot" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="3"/>`; }).join("") : "";
-    return `<svg class="radar" viewBox="0 0 ${size} ${size}" width="${size}" height="${size}" role="img" aria-label="${esc(statSummary(values))}" data-no-i18n>${rings}${spokes}${ghost ? `<polygon class="radar-ghost" points="${shape(ghost)}"/>` : ""}<polygon class="radar-fill" points="${shape(values)}"/>${dots}${names}${shortNames}</svg>`;
-  }
-  const STAT_HELP = {
-    research: "Looks things up and collects information",
-    analysis: "Breaks down needs, compares options and reasons it through",
-    planning: "Sets steps, order and structure",
-    creation: "Writes the code, text or document",
-    verification: "Checks facts, runs tests and confirms results",
-    risk: "Spots flaws, security holes and blind spots",
-  };
-  const statLegend = (values) => `<dl class="stat-legend">${STAT_ORDER.map((axis) => `<div><dt>${esc(UI.translate(STAT_NAMES[axis]))}${values ? ` <span class="num">${values[axis]}</span>` : ""}</dt><dd>${esc(UI.translate(STAT_HELP[axis]))}</dd></div>`).join("")}</dl>`;
-  const statExplainer = () => `<details class="stat-explainer"><summary>${esc(UI.translate("What do the six abilities mean?"))}</summary>${statLegend()}</details>`;
-  // "Strong at" / "Weaker at" in words, so nobody has to read the chart to know what a role or team is for.
-  const strengthLine = (values, { strong = 4, weak = 1 } = {}) => {
-    const named = (test) => STAT_ORDER.filter((axis) => test(values[axis])).sort((a, b) => values[b] - values[a]).map((axis) => UI.translate(STAT_NAMES[axis]));
-    const good = named((v) => v >= strong), poor = named((v) => v <= weak);
-    return `${good.length ? `<span class="strength-good">${esc(UI.translate("Strong at"))}: ${esc(good.join(" · "))}</span>` : ""}${poor.length ? `<span class="strength-weak">${esc(UI.translate("Weaker at"))}: ${esc(poor.join(" · "))}</span>` : ""}`;
-  };
-  const gapChips = (gaps) => gaps.length
-    ? `<div class="team-gaps"><span>${esc(UI.translate("Nobody here is good at"))}</span>${gaps.map((axis) => `<span class="pill warning">${esc(UI.translate(STAT_NAMES[axis]))}</span>`).join("")}</div>`
-    : `<div class="team-gaps ok">${esc(UI.translate("No weak spots: every ability has someone strong."))}</div>`;
-  const teamPanel = (stats, ghost) => `<div class="team-panel"><div class="team-chart">${radarSvg(stats.team, { size: 290, labels: true, ghost })}</div>
-      <div class="team-info"><div class="team-power"><span>${esc(UI.translate("Team power"))}</span><strong class="num">${stats.power}</strong><small>/ ${STAT_MAX * STAT_ORDER.length}</small></div>${gapChips(stats.gaps)}${statLegend(stats.team)}
-      <p class="muted team-rule">${esc(UI.translate("Each role scores 0 to 5 on six abilities. The strongest member sets the team's score, and every other strong member (3 or more) adds 0.5, up to 5."))}</p></div></div>`;
   // Every role is a small pixel character: a chubby chibi base with its own hair, outfit and
   // accessory (PM crown, SA detective hat, SD beret, RD headphones, CR angel, SR monk,
   // AR devil, SEC knight, QA tester). "." keeps the base pixel, anything else replaces it.
@@ -1305,6 +765,129 @@
       <div class="settings-card-body${opts.flush ? " flush" : ""}">${body}</div>${footer ? `<footer class="settings-card-foot">${footer}</footer>` : ""}
     </section>`;
 
+  function projectSettingsHtml(overview) {
+    const runtime = overview.editable.runtime || {};
+    return `
+        ${teamUi.html(overview)}
+        ${pageCard("test", "Test command", "After each change, ccc-mcp runs the tests on this computer. The result comes from the test run, never from an AI's word.",
+          `<div class="field">
+            <input type="text" id="test-command" class="mono" value="${esc((overview.editable.test_command || []).join(" "))}" placeholder="e.g. python -m pytest -q" aria-label="${esc(UI.translate("Test command"))}" />
+            <div class="hint">Leave blank to test changed Python test files automatically. Goals that run on their own need a command here.</div>
+          </div>`, `<button class="btn small primary" id="save-test-command">Save</button>`)}
+        ${pageCard("language", "Language", "The language the AI team writes its reports in.",
+          `<div class="field narrow-field"><select id="language-select" aria-label="${esc(UI.translate("Language"))}">
+            ${[["zh-TW", "繁體中文"], ["ch", "简体中文"], ["en", "English"]].map(([l, name]) => `<option value="${l}" ${overview.editable.language === l ? "selected" : ""} data-no-i18n>${name}</option>`).join("")}
+          </select></div>`, `<button class="btn small primary" id="save-language">Save</button>`)}
+        <details class="settings-more"><summary>${esc(UI.translate("Runtime for tests (advanced)"))}</summary>
+        ${pageCard("runtime", "Project runtime", "Choose the language and installed runtime used for this project's code and tests.",
+          `<div class="settings-grid">
+            <div class="field">
+              <label for="runtime-language">Programming language</label>
+              <select id="runtime-language">
+                <option value="" ${!runtime.language ? "selected" : ""}>Default environment</option>
+                ${Object.entries(overview.available_runtimes || {}).map(([key, label]) => `<option value="${esc(key)}" ${runtime.language === key ? "selected" : ""}>${esc(label)}</option>`).join("")}
+              </select>
+            </div>
+            <div class="field">
+              <label for="runtime-version">Runtime version</label>
+              <input type="text" id="runtime-version" value="${esc(runtime.version)}" placeholder="e.g. 3.9 or 22.14.0" autocomplete="off" />
+              <div class="hint">3.9 accepts any 3.9.x patch. JavaScript and TypeScript use the Node.js version.</div>
+            </div>
+          </div>
+          <div class="field">
+            <label for="runtime-executable">Local executable (optional)</label>
+            <input type="text" id="runtime-executable" class="mono" value="${esc(runtime.executable)}" placeholder="e.g. C:/Python39/python.exe" autocomplete="off" />
+            <div class="hint">Absolute executable path or command name, without arguments. Leave empty to find an installed runtime.</div>
+          </div>
+          <div id="runtime-status" class="hint settings-status" role="status" aria-live="polite"></div>`,
+          `<button class="btn small" id="check-runtime">Check local version</button><button class="btn small primary" id="save-runtime">Save runtime</button>`)}
+        </details>`;
+  }
+
+  // A role that came in with an imported backup stays off until a person trusts it, here, by typing the
+  // phrase for that exact version. This is the only place that can; roles are no longer created here.
+  function pendingRolesHtml(roles) {
+    return pageCard("shield", "Imported roles waiting for you", "These roles came with a backup and do nothing until you trust them. What a role may do is decided by ccc-mcp's own code for its base role, never by its text.",
+      roles.map((role) => `<div class="kv-row" data-key="role:${esc(role.id)}">
+        <span class="k"><strong data-no-i18n>${esc(role.name)}</strong> <span class="pill neutral" data-no-i18n>${esc(role.permissions.base_role)}</span>
+          <span class="pill ${role.permissions.may_write_files ? "warning" : "positive"}">${esc(UI.translate(role.permissions.may_write_files ? "can change files" : "read-only"))}</span></span>
+        <span class="v"><button class="btn small primary" data-review-role="${esc(role.id)}">${esc(UI.translate("Review and trust"))}</button></span>
+      </div>`).join(""));
+  }
+
+  function bindPendingRoles(id, roles, done) {
+    document.querySelectorAll("[data-review-role]").forEach((button) => {
+      button.onclick = () => {
+        const role = roles.find((r) => r.id === button.dataset.reviewRole);
+        if (!role) return;
+        showModal({
+          title: "Trust this imported role",
+          body: `${role.name} (${role.permissions.base_role}, ${role.permissions.may_write_files ? UI.translate("can change files") : UI.translate("read-only")})\n\n${UI.translate("From")} · ${role.source.source_project_id || "?"} · ${role.source.exported_at || ""}\n\n${String(typeof role.instruction === "string" ? role.instruction : JSON.stringify(role.instruction || ""))}`,
+          fields: [{ label: `${UI.translate("Type")} ${role.phrase} ${UI.translate("to confirm")}`, placeholder: role.phrase }],
+          confirmLabel: "Trust this role",
+          onSubmit: async ([typed]) => {
+            await api(`/projects/${encodeURIComponent(id)}/roles/${encodeURIComponent(role.id)}/confirm-import`, { method: "POST", body: { version: role.version, version_sha256: role.version_sha256, confirmation: typed } });
+            toast("Role trusted.");
+            button.closest("[data-key]")?.remove();
+            teamUi.refreshRoles?.(id);
+            done();
+          },
+        });
+      };
+    });
+  }
+
+  function bindProjectSettings(id, gen, overview) {
+    teamUi.bind(id, overview);
+    const base = `/projects/${encodeURIComponent(id)}/config`;
+    document.getElementById("save-language").onclick = async () => {
+      try { await api(`${base}/language`, { method: "POST", body: { language: document.getElementById("language-select").value } }); toast("Saved."); }
+      catch (err) { toast(err.message, true); }
+    };
+    document.getElementById("save-test-command").onclick = async () => {
+      const typed = document.getElementById("test-command").value.trim();
+      try { await api(`${base}/test-command`, { method: "POST", body: { command: typed ? typed.split(/\s+/) : null } }); toast("Saved."); }
+      catch (err) { toast(err.message, true); }
+    };
+    const status = document.getElementById("runtime-status");
+    const language = document.getElementById("runtime-language");
+    const selection = () => (language.value ? {
+      language: language.value,
+      version: document.getElementById("runtime-version").value.trim() || null,
+      executable: document.getElementById("runtime-executable").value.trim() || null,
+    } : null);
+    const fieldsChanged = () => {
+      document.getElementById("runtime-version").disabled = !language.value;
+      document.getElementById("runtime-executable").disabled = !language.value;
+      status.textContent = "";
+    };
+    fieldsChanged();
+    language.onchange = fieldsChanged;
+    document.getElementById("save-runtime").onclick = async (event) => {
+      const button = event.currentTarget;
+      button.disabled = true;
+      try {
+        await api(`${base}/runtime`, { method: "POST", body: { runtime: selection() } });
+        if (!stale(gen)) status.textContent = UI.translate("Runtime saved. Check the local version to verify availability.");
+        toast("Saved.");
+      } catch (err) { toast(err.message, true); } finally { button.disabled = false; }
+    };
+    document.getElementById("check-runtime").onclick = async (event) => {
+      const button = event.currentTarget;
+      button.disabled = true;
+      status.textContent = UI.translate("Checking…");
+      try {
+        const chosen = selection();
+        if (!chosen) { status.textContent = UI.translate("Default environment; no runtime version selected."); return; }
+        const result = await api(`${base}/runtime/check`, { method: "POST", body: { runtime: chosen } });
+        if (stale(gen)) return;
+        status.textContent = result.matches && result.available
+          ? `${UI.translate("Runtime available")}: ${result.actual_version} · ${result.executable}`
+          : `${UI.translate("Runtime unavailable or version mismatch")}: ${UI.error(result.reason)}`;
+      } catch (err) { if (!stale(gen)) status.textContent = UI.error(err.message, err.status); } finally { button.disabled = false; }
+    };
+  }
+
   async function renderProjectOverview() {
     const gen = renderGen;
     const route = parseRoute();
@@ -1323,6 +906,10 @@
     const access = project.access;
     let tasks = [];
     try { tasks = await api(`/projects/${encodeURIComponent(id)}/tasks`); } catch (err) { tasks = []; }
+    let settings = null;
+    try { settings = await api(`/projects/${encodeURIComponent(id)}/settings`); } catch (err) { settings = null; }
+    let pendingRoles = [];
+    try { pendingRoles = (await api(`/projects/${encodeURIComponent(id)}/roles/pending`)).pending; } catch (err) { pendingRoles = []; }
     if (stale(gen)) return;
     const finished = tasks.filter((t) => t.state === "COMPLETED").length;
     const running = tasks.filter((t) => !["COMPLETED", "CANCELLED"].includes(t.state)).length;
@@ -1332,8 +919,7 @@
       <div class="title-row">
         <div><h1>${esc(id)}</h1><div class="sub path-line"><span class="mono" data-no-i18n>${esc(project.root)}</span><button type="button" class="btn small ghost" id="btn-copy-path">Copy path</button></div></div>
         <div class="title-actions">
-          <a class="btn" href="#/p/${encodeURIComponent(id)}/tasks">View tasks</a>
-          <a class="btn" href="#/p/${encodeURIComponent(id)}/settings">Settings</a>
+          <a class="btn primary" href="#/p/${encodeURIComponent(id)}/tasks">View tasks</a>
           <button class="btn" id="btn-export-project">Export backup</button>
         </div>
       </div>
@@ -1359,6 +945,8 @@
           access.mode === "read-write"
             ? `<button class="btn small" id="btn-revoke">Revoke write (back to read-only)</button>`
             : `<button class="btn small primary" id="btn-enable-write">Enable write</button>`)}
+        ${settings ? projectSettingsHtml(settings) : ""}
+        ${pendingRoles.length ? `<div id="pending-team-roles">${pendingRolesHtml(pendingRoles)}</div>` : ""}
         ${pageCard("danger", "Destructive actions", "These change or remove this project's ccc-mcp records. Read each one before you confirm.",
           `<div class="danger-list">
             ${dangerRow("Clear workflow history", "Archives the database and resets tasks/context for this project. Source files, settings and authorization are preserved.",
@@ -1461,7 +1049,11 @@
         },
       });
     });
-    watchForChanges(gen, () => api("/projects"), renderProjectOverview);
+    if (settings) bindProjectSettings(id, gen, settings);
+    bindPendingRoles(id, pendingRoles, () => {
+      const section = document.getElementById("pending-team-roles");
+      if (!section?.querySelector("[data-review-role]")) section?.remove();
+    });
   }
 
   const STAGES = [
@@ -1481,89 +1073,6 @@
       return `<div class="${cls}"></div>`;
     }).join("");
     return `<div class="stage-strip">${segs}</div>`;
-  }
-
-  const taskRowHtml = (t) => `
-      <tr class="clickable" data-task="${esc(t.id)}" tabindex="0" role="link" aria-label="${esc(t.id)}">
-        <td class="mono">${esc(t.id)}</td>
-        <td><span class="pill ${taskStateTone(t.state)}">${esc(UI.translate(t.state))}</span></td>
-        <td class="task-req" title="${esc(t.requirement || "")}">${esc((t.requirement || "").slice(0, 80))}</td>
-        <td class="task-when">${whenHtml(t.created)}</td>
-        <td class="table-actions">${REMOVABLE_STATES.has(t.state) ? `<button class="btn small danger quiet" data-delete-task="${esc(t.id)}">${esc(UI.translate("Delete"))}</button>` : ""}</td>
-      </tr>
-    `;
-
-  // Update the task table in place: new tasks slide in, changed rows are replaced, removed
-  // rows disappear, and rows that did not change are never touched.
-  function patchTaskRows(tbody, tasks) {
-    const template = document.createElement("template");
-    template.innerHTML = tasks.map(taskRowHtml).join("");
-    const incoming = [...template.content.children];
-    incoming.forEach((el) => UI.localize(el));
-    const live = new Map([...tbody.children].map((el) => [el.dataset.task, el]));
-    const strip = (el) => el.outerHTML.replace(/ is-entering/g, "");
-    const finalOrder = incoming.map((node) => {
-      const existing = live.get(node.dataset.task);
-      if (existing) return strip(existing) === strip(node) ? existing : node;
-      enter(node, "is-entering");
-      return node;
-    });
-    applyOrder(tbody, finalOrder);
-  }
-
-  async function renderTasksList() {
-    const gen = renderGen;
-    const id = parseRoute().project;
-    const tasksPath = `/projects/${encodeURIComponent(id)}/tasks`;
-    layout(loadingView());
-    let tasks;
-    try { tasks = await api(tasksPath); }
-    catch (err) { if (!stale(gen)) errorView(err); return; }
-    if (stale(gen)) return;
-    layout(`
-      <div class="title-row"><div><h1>Tasks</h1><div class="sub">${esc(id)}</div></div></div>
-      ${tasks.length ? `
-        <table class="task-table">
-          <thead><tr><th>Task</th><th>State</th><th>Requirement</th><th>Created</th><th></th></tr></thead>
-          <tbody>${tasks.map(taskRowHtml).join("")}</tbody>
-        </table>
-      ` : `<div class="empty">${esc(UI.translate("Tasks created through ChatGPT or the CLI will appear here."))}</div>`}
-    `);
-    const signature = (list) => JSON.stringify(list.map((t) => [t.id, t.state, t.requirement, t.created]));
-    let baseline = signature(tasks);
-    // One refresh path for the poll and for the delete button: a table that appears or
-    // empties out is a full redraw (rare), anything else is patched row by row.
-    const refresh = async () => {
-      let fresh;
-      try { fresh = await api(tasksPath); } catch (_) { return; }
-      if (stale(gen)) return;
-      const next = signature(fresh);
-      if (next === baseline) return;
-      baseline = next;
-      const tbody = document.querySelector("table tbody");
-      if (!fresh.length || !tbody) { renderTasksList(); return; }
-      patchTaskRows(tbody, fresh);
-    };
-    const table = document.querySelector("table");
-    if (table) {
-      const open = (taskId) => navTo(`/p/${encodeURIComponent(id)}/tasks/${encodeURIComponent(taskId)}`);
-      table.addEventListener("click", (event) => {
-        const remove = event.target.closest("[data-delete-task]");
-        if (remove) { confirmDeleteTask(id, remove.dataset.deleteTask, refresh); return; }
-        const row = event.target.closest("tr[data-task]");
-        if (row) open(row.dataset.task);
-      });
-      table.addEventListener("keydown", (event) => {
-        const row = event.target.closest("tr[data-task]");
-        if (row && event.target === row && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); open(row.dataset.task); }
-      });
-    }
-    let polling = false;
-    trackTimer(setInterval(async () => {
-      if (stale(gen) || polling) return;
-      polling = true;
-      try { await refresh(); } finally { polling = false; }
-    }, 2500));
   }
 
   function verificationLine(tests) {
@@ -1588,20 +1097,8 @@
     const deps = tests && tests.dependencies;
     if (!deps || !deps.detected) return "";
     const label = deps.installed ? "Installed before testing" : "Dependency installation failed";
-    return `${esc(UI.translate(label))} · <span class="mono">${esc(deps.manifest || "")}</span>${deps.reason ? ` · ${esc(deps.reason)}` : ""}`;
+    return `${esc(UI.translate(label))} · <span class="mono">${esc(deps.manifest || "")}</span>${deps.reason ? ` · ${esc(UI.error(deps.reason))}` : ""}`;
   }
-
-  function evaluationReport(row) {
-    const score = row.quality_score === null ? "—" : `${row.quality_score}/100`;
-    const coverage = Math.round((row.evidence_coverage || 0) * 100);
-    const sub = row.scoring_details?.sub_scores || {};
-    const dims = Object.entries(row.scoring_details?.weights || {}).map(([name]) => `<span>${esc(UI.translate(name))}: <strong>${sub[name] === null || sub[name] === undefined ? "—" : Math.round(sub[name])}</strong></span>`).join("");
-    return `<article class="evaluation-report"><div class="evaluation-report-top"><div><strong>${esc(row.role_name || row.role)} · ${esc(row.agent)}</strong><small>${row.role_ref ? `${esc(UI.translate("Custom role"))} · ${esc(row.role)} · v${esc(row.role_version ?? "")} · ` : ""}${esc(row.evaluation_timestamp)} · v${esc(row.version)} · ${esc(row.trigger)}</small></div><span class="pill ${row.task_status === "PASSED" ? "positive" : row.task_status === "FAILED" ? "negative" : "warning"}">${esc(UI.translate(row.task_status))}</span></div><div class="evaluation-measures"><span><strong class="num">${esc(score)}</strong>${esc(UI.translate("Quality from available signals"))}</span><span><strong class="num">${coverage}%</strong>${esc(UI.translate("Evidence coverage"))}</span></div><div class="evaluation-dimensions">${dims}</div><details><summary>${esc(UI.translate("Evidence and disagreements"))} · ${esc((row.evidence || []).length)} / ${esc((row.disagreements || []).length)}</summary><pre class="mono">${esc(JSON.stringify({ evidence: row.evidence, disagreements: row.disagreements, features: row.scoring_details?.features }, null, 2))}</pre></details><button class="btn small" data-reevaluate="${esc(row.source_execution_id)}">${esc(UI.translate("Re-evaluate execution"))}</button></article>`;
-  }
-
-  let taskDetailPane = "conversation";
-  let taskDetailDraft = "";
-  let taskDetailRoute = "";
 
   function renderTaskVersionMismatch(status, projectId, taskId, missingPaths, legacyExecutions) {
     const transitions = (status.events || []).filter((event) => ["CREATED", "COMPLETED", "CANCELLED"].includes(event.new_state)).map((event) => ({
@@ -1755,7 +1252,7 @@
     if (!isUser && !isPm) rememberEventRole(event);
     const speaker = isUser ? "USER" : (!isPm && event.role_ref) || role;
     const avatar = `<div class="chat-avatar av-${roleAvatarTone(speaker)}" aria-hidden="true">${roleAvatarIcon(speaker)}</div>`;
-    const speakerName = isUser ? UI.translate("You") : (!isPm && event.role_name) || roleName(speaker);
+    const speakerName = isUser ? UI.translate("You") : (!isPm && event.role_name && (event.role_ref ? event.role_name : UI.translate(event.role_name))) || roleName(speaker);
     if (type === "agent_started" && typingIds && typingIds.has(event.execution_id)) {
       return `<article class="chat-post is-typing" data-event-id="${esc(event.event_id)}">
         ${avatar}
@@ -1787,7 +1284,7 @@
 
   async function fetchTaskView(id, taskId, taskBase) {
     const responses = await Promise.allSettled([
-      api(taskBase), api(`${taskBase}/timeline`), api(`${taskBase}/evaluations`),
+      api(taskBase), api(`${taskBase}/timeline`),
       api(`${taskBase}/artifacts`), api(`/projects/${encodeURIComponent(id)}/settings`), api(`${taskBase}/handoff`),
     ]);
     if (responses[0].status === "rejected") return { error: responses[0].reason };
@@ -1799,11 +1296,11 @@
     }
     const failed = responses.find((result) => result.status === "rejected");
     if (failed) return { error: new Error(`${failed.reason.path || "Task request"}: ${failed.reason.message}`) };
-    const [status, timeline, evaluations, artifacts, settings, handoff] = responses.map((result) => result.value);
+    const [status, timeline, artifacts, settings, handoff] = responses.map((result) => result.value);
     // Only tasks that run pinned custom roles have anything to report; an older server has no route.
     let contract = null;
     try { contract = await api(`${taskBase}/contract`); } catch (_) { contract = null; }
-    return { data: { status, timeline, evaluations, artifacts, settings, handoff, contract } };
+    return { data: { status, timeline, artifacts, settings, handoff, contract } };
   }
 
   // What counts as "something changed" for the live conversation. Fields that tick every
@@ -1837,10 +1334,10 @@
       const to = fallback.target || unconfirmed();
       const arrow = `<strong data-no-i18n>${esc(from)}</strong> → <strong data-no-i18n>${esc(to)}</strong>`;
       if (!fallback.attempted) {
-        return `<div class="provider-switch-card">${head}<p>${arrow}: ${esc(UI.translate("not switched"))} — ${esc(fallback.reason || unconfirmed())}</p></div>`;
+        return `<div class="provider-switch-card">${head}<p>${arrow}: ${esc(UI.translate("not switched"))} — ${esc(UI.error(fallback.reason || unconfirmed()))}</p></div>`;
       }
       if (!fallback.dispatched) {
-        return `<div class="provider-switch-card"><span class="pill negative">${reasonLabel}</span><p>${arrow}: ${esc(UI.translate("fallback dispatch failed"))} — ${esc(fallback.failed_reason || unconfirmed())}</p></div>`;
+        return `<div class="provider-switch-card"><span class="pill negative">${reasonLabel}</span><p>${arrow}: ${esc(UI.translate("fallback dispatch failed"))} — ${esc(UI.error(fallback.failed_reason || unconfirmed()))}</p></div>`;
       }
       const fallbackExec = fallback.fallback_execution_id ? executionsById.get(fallback.fallback_execution_id) : null;
       let stateLabel = unconfirmed();
@@ -1882,6 +1379,9 @@
   // The chosen AI and its prepared handoff survive re-renders of the technical pane. They
   // are keyed by task, so another task never shows this content. The copy button copies
   // the full handoff for the new AI; the page only shows the few lines a person needs.
+  let taskDetailPane = "conversation";
+  let taskDetailDraft = "";
+  let taskDetailRoute = "";
   let handoffView = null;
   const HANDOFF_TARGETS = [
     ["claude", "Hand off to Claude Code"],
@@ -1972,7 +1472,7 @@
     if (view?.status === "loading") {
       result = `<p class="handoff-status" role="status" aria-busy="true">${esc(UI.translate("Preparing the handoff from the saved task state…"))}</p>`;
     } else if (view?.status === "error") {
-      result = `<p class="handoff-status is-error" role="alert">${esc(UI.translate("Could not prepare the handoff."))} ${esc(view.error)}</p>`;
+      result = `<p class="handoff-status is-error" role="alert">${esc(UI.translate("Could not prepare the handoff."))} ${esc(UI.error(view.error))}</p>`;
     } else if (view?.status === "ready") {
       result = handoffReadyHtml(view, signature);
     }
@@ -1982,7 +1482,7 @@
   }
 
   function buildTaskParts(id, taskId, data) {
-    const { status, timeline, evaluations, artifacts, settings, handoff } = data;
+    const { status, timeline, artifacts, settings, handoff } = data;
     activeRoleNames = settings?.role_names || settings?.editable?.role_names || {};
     activeRoleAvatars = settings?.role_avatars || settings?.editable?.role_avatars || {};
     setCustomRoles(settings?.custom_roles || []);
@@ -2014,7 +1514,7 @@
       <ul class="drift-steps">${driftSteps.map((step) => `<li><span class="pill warning" data-no-i18n>${esc(step.name)}</span> <small class="mono">${esc(step.step_id)}</small> <button class="btn small primary" type="button" data-drift-review="${esc(step.step_id)}">${esc(UI.translate("Review the change"))}</button></li>`).join("")}</ul></div>` : "";
     const gateDecision = workflow.pending_decision && !terminal ? workflow.pending_decision : null;
     const gateCard = gateDecision ? `<div class="task-next gate-decision"><strong>${esc(UI.translate("Gate decision needed"))}</strong>
-      <p>${esc(roleName(gateDecision.role_ref || gateDecision.role))} · ${esc(gateDecision.reason)}</p>
+      <p>${esc(roleName(gateDecision.role_ref || gateDecision.role))} · ${esc(UI.system(gateDecision.reason, "Gate decision needed"))}</p>
       ${gateDecision.findings.length ? `<ul class="gate-findings">${gateDecision.findings.map((f) => `<li><span class="pill ${f.severity === "blocker" ? "negative" : "warning"}">${esc(f.severity)}</span> ${esc(f.claim)}${f.evidence ? ` <small>${esc(f.evidence)}</small>` : ""}</li>`).join("")}</ul>` : ""}
       <div class="gate-decision-actions">
         <button class="btn small primary" type="button" data-gate-decision="proceed">${esc(UI.translate("Accept and continue"))}</button>
@@ -2037,15 +1537,6 @@
     const touchesCode = !flowSteps || flowSteps.some((role) => ["RD", "SD/RD"].includes(baseOfRole(role)));
     activeTouchesCode = touchesCode;
     const deliverableCard = deliverables.length ? `<section class="task-result-card spec-card"><h2>${esc(UI.translate(touchesCode ? "Documents from each step" : "Results"))}</h2><p class="muted">${esc(UI.translate("Newest first. Each step hands its document to the next."))}</p>${deliverables.map((a, index) => `<details ${index === 0 ? "open" : ""}><summary><strong data-no-i18n>${esc(roleName(docRole(a.path)))}</strong> · ${esc(UI.translate(TASK_ROLE_LABELS[docRole(a.path)] || "Result"))}</summary><pre class="mono task-spec">${esc(a.content || "")}</pre></details>`).join("")}</section>` : "";
-    const teamCard = (() => {
-      if (!workflow.stats) return "";
-      const map = workflow.stats.roles || {};
-      const full = teamStats(flowSteps || ["SA", "SD/RD", "REVIEW"], map);
-      const finished = flowSteps ? flowSteps.filter((_, index) => flowDone(index)) : ["SA", "SD/RD", "REVIEW"].filter((role) => (role === "SD/RD" ? ["SD", "RD", "SD/RD"].some((r) => doneRoles.has(r)) : doneRoles.has(role)));
-      const now = teamStats(finished, map);
-      const complete = finished.length >= (flowSteps ? flowSteps.length : 3);
-      return `<section class="task-result-card team-card"><h2>${esc(UI.translate("Team abilities"))}</h2><p class="muted">${esc(UI.translate(complete ? "Every step is done: this is what the whole team brought." : "Grows as each step finishes. The dashed outline is the whole team."))}</p>${teamPanel(complete ? full : now, complete ? null : full.team)}</section>`;
-    })();
     const latestDiff = diffRows.at(-1);
     const latestTest = testRows.at(-1);
     return {
@@ -2062,12 +1553,12 @@
       feed: taskConversation(events, typingIds),
       paused: Boolean(control.paused && canMessage),
       restartPicker: flowSteps ? `<fieldset class="restart-picker" ${canCompose ? "" : "disabled"}><legend>${esc(UI.translate("Who should redo it?"))}</legend><div class="restart-chips">${flowSteps.map((role, index) => `<label class="restart-chip"><input type="radio" name="restart-step" value="${index}" data-role="${esc(role)}" ${index === restartDefault ? "checked" : ""}><span class="restart-chip-body"><span class="chat-avatar av-${roleAvatarTone(role)}" aria-hidden="true">${roleAvatarIcon(role).replace('width="18" height="18"', 'width="16" height="16"')}</span><span class="restart-chip-name"><i>${index + 1}</i><span data-no-i18n>${esc(roleName(role))}</span></span></span></label>`).join("")}</div></fieldset>` : "",
-      next: driftCard + (gateCard || (handoff.next_action && !terminal ? `<div class="task-next ${control.paused ? "paused" : ""}"><strong>${esc(UI.translate(control.paused ? "Paused: waiting for you" : "Next step"))}</strong><p>${esc(handoff.next_action)}</p>${control.paused && canMessage ? `<button class="btn small primary" type="button" id="task-resume-inline">${esc(UI.translate("Continue work"))}</button>` : ""}</div>` : "")),
-      results: `${teamCard}${deliverableCard}${touchesCode ? `<section class="task-result-grid">
+      next: driftCard + (gateCard || (handoff.next_action && !terminal ? `<div class="task-next ${control.paused ? "paused" : ""}"><strong>${esc(UI.translate(control.paused ? "Paused: waiting for you" : "Next step"))}</strong><p>${esc(UI.system(handoff.next_action, "Details are available in the technical record."))}</p>${control.paused && canMessage ? `<button class="btn small primary" type="button" id="task-resume-inline">${esc(UI.translate("Continue work"))}</button>` : ""}</div>` : "")),
+      results: `${deliverableCard}${touchesCode ? `<section class="task-result-grid">
       <div class="task-result-card"><h2>${esc(UI.translate("Changed files and diff"))}</h2>${latestDiff ? `<pre class="mono task-diff">${esc(latestDiff.content || "")}</pre>` : `<p class="muted">${esc(UI.translate("No saved diff yet."))}</p>`}</div>
       <div class="task-result-card"><h2>${esc(UI.translate("Host test evidence"))}</h2><p class="muted">${esc(UI.translate("Run by the host on this machine — never taken from the agent's own word."))}</p>${verificationLine(brief.tests)}${latestTest ? `<details><summary>${esc(UI.translate("View saved test result"))}</summary><pre class="mono">${esc(latestTest.content)}</pre></details>` : `<p class="muted">${esc(UI.translate("No host test evidence yet."))}</p>`}</div>
-    </section><section class="task-result-card evaluation-section"><div class="evaluation-section-head"><div><h2>${esc(UI.translate("Evaluation and evidence"))}</h2><p>${esc(UI.translate("Scores are separate from task completion."))}</p></div>${settings.editable?.evaluation_engine?.enabled ? `<button class="btn small" id="task-evaluate">${esc(UI.translate("Evaluate latest executions"))}</button>` : `<button class="btn small" id="task-enable-evaluation">${esc(UI.translate("Enable evaluation"))}</button>`}</div>${evaluations.length ? `<div class="evaluation-list">${evaluations.slice().reverse().map(evaluationReport).join("")}</div>` : `<p class="muted">${esc(UI.translate("No evaluations for this task yet."))}</p>`}</section>` : ""}`,
-      technical: `<div class="task-technical">${providerSwitchCard(events, status)}<section class="task-result-card"><h2>${esc(UI.translate("Execution history"))}</h2>${(status.executions || []).length ? `<ul class="run-list">${(status.executions || []).map((e) => `<li><span>${esc(e.role_name || roleName(e.role_ref || e.role))}</span><span class="run-status">${esc(UI.translate(e.status))}</span>${e.error ? `<span class="run-error">${esc(e.error)}</span>` : ""}</li>`).join("")}</ul>` : `<p class="muted">${esc(UI.translate("No executions yet."))}</p>`}</section><section class="task-result-card"><h2>${esc(UI.translate("Hand off to another AI"))}</h2>${handoffPanelHtml(`${id}/${taskId}`, taskSignature(data.status, data.timeline))}</section></div>`,
+    </section>` : ""}`,
+      technical: `<div class="task-technical">${providerSwitchCard(events, status)}<section class="task-result-card"><h2>${esc(UI.translate("Execution history"))}</h2>${(status.executions || []).length ? `<ul class="run-list">${(status.executions || []).map((e) => `<li><span>${esc(e.role_name || roleName(e.role_ref || e.role))}</span><span class="run-status">${esc(UI.translate(e.status))}</span>${e.error ? `<span class="run-error">${esc(UI.error(e.error))}</span>` : ""}</li>`).join("")}</ul>` : `<p class="muted">${esc(UI.translate("No executions yet."))}</p>`}</section><section class="task-result-card"><h2>${esc(UI.translate("Hand off to another AI"))}</h2>${handoffPanelHtml(`${id}/${taskId}`, taskSignature(data.status, data.timeline))}</section></div>`,
     };
   }
 
@@ -2124,6 +1615,24 @@
   function enter(node, className) {
     node.classList.add(className);
     node.addEventListener("animationend", () => node.classList.remove(className), { once: true });
+  }
+
+  // "New messages" button for a chat feed the person has scrolled away from the end of.
+  function showNewMessagesHint(feed) {
+    const room = feed.closest(".task-conversation-room");
+    if (!room) return;
+    let hint = room.querySelector(".feed-new-hint");
+    if (!hint) {
+      hint = document.createElement("button");
+      hint.type = "button";
+      hint.className = "feed-new-hint btn small primary";
+      hint.textContent = UI.translate("New messages");
+      hint.onclick = () => { feed.scrollTo({ top: feed.scrollHeight }); hint.remove(); };
+      feed.insertAdjacentElement("afterend", hint);
+      feed.addEventListener("scroll", () => {
+        if (feed.scrollHeight - feed.scrollTop - feed.clientHeight < 40) room.querySelector(".feed-new-hint")?.remove();
+      });
+    }
   }
 
   async function renderTaskDetail() {
@@ -2270,20 +1779,6 @@
       }; });
       const deleteTask = document.getElementById("task-delete");
       if (deleteTask) deleteTask.onclick = () => confirmDeleteTask(id, taskId, () => navTo(`/p/${encodeURIComponent(id)}/tasks`));
-      const enableEvaluation = document.getElementById("task-enable-evaluation");
-      if (enableEvaluation) enableEvaluation.onclick = async () => {
-        try { await api(`/projects/${encodeURIComponent(id)}/config/evaluation-engine`, { method: "POST", body: { enabled: true, auto_evaluate: data.settings.editable?.evaluation_engine?.auto_evaluate || false } }); toast("Evaluation enabled."); refresh(); }
-        catch (err) { toast(err.message, true); }
-      };
-      const evaluate = document.getElementById("task-evaluate");
-      if (evaluate) evaluate.onclick = async () => {
-        try { await api(`${taskBase}/evaluate`, { method: "POST", body: {} }); toast("Evaluations saved."); refresh(); }
-        catch (err) { toast(err.message, true); }
-      };
-      document.querySelectorAll("[data-reevaluate]").forEach((button) => { button.onclick = async () => {
-        try { await api(`${taskBase}/reevaluate`, { method: "POST", body: { execution_id: button.dataset.reevaluate } }); toast("New evaluation version saved."); refresh(); }
-        catch (err) { toast(err.message, true); }
-      }; });
       bindHandoffPanel();
     };
 
@@ -2319,6 +1814,8 @@
       parts = next;
       bindDynamic();
       if (feedChanged && stick) room.scrollTo({ top: room.scrollHeight, behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+      // Someone reading older messages is never pulled away: they get a button instead.
+      else if (feedChanged) showNewMessagesHint(room);
     };
     async function refresh() {
       const result = await fetchTaskView(id, taskId, taskBase);
@@ -2361,1132 +1858,14 @@
       } catch (err) { toast(err.message, true); button.disabled = false; }
     });
     let baseline = parts.signature;
-    let polling = false;
-    trackTimer(setInterval(async () => {
-      if (stale(gen) || polling) return;
-      polling = true;
-      try {
-        const [freshStatus, freshTimeline] = await Promise.all([api(taskBase), api(`${taskBase}/timeline`)]);
-        const serialized = taskSignature(freshStatus, freshTimeline);
-        if (!stale(gen) && serialized !== baseline) { baseline = serialized; await refresh(); }
-      } catch (_) { /* The next poll retries; saved events remain available after reconnect. */ }
-      finally { polling = false; }
-    }, 2500));
-  }
-
-  async function renderSettings() {
-    const gen = renderGen;
-    const id = parseRoute().project;
-    layout(loadingView());
-    let overview, catalog;
-    try {
-      [overview, catalog] = await Promise.all([
-        api(`/projects/${encodeURIComponent(id)}/settings`), api(`/projects/${encodeURIComponent(id)}/workflows`),
-      ]);
-    }
-    catch (err) { if (!stale(gen)) errorView(err); return; }
-    if (stale(gen)) return;
-    setCustomRoles(catalog.custom_roles);
-    const roles = overview.editable.roles || {};
-    const providers = Object.keys(overview.available_providers || {});
-    const effortOptions = (provider, current) => {
-      const list = overview.available_providers?.[provider] || [];
-      return `<option value="">${esc(UI.translate("CLI default"))}</option>` +
-        list.map((e) => `<option value="${esc(e)}" ${current === e ? "selected" : ""}>${esc(e)}</option>`).join("");
-    };
-    const ROLE_HELP = { SA: "Analysis", SD: "Design", RD: "Implementation", "SD/RD": "Design and implementation in one step (Classic workflow only)", REVIEW: "Code review (CR)", SR: "Specification review", AR: "Adversarial review", SEC: "Security review", QA: "Quality assurance", SW: "Specification writing", PA: "Understands the request and hands over the result", RS: "Looks things up and collects information", AN: "Compares options and weighs pros and cons", PL: "Turns findings into a plan with steps and costs", CS: "Gives expert advice and judges what is workable", WR: "Writes the article, proposal or report", ED: "Polishes wording and structure", VC: "Checks claims, sources and figures", RV: "Checks the result for problems and gaps" };
-    activeRoleNames = overview.editable.role_names || {};
-    activeRoleAvatars = overview.editable.role_avatars || {};
-    const nameField = (role) => `<div class="field role-name-field"><label for="role-name-${esc(role.replace("/", "-"))}">${esc(UI.translate("Chat name"))}</label><input type="text" id="role-name-${esc(role.replace("/", "-"))}" class="role-name-input" maxlength="24" value="${esc(activeRoleNames[role] || "")}" placeholder="${esc(ROLE_FRIENDLY[role] ? UI.translate(ROLE_FRIENDLY[role]) : ROLE_ABBREVIATIONS[role] || role)}" data-no-i18n /></div>`;
-    const avatarPicker = (role) => `<details class="field avatar-field avatar-details"><summary><span class="avatar-summary-label">${esc(UI.translate("Avatar"))}</span><span class="role-avatar chat-avatar av-${roleAvatarTone(role)}" aria-hidden="true">${roleAvatarIcon(role)}</span><span class="avatar-summary-action">${esc(UI.translate("Change avatar"))}</span></summary><div class="avatar-picker" role="radiogroup" aria-label="${esc(UI.translate("Avatar"))}" data-avatar-role="${esc(role)}">${AVATAR_ORDER.map((avatar) => {
-      const current = activeRoleAvatars[role] || DEFAULT_AVATAR[role] || "person";
-      return `<button type="button" class="avatar-option ${current === avatar ? "selected" : ""}" role="radio" aria-checked="${current === avatar}" data-avatar="${avatar}" title="${esc(UI.translate(avatar))}"><span class="chat-avatar av-${roleAvatarTone(role)}" aria-hidden="true">${spriteFor(avatar)}</span></button>`;
-    }).join("")}</div></details>`;
-    roleStatsMap = catalog.role_stats || {};
-    const roleHead = (role, help, pill) => `<div class="role-config-head">
-          <span class="role-avatar chat-avatar av-${roleAvatarTone(role)}" aria-hidden="true">${roleAvatarIcon(role)}</span>
-          <div class="role-config-title"><strong data-no-i18n>${esc(ROLE_FRIENDLY[role] ? UI.translate(ROLE_FRIENDLY[role]) : ROLE_ABBREVIATIONS[role] || role)}${ROLE_FRIENDLY[role] ? ` <span class="role-abbr">${esc(ROLE_ABBREVIATIONS[role] || role)}</span>` : ""}</strong><small>${esc(UI.translate(help))}</small>${roleStatsMap[role] ? `<small class="strength-line">${strengthLine(roleStatsMap[role], { strong: 4, weak: 0 })}</small>` : ""}</div>
-          ${roleStatsMap[role] ? `<span class="role-radar" title="${esc(statSummary(roleStatsMap[role]))}">${radarSvg(roleStatsMap[role], { size: 124, labels: "short" })}</span>` : ""}
-          ${pill}
-        </div>`;
-    const pmRow = `<div class="role-config-row" data-role="PM" data-name-only>
-        ${roleHead("PM", "Project manager: the ChatGPT conversation that drives the workflow", "")}
-        <div class="role-config-fields">${nameField("PM")}${avatarPicker("PM")}</div>
-      </div>`;
-    // The combined SD/RD role only exists for the Classic workflow; it is listed last and
-    // hidden whenever no workflow in use needs it.
-    const ROLE_LIST_ORDER = ["SA", "SW", "SD", "RD", "REVIEW", "SR", "AR", "SEC", "QA", "SD/RD"];
-    const needsCombinedRole = () => catalog.workflows.some((flow) => (flow.id === catalog.selected || !flow.builtin) && flow.steps.some((step) => step.role === "SD/RD"));
-    const roleRow = (role) => {
-      const cfg = roles[role] || {};
-      const isChatgpt = cfg.provider === "chatgpt";
-      return `<div class="role-config-row" data-role="${esc(role)}" ${role === "SD/RD" ? `data-legacy-role ${needsCombinedRole() ? "" : "hidden"}` : ""}>
-        ${roleHead(role, ROLE_HELP[role] || "Workflow role", `<span class="pill role-provider-pill" data-no-i18n>${esc(cfg.provider || "")}</span>`)}
-        <div class="role-config-fields">
-          ${nameField(role)}
-          ${avatarPicker(role)}
-          <div class="field"><label>${esc(UI.translate("Provider"))}</label><select class="role-field" data-field="provider">${providers.map((p) => `<option value="${esc(p)}" ${cfg.provider === p ? "selected" : ""}>${esc(p)}</option>`).join("")}</select></div>
-          <div class="field"><label>${esc(UI.translate("Model"))}</label><input type="text" class="role-field" data-field="model" value="${esc(cfg.model || "")}" placeholder="${esc(UI.translate("CLI default"))}" ${isChatgpt ? "disabled" : ""} /></div>
-          <div class="field"><label>${esc(UI.translate("Effort"))}</label><select class="role-field" data-field="effort" ${isChatgpt ? "disabled" : ""}>${effortOptions(cfg.provider, cfg.effort)}</select></div>
-          <div class="field"><label>${esc(UI.translate("Quota fallback"))}</label><select class="role-field" data-field="quota_fallback"><option value="" ${!cfg.quota_fallback ? "selected" : ""}>${esc(UI.translate("None"))}</option>${providers.map((p) => `<option value="${esc(p)}" ${cfg.quota_fallback === p ? "selected" : ""}>${esc(p)}</option>`).join("")}</select></div>
-        </div>
-      </div>`;
-    };
-    // Roles are grouped by who they are for; a group opens when the selected workflow, or one of
-    // your own, uses a role from it, so someone who only plans trips sees just their team.
-    const EVERYDAY_LIST = ["PA", "RS", "AN", "PL", "CS", "WR", "ED", "VC", "RV"];
-    const usedRoles = new Set(catalog.workflows.filter((flow) => flow.id === catalog.selected || !flow.builtin).flatMap((flow) => flow.steps.map((step) => step.role)));
-    const roleGroup = (title, list, always) => `<details class="role-group" ${always || list.some((role) => usedRoles.has(role)) ? "open" : ""}><summary>${esc(UI.translate(title))}</summary><div class="role-config-list">${list.filter((role) => roles[role]).map(roleRow).join("")}</div></details>`;
-    const roleRows = pmRow + roleGroup("Everyday team roles", EVERYDAY_LIST, false) + roleGroup("Software team roles", ROLE_LIST_ORDER, false);
-    const selectedWorkflow = overview.editable.workflow || "classic";
-    const reviewGate = overview.editable.review_gate || {};
-    const gateSelect = (name, value, options) => `<select id="${name}">${options.map(([key, label]) => `<option value="${key}" ${value === key ? "selected" : ""}>${esc(UI.translate(label))}</option>`).join("")}</select>`;
-    const mm = overview.editable.meeting_mode || {};
-    const ee = overview.editable.evaluation_engine || {};
-    const scoringRoles = ["SA", "SD/RD", "REVIEW"];
-    const DIMENSION_HELP = {
-      test: "Whether the host actually ran the tests, and whether they passed.",
-      requirement: "How closely the code changes match the plan SA approved.",
-      code_quality: "Issues found by static analysis (ruff) in the changed code.",
-      security: "Security issues found in the changed code.",
-      review: "Findings and disagreements from cross-role review.",
-    };
-    const scoreDimensionLegend = `<div class="score-dimension-legend"><div class="t">${esc(UI.translate("What each dimension means"))}</div>${Object.entries(DIMENSION_HELP).map(([dimension, help]) => `<div class="score-dimension-legend-row"><span class="score-weight-dot" style="background:var(--dim-${dimension})"></span><strong>${esc(UI.translate(dimension))}</strong><span>${esc(UI.translate(help))}</span></div>`).join("")}</div>`;
-    const SCORE_PRESETS = {
-      "SA": {
-        default: { requirement: 0.70, review: 0.30 },
-        review: { requirement: 0.40, review: 0.60 },
-      },
-      "SD/RD": {
-        default: { test: 0.40, requirement: 0.25, code_quality: 0.15, security: 0.10, review: 0.10 },
-        test: { test: 0.60, requirement: 0.15, code_quality: 0.10, security: 0.05, review: 0.10 },
-        security: { test: 0.30, requirement: 0.15, code_quality: 0.15, security: 0.35, review: 0.05 },
-      },
-      "REVIEW": {
-        default: { test: 0.40, requirement: 0.30, review: 0.30 },
-        test: { test: 0.60, requirement: 0.20, review: 0.20 },
-        review: { test: 0.25, requirement: 0.25, review: 0.50 },
-      },
-    };
-    const SCORE_PRESET_LABELS = { default: "Default", test: "Test-focused", security: "Security-focused", review: "Review-focused" };
-    const scoreWeightRows = scoringRoles.map((role) => {
-      const entries = Object.entries(overview.evaluation_weights?.[role] || {});
-      const pct = (weight) => Math.round(weight * 100);
-      const bar = entries.map(([dimension, weight]) => `<span class="seg" style="width:${pct(weight)}%;background:var(--dim-${dimension})" title="${esc(UI.translate(dimension))} ${pct(weight)}%"></span>`).join("");
-      const rows = entries.map(([dimension, weight]) => `<div class="score-weight-row"><span class="score-weight-dot" style="background:var(--dim-${dimension})"></span><span class="score-weight-label">${esc(UI.translate(dimension))}</span><input type="range" min="0" max="100" step="1" class="score-weight-slider" style="accent-color:var(--dim-${dimension})" data-score-role="${role}" data-score-dimension="${dimension}" value="${pct(weight)}" aria-label="${esc(UI.translate(dimension))} ${esc(role)}" /><output class="score-weight-value">${pct(weight)}%</output></div>`).join("");
-      const presets = Object.keys(SCORE_PRESETS[role] || {}).map((presetId) => `<button type="button" class="btn small ghost" data-score-preset-role="${role}" data-score-preset="${presetId}">${esc(UI.translate(SCORE_PRESET_LABELS[presetId]))}</button>`).join("");
-      return `<div class="score-weight-role"><div class="score-weight-role-head"><div class="score-weight-role-title" data-no-i18n>${esc(role)}</div><div class="score-weight-presets">${presets}</div></div><div class="score-weight-bar" data-role="${esc(role)}">${bar}</div><div class="score-weight-sliders">${rows}</div></div>`;
-    }).join("");
-    const runtime = overview.editable.runtime || {};
-    const switchRow = (id, checked, label) => `<label class="settings-switch" for="${id}"><input type="checkbox" role="switch" id="${id}" ${checked ? "checked" : ""} /><span>${label}</span></label>`;
-    const profileOption = (name, description) => `<button class="profile-option ${overview.profile === name ? "selected" : ""}" data-profile="${name}" aria-pressed="${overview.profile === name}">
-        <span class="profile-option-name" data-no-i18n>${name}</span><span class="profile-option-desc">${description}</span>
-        <span class="profile-option-check" aria-hidden="true">${pageIcon("check")}</span>
-      </button>`;
-    layout(`
-      <div class="title-row"><div><h1>Settings</h1><div class="sub">${esc(id)} · ${UI.translate("profile")}: ${esc(overview.profile)}</div></div></div>
-      <div class="settings-stack">
-        ${pageCard("profile", "Profile", "Apply a bundled provider combination to every role at once.",
-          `<div class="profile-options">
-            ${profileOption("chatgpt-only", "Every role runs on ChatGPT through the connector.")}
-            ${profileOption("best-model", "Codex for SA and REVIEW, Claude for implementation, when both are installed.")}
-          </div>`)}
-        ${pageCard("roles", "Roles", "Provider, model, effort and quota fallback for each workflow role.", `${statExplainer()}<div class="role-config-list">${roleRows}</div>`)}
-        ${pageCard("workflow", "Workflow", "The steps a new task goes through. A task keeps the workflow it started with.",
-          `${statExplainer()}<div id="workflow-panel"></div>`)}
-        ${pageCard("gate", "Review gates", "How hard reviewers push back, and how many times work may be sent back before you decide.",
-          `<div class="settings-grid">
-            <div class="field"><label for="gate-ar">${esc(UI.translate("Adversarial review strictness"))}</label>${gateSelect("gate-ar", reviewGate.ar_strictness, [["normal", "Normal: only clear faults"], ["strict", "Strict: minor problems too"], ["extreme", "Extreme: challenge every assumption"]])}</div>
-            <div class="field"><label for="gate-rounds">${esc(UI.translate("Max rounds per gate (1-5)"))}</label><input type="text" inputmode="numeric" id="gate-rounds" value="${esc(reviewGate.max_rounds ?? 2)}" /></div>
-            <div class="field"><label for="gate-escalation">${esc(UI.translate("When a gate gives up"))}</label>${gateSelect("gate-escalation", reviewGate.escalation, [["ask_user", "Ask me"], ["auto_pm", "ChatGPT decides"]])}</div>
-          </div>
-          <div class="hint">${esc(UI.translate("Every adversarial finding must cite evidence, or it does not count. A gate that still finds blocking problems after its last round, or reports a fundamental flaw, waits for a decision instead of looping."))}</div>`,
-          `<button class="btn small primary" id="save-review-gate">Save</button>`)}
-        ${pageCard("language", "Language", "What Codex/Claude/ChatGPT receive in reports.",
-          `<div class="field narrow-field"><select id="language-select" aria-label="${esc(UI.translate("Language"))}">
-            ${["zh-TW", "ch", "en"].map((l) => `<option value="${l}" ${overview.editable.language === l ? "selected" : ""}>${l}</option>`).join("")}
-          </select></div>`)}
-        ${pageCard("test", "Test command", "After each implementation, ccc-mcp installs declared dependencies and runs tests automatically before REVIEW.",
-          `<div class="field">
-            <input type="text" id="test-command" class="mono" value="${esc((overview.editable.test_command || []).join(" "))}" placeholder="e.g. python -m pytest -q" aria-label="${esc(UI.translate("Test command"))}" />
-            <div class="hint">Leave blank to test changed Python test files automatically. If none changed, or pytest settings changed, pytest uses the project's configured scope. Enter a command only to override this.</div>
-          </div>`, `<button class="btn small primary" id="save-test-command">Save</button>`)}
-        ${pageCard("runtime", "Project runtime", "Choose the language and installed runtime used for this project's code and tests.",
-          `<div class="settings-grid">
-            <div class="field">
-              <label for="runtime-language">Programming language</label>
-              <select id="runtime-language">
-                <option value="" ${!runtime.language ? "selected" : ""}>Default environment</option>
-                ${Object.entries(overview.available_runtimes || {}).map(([key, label]) => `<option value="${esc(key)}" ${runtime.language === key ? "selected" : ""}>${esc(label)}</option>`).join("")}
-              </select>
-            </div>
-            <div class="field">
-              <label for="runtime-version">Runtime version</label>
-              <input type="text" id="runtime-version" value="${esc(runtime.version)}" placeholder="e.g. 3.9 or 22.14.0" autocomplete="off" />
-              <div class="hint">3.9 accepts any 3.9.x patch. JavaScript and TypeScript use the Node.js version.</div>
-            </div>
-          </div>
-          <div class="field">
-            <label for="runtime-executable">Local executable (optional)</label>
-            <input type="text" id="runtime-executable" class="mono" value="${esc(runtime.executable)}" placeholder="e.g. C:/Python39/python.exe" autocomplete="off" />
-            <div class="hint">Absolute executable path or command name, without arguments. Leave empty to find an installed runtime.</div>
-          </div>
-          <div class="hint">Python uses a separate virtual environment per selection. Set a test command for other languages. Install the required runtime locally first.</div>
-          <div id="runtime-status" class="hint settings-status" role="status" aria-live="polite"></div>`,
-          `<button class="btn small" id="check-runtime">Check local version</button><button class="btn small primary" id="save-runtime">Save runtime</button>`)}
-        ${pageCard("meeting", "Meeting Mode", "Bounded SD/RD↔SA clarification rounds before implementation.",
-          `${switchRow("mm-enabled", mm.enabled, "Enabled")}
-          <div class="field narrow-field" style="margin-top:16px">
-            <label for="mm-max">Max rounds (0-5)</label>
-            <input type="text" id="mm-max" value="${esc(mm.max_rounds)}" inputmode="numeric" />
-          </div>`, `<button class="btn small primary" id="save-meeting-mode">Save</button>`)}
-        ${pageCard("evaluation", "Evaluation Engine", "Score saved execution evidence without another model call. Open a task to evaluate, inspect, or re-evaluate it.",
-          `${switchRow("ee-enabled", ee.enabled, "Enabled")}
-          ${switchRow("ee-auto", ee.auto_evaluate, "Auto-evaluate after every successful role execution")}
-          <details class="score-settings"><summary>${esc(UI.translate("Advanced scoring settings"))}</summary><p>${esc(UI.translate("Not sure? Pick a preset below each role. Want to fine-tune instead? Drag a slider - the others adjust automatically so each role always totals 100%. Changes only affect new evaluation versions."))}</p>${scoreDimensionLegend}${scoreWeightRows}</details>`,
-          `<button class="btn small primary" id="save-evaluation-engine">Save</button>`)}
-      </div>
-    `, { narrow: true, contentClass: "settings-wide" });
-    document.querySelectorAll(".role-config-row").forEach((row) => {
-      const role = row.dataset.role;
-      row.querySelectorAll(".avatar-option").forEach((button) => button.addEventListener("click", async () => {
-        try {
-          await api(`/projects/${encodeURIComponent(id)}/config/role-avatar`, { method: "POST", body: { role, avatar: button.dataset.avatar } });
-          const next = { ...activeRoleAvatars };
-          if (button.dataset.avatar === (DEFAULT_AVATAR[role] || "person")) delete next[role]; else next[role] = button.dataset.avatar;
-          activeRoleAvatars = next;
-          row.querySelectorAll(".avatar-option").forEach((other) => { const on = other === button; other.classList.toggle("selected", on); other.setAttribute("aria-checked", String(on)); });
-          const head = row.querySelector(".role-config-head .chat-avatar");
-          if (head) head.innerHTML = roleAvatarIcon(role);
-          const chosen = row.querySelector(".avatar-details > summary .chat-avatar");
-          if (chosen) chosen.innerHTML = roleAvatarIcon(role);
-          toast("Avatar saved.");
-        } catch (err) { toast(err.message, true); }
-      }));
-      row.querySelector(".role-name-input")?.addEventListener("change", async (event) => {
-        try {
-          await api(`/projects/${encodeURIComponent(id)}/config/role-name`, { method: "POST", body: { role, name: event.target.value.trim() } });
-          toast("Name saved.");
-        } catch (err) { toast(err.message, true); }
-      });
-      if (row.hasAttribute("data-name-only")) return;
-      const providerSel = row.querySelector('[data-field="provider"]');
-      const modelInput = row.querySelector('[data-field="model"]');
-      const effortSel = row.querySelector('[data-field="effort"]');
-      const fallbackSel = row.querySelector('[data-field="quota_fallback"]');
-      const save = async () => {
-        try {
-          await api(`/projects/${encodeURIComponent(id)}/config/role`, {
-            method: "POST",
-            body: {
-              role,
-              provider: providerSel.value,
-              model: modelInput.value.trim() || null,
-              effort: effortSel.value || null,
-              quota_fallback: fallbackSel.value || null,
-            },
-          });
-          toast("Role updated.");
-        } catch (err) { toast(err.message, true); }
-      };
-      providerSel.addEventListener("change", () => {
-        const isChatgpt = providerSel.value === "chatgpt";
-        row.querySelector(".role-provider-pill").textContent = providerSel.value;
-        modelInput.disabled = isChatgpt;
-        effortSel.disabled = isChatgpt;
-        if (isChatgpt) modelInput.value = "";
-        const list = overview.available_providers?.[providerSel.value] || [];
-        const keep = list.includes(effortSel.value) ? effortSel.value : "";
-        effortSel.innerHTML = `<option value="">${esc(UI.translate("CLI default"))}</option>` +
-          list.map((e) => `<option value="${esc(e)}" ${keep === e ? "selected" : ""}>${esc(e)}</option>`).join("");
-        save();
-      });
-      [modelInput, effortSel, fallbackSel].forEach((el) => el.addEventListener("change", save));
-    });
-    document.querySelectorAll("[data-profile]").forEach((btn) => {
-      btn.addEventListener("click", async () => {
-        try {
-          await api(`/projects/${encodeURIComponent(id)}/config/profile`, { method: "POST", body: { profile: btn.dataset.profile } });
-          toast("Profile applied.");
-          renderSettings();
-        } catch (err) { toast(err.message, true); }
-      });
-    });
-    document.getElementById("language-select").addEventListener("change", async (e) => {
-      try {
-        await api(`/projects/${encodeURIComponent(id)}/config/language`, { method: "POST", body: { language: e.target.value } });
-        toast("Language updated.");
-      } catch (err) { toast(err.message, true); }
-    });
-    document.getElementById("save-test-command").addEventListener("click", async () => {
-      const typed = document.getElementById("test-command").value.trim();
-      const command = typed ? typed.split(/\s+/) : null;
-      try {
-        await api(`/projects/${encodeURIComponent(id)}/config/test-command`, { method: "POST", body: { command } });
-        toast("Test command saved.");
-      } catch (err) { toast(err.message, true); }
-    });
-    function runtimeSelection() {
-      const language = document.getElementById("runtime-language").value;
-      return language ? {
-        language,
-        version: document.getElementById("runtime-version").value.trim() || null,
-        executable: document.getElementById("runtime-executable").value.trim() || null,
-      } : null;
-    }
-    const runtimeStatus = document.getElementById("runtime-status");
-    const runtimeLanguage = document.getElementById("runtime-language");
-    function runtimeFieldsChanged() {
-      const disabled = !runtimeLanguage.value;
-      document.getElementById("runtime-version").disabled = disabled;
-      document.getElementById("runtime-executable").disabled = disabled;
-      runtimeStatus.textContent = "";
-    }
-    runtimeFieldsChanged();
-    runtimeLanguage.addEventListener("change", runtimeFieldsChanged);
-    ["runtime-version", "runtime-executable"].forEach((name) => {
-      document.getElementById(name).addEventListener("input", () => { runtimeStatus.textContent = ""; });
-    });
-    document.getElementById("save-runtime").addEventListener("click", async (event) => {
-      const button = event.currentTarget;
-      button.disabled = true;
-      try {
-        await api(`/projects/${encodeURIComponent(id)}/config/runtime`, { method: "POST", body: { runtime: runtimeSelection() } });
-        if (!stale(gen)) runtimeStatus.textContent = UI.translate("Runtime saved. Check the local version to verify availability.");
-        toast("Runtime saved.");
-      } catch (err) { toast(err.message, true); }
-      finally { button.disabled = false; }
-    });
-    document.getElementById("check-runtime").addEventListener("click", async (event) => {
-      const button = event.currentTarget;
-      button.disabled = true;
-      runtimeStatus.textContent = UI.translate("Checking…");
-      try {
-        const selection = runtimeSelection();
-        if (!selection) {
-          runtimeStatus.textContent = UI.translate("Default environment; no runtime version selected.");
-          return;
-        }
-        const result = await api(`/projects/${encodeURIComponent(id)}/config/runtime/check`, { method: "POST", body: { runtime: selection } });
-        if (stale(gen)) return;
-        runtimeStatus.textContent = result.matches && result.available
-          ? `${UI.translate("Runtime available")}: ${result.actual_version} · ${result.executable}`
-          : `${UI.translate("Runtime unavailable or version mismatch")}: ${result.reason}`;
-      } catch (err) { if (!stale(gen)) runtimeStatus.textContent = err.message; }
-      finally { button.disabled = false; }
-    });
-    const AGENT_ROLE_ORDER = ["SA", "SW", "SD", "RD", "SD/RD", "REVIEW", "SR", "AR", "SEC", "QA"];
-    const PRODUCER_ROLES = ["SA", "SW", "SD", "RD", "SD/RD", "PA", "RS", "AN", "PL", "CS", "WR", "ED"];
-    let editing = null;
-    const refreshCatalog = async () => {
-      catalog = await api(`/projects/${encodeURIComponent(id)}/workflows`);
-      setCustomRoles(catalog.custom_roles);
-      const legacy = document.querySelector("[data-legacy-role]");
-      if (legacy) legacy.hidden = !needsCombinedRole();
-    };
-    const stepChips = (flow) => flow.steps.map((step, index) => { const key = step.role_ref || step.role; return `${index ? '<i class="flow-arrow" aria-hidden="true">›</i>' : ""}<span class="flow-step${step.role_ref ? " is-custom" : ""}"><span class="chat-avatar av-${roleAvatarTone(key)}" aria-hidden="true">${roleAvatarIcon(key).replace('width="18" height="18"', 'width="12" height="12"')}</span><span data-no-i18n>${esc(roleName(key))}</span></span>`; }).join("");
-    const workflowItem = (flow) => `<div class="workflow-item">
-        <button class="profile-option workflow-option ${catalog.selected === flow.id ? "selected" : ""}" type="button" data-workflow="${esc(flow.id)}" aria-pressed="${catalog.selected === flow.id}">
-          <span class="profile-option-name" data-no-i18n>${esc(flow.builtin ? UI.translate(flow.name) : flow.name)}</span>
-          ${flow.summary ? `<span class="profile-option-desc">${esc(UI.translate(flow.summary))}</span>` : ""}
-          ${flow.stats ? `<span class="strength-line">${strengthLine(flow.stats.team, { strong: 5, weak: 2 })}</span>` : ""}
-          <span class="flow-steps" aria-label="${esc(UI.translate("Steps"))}">${stepChips(flow)}</span>
-          ${flow.stats ? `<span class="flow-radar" title="${esc(statSummary(flow.stats.team))}">${radarSvg(flow.stats.team, { size: 144, labels: "short" })}<span class="flow-power">${esc(UI.translate("Team power"))} <strong class="num">${flow.stats.power}</strong></span></span>` : ""}
-          <span class="profile-option-check" aria-hidden="true">${pageIcon("check")}</span>
-        </button>
-        <div class="workflow-item-actions">
-          <button class="btn small" type="button" data-wf-edit="${esc(flow.id)}">${esc(UI.translate(flow.builtin ? "Save a copy to edit" : "Edit"))}</button>
-          ${flow.builtin ? "" : `<button class="btn small danger" type="button" data-wf-delete="${esc(flow.id)}">${esc(UI.translate("Delete"))}</button>`}
-        </div>
-      </div>`;
-    const SELECTION_LABELS = [["fixed", "Always the selected workflow"], ["pm", "ChatGPT chooses for each task"], ["auto", "ccc-mcp chooses from the task"]];
-    const paintWorkflow = () => {
-      const panel = document.getElementById("workflow-panel");
-      if (!panel) return;
-      if (editing) {
-        const roleOption = (current) => (role) => `<option value="${esc(role)}" ${role === current ? "selected" : ""}>${esc(roleName(role))} (${esc(UI.translate(ROLE_HELP[role] || role))})</option>`;
-        const roleOptions = (index, current) => {
-          const allowed = (role) => index > 0 || PRODUCER_ROLES.includes(isCustomRole(role) ? baseOfRole(role) : role);
-          const mine = Object.values(customRoleMap).filter((role) => role.status === "active" && allowed(role.id));
-          // A role that was switched off, or is not known here, stays visible where a saved workflow uses it.
-          const stale = isCustomRole(current) && !mine.some((role) => role.id === current) ? `<option value="${esc(current)}" selected>${esc(roleName(current))} (${esc(UI.translate("switched off"))})</option>` : "";
-          const customGroup = mine.length || stale ? `<optgroup label="${esc(UI.translate("Your own roles"))}">${stale}${mine.map((role) => `<option value="${esc(role.id)}" ${role.id === current ? "selected" : ""}>${esc(role.name)} (${esc(UI.translate(ROLE_HELP[role.base_role] || role.base_role))})</option>`).join("")}</optgroup>` : "";
-          return customGroup + `<optgroup label="${esc(UI.translate("Everyday team roles"))}">${EVERYDAY_ROLES.filter(allowed).map(roleOption(current)).join("")}</optgroup><optgroup label="${esc(UI.translate("Software team roles"))}">${AGENT_ROLE_ORDER.filter(allowed).map(roleOption(current)).join("")}</optgroup>`;
-        };
-        panel.innerHTML = `<div class="wf-editor">
-          <div class="field narrow-field"><label for="wf-name">${esc(UI.translate("Workflow name"))}</label><input type="text" id="wf-name" maxlength="40" value="${esc(editing.name)}" placeholder="${esc(UI.translate("Named automatically if left empty"))}" /></div>
-          <div class="wf-team"><h3 class="workflow-group-title">${esc(UI.translate("Team abilities"))}</h3>${teamPanel(teamStats(editing.steps))}</div>
-          <ol class="wf-steps">${editing.steps.map((role, index) => `<li class="wf-step">
-            <span class="wf-index" aria-hidden="true">${index + 1}</span>
-            <span class="chat-avatar av-${roleAvatarTone(role)}" aria-hidden="true">${roleAvatarIcon(role)}</span>
-            <select class="wf-role" data-index="${index}" aria-label="${esc(UI.translate("Step"))} ${index + 1}">${roleOptions(index, role)}</select>
-            <button class="btn small ghost" type="button" data-wf-move="${index}:-1" aria-label="${esc(UI.translate("Move up"))}" ${index === 0 ? "disabled" : ""}>↑</button>
-            <button class="btn small ghost" type="button" data-wf-move="${index}:1" aria-label="${esc(UI.translate("Move down"))}" ${index === editing.steps.length - 1 ? "disabled" : ""}>↓</button>
-            <button class="btn small ghost" type="button" data-wf-remove="${index}" aria-label="${esc(UI.translate("Remove step"))}" ${editing.steps.length === 1 ? "disabled" : ""}>×</button>
-          </li>`).join("")}</ol>
-          <div class="wf-add-row"><button class="btn small" type="button" id="wf-add" ${editing.steps.length >= 12 ? "disabled" : ""}>${esc(UI.translate("Add step"))}</button></div>
-          <div class="hint">${esc(UI.translate("The first step must make something (SA, SD, RD or SD/RD). A reviewer that finds a problem sends work back to the nearest step before it that makes something; everything after that step then runs again. Up to 12 steps."))}</div>
-          <div class="hint"><a href="#/p/${encodeURIComponent(id)}/roles">${esc(UI.translate("Make your own role in Role Studio"))}</a> ${esc(UI.translate("and it will appear in the step lists above."))}</div>
-          <div class="wf-actions"><button class="btn small" type="button" id="wf-cancel">${esc(UI.translate("Cancel"))}</button><button class="btn small primary" type="button" id="wf-save">${esc(UI.translate("Save workflow"))}</button></div>
-        </div>`;
-        UI.localize(panel);
-        const keepName = () => { editing.name = document.getElementById("wf-name").value; };
-        panel.querySelectorAll(".wf-role").forEach((select) => select.addEventListener("change", () => { keepName(); editing.steps[Number(select.dataset.index)] = select.value; paintWorkflow(); }));
-        panel.querySelectorAll("[data-wf-move]").forEach((button) => button.addEventListener("click", () => {
-          keepName();
-          const [from, delta] = button.dataset.wfMove.split(":").map(Number);
-          const to = from + delta;
-          if (to < 0 || to >= editing.steps.length) return;
-          [editing.steps[from], editing.steps[to]] = [editing.steps[to], editing.steps[from]];
-          // The first step has to be a producer; keep that true when something else moved up.
-          if (!PRODUCER_ROLES.includes(baseOfRole(editing.steps[0]))) { [editing.steps[from], editing.steps[to]] = [editing.steps[to], editing.steps[from]]; toast("The first step must be SA, SD, RD or SD/RD.", true); }
-          paintWorkflow();
-        }));
-        panel.querySelectorAll("[data-wf-remove]").forEach((button) => button.addEventListener("click", () => {
-          keepName();
-          const next = editing.steps.filter((_, index) => index !== Number(button.dataset.wfRemove));
-          if (!PRODUCER_ROLES.includes(baseOfRole(next[0]))) { toast("The first step must be SA, SD, RD or SD/RD.", true); return; }
-          editing.steps = next;
-          paintWorkflow();
-        }));
-        document.getElementById("wf-add").addEventListener("click", () => { keepName(); editing.steps.push("REVIEW"); paintWorkflow(); });
-        document.getElementById("wf-cancel").addEventListener("click", () => { editing = null; paintWorkflow(); });
-        document.getElementById("wf-save").addEventListener("click", async () => {
-          keepName();
-          try {
-            const saved = await api(`/projects/${encodeURIComponent(id)}/workflows`, { method: "POST", body: { id: editing.id || undefined, name: editing.name.trim() || undefined, steps: editing.steps.map((step) => (isCustomRole(step) ? { role_ref: step } : step)) } });
-            toast("Workflow saved.");
-            editing = null;
-            await refreshCatalog();
-            paintWorkflow();
-            return saved;
-          } catch (err) { toast(err.message, true); }
-        });
-        return;
-      }
-      const groups = [["general", "Everyday teams"], ["software", "Software workflows"], ["custom", "Your own workflows"]]
-        .map(([audience, title]) => ({ title, flows: catalog.workflows.filter((flow) => flow.audience === audience) }))
-        .filter((group) => group.flows.length);
-      // The group holding the selected workflow comes first.
-      groups.sort((a, b) => Number(b.flows.some((flow) => flow.id === catalog.selected)) - Number(a.flows.some((flow) => flow.id === catalog.selected)));
-      panel.innerHTML = `${groups.map((group) => `<h3 class="workflow-group-title">${esc(UI.translate(group.title))}</h3><div class="workflow-list">${group.flows.map(workflowItem).join("")}</div>`).join("")}
-        <div class="wf-add-row"><button class="btn small primary" type="button" id="wf-new">${esc(UI.translate("New workflow"))}</button></div>
-        <div class="field narrow-field wf-selection"><label for="wf-selection">${esc(UI.translate("Who chooses the workflow for a new task"))}</label>${gateSelect("wf-selection", catalog.selection, SELECTION_LABELS)}
-          <div class="hint">${esc(UI.translate("With ChatGPT choosing, it sees every workflow and picks the best fit for each task. With ccc-mcp choosing, security work gets SEC, large refactors get SD and AR, and small edits get the shortest workflow."))}</div></div>`;
-      UI.localize(panel);
-      panel.querySelectorAll("[data-workflow]").forEach((button) => button.addEventListener("click", async () => {
-        try {
-          await api(`/projects/${encodeURIComponent(id)}/config/workflow`, { method: "POST", body: { workflow: button.dataset.workflow } });
-          toast("Workflow saved.");
-          await refreshCatalog();
-          paintWorkflow();
-        } catch (err) { toast(err.message, true); }
-      }));
-      panel.querySelectorAll("[data-wf-edit]").forEach((button) => button.addEventListener("click", () => {
-        const flow = catalog.workflows.find((item) => item.id === button.dataset.wfEdit);
-        editing = { id: flow.builtin ? null : flow.id, name: flow.builtin ? "" : flow.name, steps: flow.steps.map((step) => step.role_ref || step.role) };
-        paintWorkflow();
-      }));
-      panel.querySelectorAll("[data-wf-delete]").forEach((button) => button.addEventListener("click", () => {
-        const flow = catalog.workflows.find((item) => item.id === button.dataset.wfDelete);
-        showModal({
-          title: "Delete this workflow?", body: `${flow.name}\n${UI.translate("Tasks already running it keep going. If it is the selected workflow, new tasks use Classic.")}`,
-          confirmLabel: "Delete", danger: true,
-          onSubmit: async () => { await api(`/projects/${encodeURIComponent(id)}/workflows/${encodeURIComponent(flow.id)}/delete`, { method: "POST" }); toast("Workflow deleted."); await refreshCatalog(); paintWorkflow(); },
-        });
-      }));
-      document.getElementById("wf-new").addEventListener("click", () => { editing = { id: null, name: "", steps: ["SA", "RD", "REVIEW"] }; paintWorkflow(); });
-      document.getElementById("wf-selection").addEventListener("change", async (event) => {
-        try {
-          await api(`/projects/${encodeURIComponent(id)}/config/workflow-selection`, { method: "POST", body: { selection: event.target.value } });
-          toast("Workflow saved.");
-          await refreshCatalog();
-        } catch (err) { toast(err.message, true); }
-      });
-    };
-    paintWorkflow();
-    document.getElementById("save-review-gate").addEventListener("click", async () => {
-      const rounds = parseInt(document.getElementById("gate-rounds").value, 10);
-      try {
-        await api(`/projects/${encodeURIComponent(id)}/config/review-gate`, {
-          method: "POST",
-          body: {
-            ar_strictness: document.getElementById("gate-ar").value,
-            max_rounds: isNaN(rounds) ? undefined : rounds,
-            escalation: document.getElementById("gate-escalation").value,
-          },
-        });
-        toast("Review gates saved.");
-      } catch (err) { toast(err.message, true); }
-    });
-    document.getElementById("save-meeting-mode").addEventListener("click", async () => {
-      const enabled = document.getElementById("mm-enabled").checked;
-      const maxRounds = parseInt(document.getElementById("mm-max").value, 10);
-      try {
-        await api(`/projects/${encodeURIComponent(id)}/config/meeting-mode`, {
-          method: "POST", body: { enabled, max_rounds: isNaN(maxRounds) ? undefined : maxRounds },
-        });
-        toast("Meeting Mode saved.");
-      } catch (err) { toast(err.message, true); }
-    });
-    scoringRoles.forEach((role) => {
-      const sliders = Array.from(document.querySelectorAll(`.score-weight-slider[data-score-role="${role}"]`));
-      const bar = document.querySelector(`.score-weight-bar[data-role="${role}"]`);
-      const syncVisuals = () => {
-        sliders.forEach((slider) => { slider.nextElementSibling.textContent = `${slider.value}%`; });
-        if (bar) bar.querySelectorAll(".seg").forEach((seg, i) => { seg.style.width = `${sliders[i].value}%`; });
-      };
-      sliders.forEach((slider) => slider.addEventListener("input", () => {
-        const newValue = Math.max(0, Math.min(100, Number(slider.value)));
-        const others = sliders.filter((s) => s !== slider);
-        const oldOthersTotal = others.reduce((sum, s) => sum + Number(s.value), 0);
-        const remaining = 100 - newValue;
-        if (others.length) {
-          const shares = oldOthersTotal > 0
-            ? others.map((s) => Number(s.value) * remaining / oldOthersTotal)
-            : others.map(() => remaining / others.length);
-          const rounded = shares.map((v) => Math.round(v));
-          rounded[rounded.length - 1] += remaining - rounded.reduce((a, b) => a + b, 0);
-          others.forEach((s, i) => { s.value = Math.max(0, Math.min(100, rounded[i])); });
-        }
-        syncVisuals();
-      }));
-      document.querySelectorAll(`[data-score-preset-role="${role}"]`).forEach((button) => button.addEventListener("click", () => {
-        const weights = (SCORE_PRESETS[role] || {})[button.dataset.scorePreset];
-        if (!weights) return;
-        sliders.forEach((slider) => { slider.value = Math.round((weights[slider.dataset.scoreDimension] || 0) * 100); });
-        syncVisuals();
-      }));
-    });
-    document.getElementById("save-evaluation-engine").addEventListener("click", async () => {
-      const enabled = document.getElementById("ee-enabled").checked;
-      const autoEvaluate = document.getElementById("ee-auto").checked;
-      try {
-        const weights = {};
-        for (const role of scoringRoles) {
-          weights[role] = {};
-          document.querySelectorAll(`[data-score-role="${role}"]`).forEach((field) => {
-            weights[role][field.dataset.scoreDimension] = Number(field.value) / 100;
-          });
-          const total = Object.values(weights[role]).reduce((sum, value) => sum + value, 0);
-          if (Object.values(weights[role]).some((value) => !Number.isFinite(value) || value < 0) || Math.abs(total - 1) > 0.01) throw new Error(`${role}: ${UI.translate("weights must total 100%")}`);
-        }
-        weights.SD = weights["SD/RD"];
-        weights.RD = weights["SD/RD"];
-        await api(`/projects/${encodeURIComponent(id)}/config/evaluation-engine`, {
-          method: "POST", body: { enabled, auto_evaluate: autoEvaluate, weights },
-        });
-        toast("Evaluation Engine settings saved.");
-      } catch (err) { toast(err.message, true); }
-    });
-    watchForChanges(gen, () => api(`/projects/${encodeURIComponent(id)}/settings`), renderSettings);
-  }
-
-  async function renderContext() {
-    const gen = renderGen;
-    const id = parseRoute().project;
-    layout(loadingView());
-    let ctx;
-    try { ctx = await api(`/projects/${encodeURIComponent(id)}/context`); }
-    catch (err) { if (!stale(gen)) errorView(err); return; }
-    if (stale(gen)) return;
-    const content = ctx.content || {};
-    const shared = content.shared_context || {};
-    const list = (value) => (Array.isArray(value) ? value : []);
-    const field = (label, value) => value ? `<div class="ctx-field"><dt>${esc(UI.translate(label))}</dt><dd>${esc(value)}</dd></div>` : "";
-    const stateKind = (state) => state === "COMPLETED" ? "positive" : state === "CANCELLED" ? "negative" : "neutral";
-    const decisions = list(content.decisions);
-    const invariants = list(content.invariants);
-    const questions = list(content.unresolved_questions);
-    const progress = list(content.progress);
-    const skillsInContext = list(content.available_skills);
-    const summaryFields = [
-      field("Purpose", content.purpose || shared.purpose), field("Current status", shared.status),
-      field("Summary", content.summary || shared.summary), field("Next action", content.next_action || shared.next_action),
-    ].join("");
-    const budget = ctx.token_budget ? ` / ${Number(ctx.token_budget).toLocaleString()}` : "";
-    layout(`
-      <div class="title-row"><div><h1>Context</h1><div class="sub">${esc(id)} · ${UI.translate("read-only PM view")}</div></div></div>
-      <div class="kpi-strip">
-        <div class="kpi"><div class="v num">v${esc(ctx.context_version ?? "–")}</div><div class="l">Context version</div></div>
-        <div class="kpi"><div class="v num">${ctx.estimated_tokens != null ? Number(ctx.estimated_tokens).toLocaleString() : "–"}<small class="kpi-unit">${esc(budget)}</small></div><div class="l">Estimated tokens</div></div>
-        <div class="kpi"><div class="v mono">${esc(String(ctx.git_revision || "–").slice(0, 8))}</div><div class="l">Git revision</div></div>
-        <div class="kpi"><div class="v">${esc(ctx.role || "–")}<small class="kpi-unit"> · ${esc(ctx.target_agent || "")}</small></div><div class="l">Viewing as</div></div>
-      </div>
-      <div class="settings-stack">
-        ${pageCard("doc", "Project summary", "What the PM currently knows about this project.",
-          summaryFields ? `<dl class="ctx-fields">${summaryFields}</dl>` : `<div class="empty">${esc(UI.translate("Nothing recorded yet."))}</div>`)}
-        ${pageCard("decision", "Decisions", "Choices the PM has recorded for future rounds.",
-          decisions.length ? `<ul class="ctx-list">${decisions.map((d) => `<li><div class="ctx-list-main"><strong>${esc(d.content || "")}</strong>${d.reason ? `<p>${esc(d.reason)}</p>` : ""}</div><div class="ctx-list-side">${d.status ? `<span class="pill neutral">${esc(UI.translate(d.status))}</span>` : ""}${d.created ? `<time>${esc(String(d.created).slice(0, 10))}</time>` : ""}</div></li>`).join("")}</ul>` : `<div class="empty">${esc(UI.translate("No decisions recorded."))}</div>`)}
-        ${pageCard("lock", "Invariants", "Rules every agent must follow in this project.",
-          invariants.length ? `<ul class="ctx-list">${invariants.map((rule) => `<li><div class="ctx-list-main"><strong>${esc(rule.text || "")}</strong></div><div class="ctx-list-side"><span class="pill accent">${esc(UI.translate(rule.kind || "rule"))}</span></div></li>`).join("")}</ul>` : `<div class="empty">${esc(UI.translate("No invariants recorded."))}</div>`)}
-        ${pageCard("question", "Open questions", "Things the PM still needs answered.",
-          questions.length ? `<ul class="ctx-list">${questions.map((q) => `<li><div class="ctx-list-main"><strong>${esc(typeof q === "string" ? q : JSON.stringify(q))}</strong></div></li>`).join("")}</ul>` : `<div class="empty">${esc(UI.translate("Nothing is waiting on an answer."))}</div>`)}
-        ${progress.length ? pageCard("list", "Progress", "Work requests tracked in this context.",
-          `<ul class="ctx-list">${progress.map((t) => `<li><div class="ctx-list-main"><strong>${esc((t.requirement || "").slice(0, 160))}</strong><p class="mono">${esc(t.id || "")}</p></div><div class="ctx-list-side"><span class="pill ${stateKind(t.state)}">${esc(UI.translate(t.state || ""))}</span></div></li>`).join("")}</ul>`) : ""}
-        ${skillsInContext.length ? pageCard("package", "Skills in this context", "Skills the agents receive with each handoff.",
-          `<div class="chip-row">${skillsInContext.map((skill) => `<span class="chip" title="${esc(skill.description || "")}">${esc(skill.name || skill.id)}</span>`).join("")}</div>`) : ""}
-        ${ctx.policy ? pageCard("shield", "Policy", "Rules applied to every agent run.", `<p class="ctx-policy">${esc(ctx.policy)}</p>`) : ""}
-        <details class="ctx-raw"><summary>${esc(UI.translate("Raw data"))}</summary><pre class="mono">${esc(JSON.stringify(ctx, null, 2))}</pre></details>
-      </div>
-    `, { narrow: true, contentClass: "settings-wide" });
-  }
-
-  async function renderDocs() {
-    const gen = renderGen;
-    const docRoute = parseRoute();
-    const slug = docRoute.sub || "README";
-    const language = UI.getLocale() === "zh-TW" ? "ch" : "en";
-    layout(loadingView());
-    let page;
-    try { page = await api(`/docs/${language}/${encodeURIComponent(slug)}`); }
-    catch (err) { if (!stale(gen)) errorView(err); return; }
-    if (stale(gen)) return;
-    layout(`
-      ${slug === "README" ? "" : `<div class="docs-toolbar"><a class="docs-back" href="#/docs">${ICON.back}${esc(UI.translate("All guides"))}</a></div>`}
-      <div class="docs-layout no-toc${slug === "README" ? " docs-index" : ""}" id="docs-layout">
-        <article class="docs-prose" id="docs-content" data-no-i18n>${page.html}</article>
-      </div>
-    `);
-    const content = document.getElementById("docs-content");
-    const usedIds = new Set();
-    content.querySelectorAll("h1, h2, h3, h4, h5, h6").forEach((heading) => {
-      const base = heading.textContent.toLowerCase().normalize("NFKD")
-        .replace(/[^\p{L}\p{N}\- ]/gu, "").trim().replace(/\s+/g, "-") || "section";
-      let id = base;
-      for (let index = 2; usedIds.has(id); index++) id = `${base}-${index}`;
-      heading.id = id;
-      usedIds.add(id);
-    });
-    const sections = [...content.querySelectorAll("h2")];
-    if (sections.length > 1) {
-      const toc = document.createElement("nav");
-      toc.className = "docs-toc";
-      toc.setAttribute("aria-label", UI.translate("On this page"));
-      const title = document.createElement("p");
-      title.className = "docs-toc-title";
-      title.textContent = UI.translate("On this page");
-      toc.appendChild(title);
-      const tocButtons = new Map();
-      sections.forEach((heading) => {
-        const button = document.createElement("button");
-        button.type = "button";
-        button.className = "docs-toc-item";
-        button.textContent = heading.textContent;
-        button.addEventListener("click", () => heading.scrollIntoView({ block: "start" }));
-        toc.appendChild(button);
-        tocButtons.set(heading, button);
-      });
-      document.getElementById("docs-layout").classList.remove("no-toc");
-      document.getElementById("docs-layout").appendChild(toc);
-      // Highlight the section being read, so the outline doubles as a "you are here" marker.
-      if ("IntersectionObserver" in window) {
-        const visible = new Set();
-        const mark = () => {
-          const current = sections.find((heading) => visible.has(heading)) || [...sections].reverse().find((heading) => heading.getBoundingClientRect().top < 0);
-          tocButtons.forEach((button, heading) => {
-            const on = heading === current;
-            button.classList.toggle("current", on);
-            if (on) button.setAttribute("aria-current", "true"); else button.removeAttribute("aria-current");
-          });
-        };
-        const spy = new IntersectionObserver((entries) => {
-          entries.forEach((entry) => { if (entry.isIntersecting) visible.add(entry.target); else visible.delete(entry.target); });
-          mark();
-        }, { rootMargin: "0px 0px -65% 0px" });
-        sections.forEach((heading) => spy.observe(heading));
-      }
-    }
-    if (docRoute.anchor) content.querySelector(`#${CSS.escape(docRoute.anchor)}`)?.scrollIntoView();
-    content.querySelectorAll("a[href]").forEach((link) => {
-      const href = link.getAttribute("href");
-      if (href.startsWith("#")) {
-        link.addEventListener("click", (event) => {
-          event.preventDefault();
-          content.querySelector(`#${CSS.escape(decodeURIComponent(href.slice(1)))}`)?.scrollIntoView();
-        });
-        return;
-      }
-      const resolved = new URL(href, `https://docs.local/docs/${language}/${slug}.md`);
-      if (resolved.pathname === "/README.md" || resolved.pathname === "/README_ZH.md") {
-        link.href = `https://github.com/bruce601080102/ccc-mcp/blob/main/${resolved.pathname.slice(1)}`;
-        link.target = "_blank";
-        link.rel = "noopener noreferrer";
-        return;
-      }
-      const match = resolved.pathname.match(/^\/docs\/(en|ch)\/(README|[0-9]+-[a-z0-9-]+)\.md$/);
-      if (!match) return;
-      const targetLocale = match[1] === "ch" ? "zh-TW" : "en";
-      const target = `#/docs/${match[2]}${resolved.hash ? `?anchor=${encodeURIComponent(decodeURIComponent(resolved.hash.slice(1)))}` : ""}`;
-      link.href = target;
-      link.addEventListener("click", (event) => {
-        if (targetLocale === UI.getLocale()) return;
-        event.preventDefault();
-        UI.setLocale(targetLocale);
-        if (location.hash === target) route();
-        else location.hash = target;
-      });
+    // Failed polls keep the page as it is and retry; a changed task is patched in place by refresh().
+    livePoll(gen, async () => {
+      const [freshStatus, freshTimeline] = await Promise.all([api(taskBase), api(`${taskBase}/timeline`)]);
+      const serialized = taskSignature(freshStatus, freshTimeline);
+      if (!stale(gen) && serialized !== baseline) { baseline = serialized; await refresh(); }
     });
   }
 
-  async function renderGlobalSkills() {
-    const gen = renderGen;
-    layout(loadingView());
-    let installed, discovered;
-    try {
-      [installed, discovered] = await Promise.all([api("/skills"), api("/skills/discover")]);
-    } catch (err) { if (!stale(gen)) errorView(err); return; }
-    if (stale(gen)) return;
-    const available = discovered.map((skill, index) => ({ skill, index }))
-      .filter(({ skill }) => skill.usable && !skill.already_installed);
-    const firstById = new Map();
-    for (const entry of available) if (!firstById.has(entry.skill.id)) firstById.set(entry.skill.id, entry.index);
-    const installedRows = installed.map((skill) => `
-      <div class="skill-card has-action">
-        <div class="skill-card-head"><div><strong>${esc(skill.name || skill.id)}</strong><span class="skill-id mono">${esc(skill.id)}</span></div><button class="btn small danger" data-remove-global-skill="${esc(skill.id)}">Remove</button></div>
-        <p>${esc(skill.description || "")}</p>
-      </div>
-    `).join("");
-    const discoveredRows = discovered.map((skill, index) => `
-      <li class="pick-row ${skill.usable && !skill.already_installed ? "" : "is-muted"}">
-        <input type="checkbox" data-global-skill-choice="${index}" aria-label="${esc(`${UI.translate("Install for all projects")}: ${skill.name}`)}" ${skill.usable && !skill.already_installed ? "" : "disabled"} />
-        <div class="pick-main"><strong>${esc(skill.name)}</strong><span class="server-client">${esc(UI.translate(skill.provider))}</span><p>${esc(skill.description || "")}</p></div>
-        ${skill.already_installed
-          ? `<span class="pill accent">${esc(UI.translate("Already installed"))}</span>`
-          : skill.usable
-            ? `<span class="pill positive">${esc(UI.translate("Can install"))}</span>`
-            : `<span class="pill negative" title="${esc(skill.reason || "")}">${esc(UI.translate("Not usable"))}</span>`}
-      </li>
-    `).join("");
-    layout(`
-      <div class="title-row"><div><h1>Global Skills</h1><div class="sub">${esc(UI.translate("Installed Skills are shared with every project and agent role."))}</div></div><div class="title-actions"><button class="btn" id="refresh-global-skills">Refresh</button></div></div>
-      <div class="kpi-strip">
-        <div class="kpi"><div class="v num">${installed.length}</div><div class="l">${esc(UI.translate("Installed for all projects"))}</div></div>
-        <div class="kpi"><div class="v num">${discovered.length}</div><div class="l">${esc(UI.translate("Found on this computer"))}</div></div>
-        <div class="kpi"><div class="v num">${firstById.size}</div><div class="l">${esc(UI.translate("Can install"))}</div></div>
-      </div>
-      <div class="settings-stack">
-        ${pageCard("package", "Installed for all projects", esc(UI.translate("Removing a Skill here removes it from every project's future handoffs.")),
-          installed.length ? `<div class="skill-grid wide">${installedRows}</div>` : `<div class="empty">${esc(UI.translate("No global Skills are installed yet."))}</div>`)}
-        ${pageCard("search", "Discover local Skills", esc(UI.translate("Choose Skills from Claude Code or Codex and install them for every project.")),
-          discovered.length ? `
-            <div class="skill-bulk-actions">
-              <label class="checkbox-row"><input type="checkbox" id="select-all-global-skills" ${available.length ? "" : "disabled"} /><span>${esc(UI.translate("Select all available"))}</span></label>
-              <button class="btn small primary" id="install-selected-skills" disabled>${esc(UI.translate("Install selected"))} (0)</button>
-            </div>
-            <ul class="pick-list">${discoveredRows}</ul>
-          ` : `<div class="empty">${esc(UI.translate("No local Skills were found in ~/.claude/skills or ~/.codex/skills."))}</div>`)}
-      </div>
-    `, { narrow: true, contentClass: "settings-wide" });
-    document.getElementById("refresh-global-skills").addEventListener("click", renderGlobalSkills);
-    document.querySelectorAll("[data-remove-global-skill]").forEach((button) => {
-      button.addEventListener("click", () => {
-        const skillId = button.dataset.removeGlobalSkill;
-        confirmTextModal({
-          title: "Remove global Skill",
-          description: `${skillId}\n\n${UI.translate("This removes the Skill from every project's future handoffs. Source files on your computer remain unchanged.")}`,
-          challenge: `REMOVE SKILL ${skillId}`,
-          confirmLabel: "Remove",
-          onConfirm: async (typed) => {
-            await api(`/skills/${encodeURIComponent(skillId)}/remove`, { method: "POST", body: { confirm: typed } });
-            toast("Global Skill removed.");
-            await renderGlobalSkills();
-          },
-        });
-      });
-    });
-    if (!discovered.length) return;
-    const selected = new Set();
-    const selectAll = document.getElementById("select-all-global-skills");
-    const installButton = document.getElementById("install-selected-skills");
-    const choices = [...document.querySelectorAll("[data-global-skill-choice]")];
-    const updateSelection = () => {
-      choices.forEach((input) => { input.checked = selected.has(Number(input.dataset.globalSkillChoice)); });
-      selectAll.checked = selected.size > 0 && selected.size === firstById.size;
-      selectAll.indeterminate = selected.size > 0 && selected.size < firstById.size;
-      installButton.disabled = selected.size === 0;
-      installButton.textContent = `${UI.translate("Install selected")} (${selected.size})`;
-    };
-    choices.forEach((input) => input.addEventListener("change", () => {
-      const index = Number(input.dataset.globalSkillChoice);
-      if (input.checked) {
-        for (const other of [...selected]) if (discovered[other].id === discovered[index].id) selected.delete(other);
-        selected.add(index);
-      } else selected.delete(index);
-      updateSelection();
-    }));
-    selectAll.addEventListener("change", () => {
-      selected.clear();
-      if (selectAll.checked) for (const index of firstById.values()) selected.add(index);
-      updateSelection();
-    });
-    installButton.addEventListener("click", async () => {
-      installButton.disabled = true;
-      installButton.setAttribute("aria-busy", "true");
-      let installedCount = 0;
-      try {
-        for (const index of selected) {
-          const skill = discovered[index];
-          await api("/skills/install-discovered", { method: "POST", body: { id: skill.id, path: skill.path } });
-          installedCount += 1;
-        }
-        toast("Selected Skills installed for all projects.");
-      } catch (err) {
-        toast(installedCount ? `${UI.translate("Some selected Skills were installed before an error.")} ${err.message}` : err.message, true);
-      }
-      await renderGlobalSkills();
-    });
-  }
-
-  async function renderSkills() {
-    const gen = renderGen;
-    const id = parseRoute().project;
-    layout(loadingView());
-    let skills = [], mcp = { discovered: [], installed: {} }, calls = [];
-    try {
-      [skills, mcp, calls] = await Promise.all([
-        api("/skills"),
-        api(`/projects/${encodeURIComponent(id)}/mcp`),
-        api("/mcp/calls"),
-      ]);
-    } catch (err) { if (!stale(gen)) errorView(err); return; }
-    if (stale(gen)) return;
-    const skillRows = skills.map((s) => `<div class="skill-card"><strong>${esc(s.name || s.id)}</strong><p>${esc(s.description || "")}</p></div>`).join("");
-    const installed = Object.entries(mcp.installed || {});
-    const mcpRows = installed.map(([name, spec]) => `
-      <tr>
-        <td><strong>${esc(name)}</strong><div class="table-sub mono">${esc(spec.command || "")}</div></td>
-        <td><span class="pill ${spec.scope === "global" ? "neutral" : "accent"}">${esc(UI.translate(spec.scope === "global" ? "Global" : "Project only"))}</span></td>
-        <td class="num">${esc((spec.allowed_tools || []).length)}</td>
-        <td>${spec.command_exists ? `<span class="pill positive">${esc(UI.translate("found"))}</span>` : `<span class="pill negative">${esc(UI.translate("missing"))}</span>`}</td>
-        <td class="table-actions"><button class="btn small" data-tools="${esc(name)}" ${spec.command_exists ? "" : "disabled"}>Tools</button>${spec.scope === "project" ? `<button class="btn small danger" data-remove="${esc(name)}">Remove</button>` : `<span class="muted" title="${esc(UI.translate("This server is installed globally. Remove it with the CLI if you intend to affect every project."))}"> · ${esc(UI.translate("Global"))}</span>`}</td>
-      </tr>
-    `).join("");
-    const discovered = (mcp.discovered || []).filter((item) => item.transport === "stdio");
-    const discoveredRows = discovered.map((item, index) => `
-      <li class="server-row">
-        <span class="server-avatar" aria-hidden="true">${esc((item.name || "?").slice(0, 1).toUpperCase())}</span>
-        <div class="server-main"><strong>${esc(item.name)}</strong><span class="server-client">${esc(UI.translate(item.client))}</span><code class="server-command" title="${esc(item.command || "")}">${esc(item.command || "")}</code></div>
-        ${item.has_env ? `<span class="pill warning">env</span>` : `<span class="pill neutral">stdio</span>`}
-        <button class="btn small" data-install="${index}">Install</button>
-      </li>
-    `).join("");
-    const recent = calls.filter((entry) => entry.project === id).slice(-8).reverse();
-    const callRows = recent.map((entry) => `
-      <tr>
-        <td class="mono">${esc(entry.ts || "")}</td>
-        <td>${esc(entry.server || "")}</td>
-        <td class="mono">${esc(entry.tool || "")}</td>
-        <td>${entry.error || entry.is_error ? `<span class="pill negative">${esc(UI.translate("Error"))}</span>` : `<span class="pill positive">${esc(UI.translate("Succeeded"))}</span>`}</td>
-      </tr>
-    `).join("");
-    layout(`
-      <div class="title-row"><div><h1>Skills &amp; MCP</h1><div class="sub">${esc(id)} · ${UI.translate("Manage local tools available to this project's agents.")}</div></div><div class="title-actions"><button class="btn" id="refresh-mcp">Refresh</button></div></div>
-      <div class="kpi-strip">
-        <div class="kpi"><div class="v num">${installed.length}</div><div class="l">Installed for this project</div></div>
-        <div class="kpi"><div class="v num">${discovered.length}</div><div class="l">Available on this computer</div></div>
-        <div class="kpi"><div class="v num">${recent.length}</div><div class="l">Recent MCP calls</div></div>
-      </div>
-      <div class="settings-stack">
-        ${pageCard("server", "MCP servers", "Installed for this project — click Tools on a row below to actually call it",
-          installed.length ? `<div class="table-wrap"><table><thead><tr><th>Name</th><th>Scope</th><th class="num">Tools</th><th>Status</th><th></th></tr></thead><tbody>${mcpRows}</tbody></table></div>` : `<div class="empty">Nothing installed yet — calling a tool needs one install step first. Pick a server below, click Install, choose which tools to allow, then come back here and click Tools to call one.</div>`,
-          "", { flush: installed.length > 0 })}
-        ${pageCard("search", "Discover local servers", esc(UI.translate("Candidates from MCP client settings and local executables. Select one to verify its tools before installing.")),
-          discovered.length ? `<ul class="server-list">${discoveredRows}</ul>` : `<div class="empty">No local MCP servers were discovered.</div>`,
-          `<span class="table-sub">${esc(UI.translate("Not listed? Use Install by name to enter a command or an exact executable path."))}</span>`,
-          { actions: `<button class="btn small" id="mcp-install-by-name">${esc(UI.translate("Install by name…"))}</button>` })}
-        ${pageCard("clock", "Recent MCP calls", esc(id),
-          recent.length ? `<div class="table-wrap"><table><thead><tr><th>Time</th><th>Server</th><th>Tool</th><th>Status</th></tr></thead><tbody>${callRows}</tbody></table></div>` : `<div class="empty">No MCP calls for this project yet.</div>`,
-          "", { flush: recent.length > 0 })}
-        ${pageCard("package", "Global Skills", esc(UI.translate("These Skills are shared with every project and agent role.")),
-          skills.length ? `<div class="skill-grid">${skillRows}</div>` : `<div class="empty">No skills installed.</div>`,
-          "", { actions: `<a class="btn small" href="#/global-skills">${esc(UI.translate("Manage global Skills"))}</a>` })}
-      </div>
-    `);
-    document.getElementById("refresh-mcp").addEventListener("click", renderSkills);
-    document.querySelectorAll("[data-install]").forEach((button) => {
-      button.addEventListener("click", () => openMcpInstall(id, discovered[Number(button.dataset.install)]));
-    });
-    document.getElementById("mcp-install-by-name").addEventListener("click", () => openMcpInstallByName(id));
-    document.querySelectorAll("[data-tools]").forEach((button) => {
-      button.addEventListener("click", () => openMcpTools(id, button.dataset.tools));
-    });
-    document.querySelectorAll("[data-remove]").forEach((button) => {
-      button.addEventListener("click", () => {
-        const name = button.dataset.remove;
-        showModal({
-          title: "Remove from project",
-          body: `${name}\n${UI.translate("This removes this project's MCP access. The MCP program itself stays installed on your computer.")}`,
-          confirmLabel: "Remove",
-          danger: true,
-          onSubmit: async () => {
-            await api(`/projects/${encodeURIComponent(id)}/mcp/${encodeURIComponent(name)}/remove`, { method: "POST" });
-            toast("MCP server removed.");
-            renderSkills();
-          },
-        });
-      });
-    });
-  }
-
-  async function openMcpInstall(projectId, server) {
-    if (!server) return;
-    const overlay = document.createElement("div");
-    overlay.id = "modal-overlay";
-    overlay.className = "modal-overlay";
-    overlay.innerHTML = `<div class="modal modal-wide" role="dialog" aria-modal="true"><h2>${esc(UI.translate("Select tools to enable"))}</h2><div class="body">${esc(UI.translate("Checking server and tools…"))}</div></div>`;
-    closeModal();
-    mountModal(overlay);
-    const selected = { name: server.name, client: server.client, source_file: server.source_file };
-    let preview;
-    try {
-      preview = await api(`/projects/${encodeURIComponent(projectId)}/mcp/probe`, { method: "POST", body: selected });
-    } catch (err) { closeModal(); toast(err.message, true); return; }
-    if (!overlay.isConnected) return;
-    const tools = preview.tools || [];
-    overlay.innerHTML = `
-      <div class="modal modal-wide" role="dialog" aria-modal="true">
-        <h2>${esc(server.name)}</h2>
-        <div class="body">${esc(UI.translate("The MCP process will be started to verify its tools. Only selected tools will be available to this project's agents."))}</div>
-        <div class="mcp-command mono">${esc(preview.command)}</div>
-        ${server.has_env ? `<div class="notice">${esc(UI.translate("The server defines environment variables in another client. They are not copied into ccc-mcp."))}</div>` : ""}
-        <div class="field"><label>${esc(UI.translate("Select tools to enable"))} <span class="muted">(${tools.length})</span></label></div>
-        <div class="tool-list">${tools.length ? tools.map((tool, index) => `<label class="tool-choice"><input type="checkbox" data-tool="${index}" /><span><strong>${esc(tool.name)} <em class="tool-risk ${tool.read_only ? "read" : "write"}">${esc(UI.translate(tool.read_only ? "Read only" : "Can change data"))}</em></strong><small>${esc(tool.description || "")}</small></span></label>`).join("") : `<div class="empty">${esc(UI.translate("No tools were exposed by this server."))}</div>`}</div>
-        <div class="actions"><button class="btn" id="mcp-cancel">${esc(UI.translate("Cancel"))}</button><button class="btn primary" id="mcp-confirm" ${tools.length ? "" : "disabled"}>${esc(UI.translate("Install to project"))}</button></div>
-      </div>`;
-    overlay.addEventListener("click", (event) => { if (event.target === overlay) closeModal(); });
-    document.getElementById("mcp-cancel").addEventListener("click", closeModal);
-    const firstTool = overlay.querySelector("[data-tool]");
-    if (firstTool) firstTool.focus();
-    document.getElementById("mcp-confirm").addEventListener("click", async (event) => {
-      const allowed = [...overlay.querySelectorAll("[data-tool]:checked")].map((input) => tools[Number(input.dataset.tool)].name);
-      if (!allowed.length) { toast("No tools are selected. Choose at least one.", true); return; }
-      event.currentTarget.disabled = true;
-      try {
-        await api(`/projects/${encodeURIComponent(projectId)}/mcp/install`, { method: "POST", body: { ...selected, tools: allowed } });
-        closeModal();
-        toast("MCP server installed. Opening its tools now…");
-        await renderSkills();
-        // Installing only grants access; it does not call anything. Open the Tools
-        // dialog immediately so "install, then separately find Tools" is one
-        // continuous action instead of two — this is what was confusing before.
-        openMcpTools(projectId, selected.name);
-      } catch (err) { toast(err.message, true); event.currentTarget.disabled = false; }
-    });
-  }
-
-  // Manual fallback for an executable whose name does not match the discovery pattern,
-  // or one outside PATH, the running Python environment, and the project's venv.
-  function openMcpInstallByName(projectId) {
-    closeModal();
-    const overlay = document.createElement("div");
-    overlay.id = "modal-overlay";
-    overlay.className = "modal-overlay";
-    overlay.innerHTML = `
-      <div class="modal modal-wide" role="dialog" aria-modal="true">
-        <h2>${esc(UI.translate("Install by name…"))}</h2>
-        <div class="body">${esc(UI.translate("Resolves the same way as `skill install mcp <name>`: a client's config, or a PATH command named <name>, <name>-mcp or <name>-server."))}</div>
-        <div class="field"><label for="mcp-name-input">${esc(UI.translate("Name"))}</label><input type="text" id="mcp-name-input" placeholder="codebase-memory" autocomplete="off" /></div>
-        <div class="field"><label for="mcp-command-input">${esc(UI.translate("Command path (optional)"))}</label><input type="text" id="mcp-command-input" placeholder="${esc(UI.translate("leave empty to resolve from PATH or a client's config"))}" autocomplete="off" /></div>
-        <div class="actions"><button class="btn" id="mcp-name-cancel">${esc(UI.translate("Cancel"))}</button><button class="btn primary" id="mcp-name-check">${esc(UI.translate("Check"))}</button></div>
-      </div>`;
-    mountModal(overlay);
-    overlay.addEventListener("click", (event) => { if (event.target === overlay) closeModal(); });
-    document.getElementById("mcp-name-cancel").addEventListener("click", closeModal);
-    const nameInput = document.getElementById("mcp-name-input");
-    nameInput.focus();
-    const check = async () => {
-      const name = nameInput.value.trim();
-      const command = document.getElementById("mcp-command-input").value.trim();
-      if (!name) { toast(UI.translate("Enter an MCP server name"), true); return; }
-      const button = document.getElementById("mcp-name-check");
-      button.disabled = true;
-      let preview;
-      try {
-        preview = await api(`/projects/${encodeURIComponent(projectId)}/mcp/probe-by-name`, { method: "POST", body: { name, command } });
-      } catch (err) { toast(err.message, true); button.disabled = false; return; }
-      if (!overlay.isConnected) return;
-      const tools = preview.tools || [];
-      overlay.innerHTML = `
-        <div class="modal modal-wide" role="dialog" aria-modal="true">
-          <h2>${esc(preview.name)}</h2>
-          <div class="body">${esc(UI.translate("The MCP process will be started to verify its tools. Only selected tools will be available to this project's agents."))}</div>
-          <div class="mcp-command mono">${esc(preview.command)}</div>
-          <div class="table-sub">${esc(UI.translate("Source"))}: ${esc(preview.source || "")}</div>
-          ${(preview.warnings || []).map((w) => `<div class="notice">${esc(w)}</div>`).join("")}
-          <div class="field"><label>${esc(UI.translate("Select tools to enable"))} <span class="muted">(${tools.length})</span></label></div>
-          <div class="tool-list">${tools.length ? tools.map((tool, index) => `<label class="tool-choice"><input type="checkbox" data-tool="${index}" /><span><strong>${esc(tool.name)} <em class="tool-risk ${tool.read_only ? "read" : "write"}">${esc(UI.translate(tool.read_only ? "Read only" : "Can change data"))}</em></strong><small>${esc(tool.description || "")}</small></span></label>`).join("") : `<div class="empty">${esc(UI.translate("No tools were exposed by this server."))}</div>`}</div>
-          <div class="actions"><button class="btn" id="mcp-name-cancel2">${esc(UI.translate("Cancel"))}</button><button class="btn primary" id="mcp-name-confirm" ${tools.length ? "" : "disabled"}>${esc(UI.translate("Install to project"))}</button></div>
-        </div>`;
-      overlay.querySelector('[role="dialog"]').focus();
-      document.getElementById("mcp-name-cancel2").addEventListener("click", closeModal);
-      document.getElementById("mcp-name-confirm").addEventListener("click", async (event) => {
-        const allowed = [...overlay.querySelectorAll("[data-tool]:checked")].map((input) => tools[Number(input.dataset.tool)].name);
-        if (!allowed.length) { toast("No tools are selected. Choose at least one.", true); return; }
-        event.currentTarget.disabled = true;
-        try {
-          await api(`/projects/${encodeURIComponent(projectId)}/mcp/install-by-name`, { method: "POST", body: { name: preview.name, command, tools: allowed } });
-          closeModal();
-          toast("MCP server installed. Opening its tools now…");
-          await renderSkills();
-          openMcpTools(projectId, preview.name);
-        } catch (err) { toast(err.message, true); event.currentTarget.disabled = false; }
-      });
-    };
-    document.getElementById("mcp-name-check").addEventListener("click", check);
-    nameInput.addEventListener("keydown", (event) => { if (event.key === "Enter") check(); });
-  }
-
-  async function openMcpTools(projectId, serverName) {
-    closeModal();
-    const overlay = document.createElement("div");
-    overlay.id = "modal-overlay";
-    overlay.className = "modal-overlay";
-    overlay.innerHTML = `<div class="modal modal-wide" role="dialog" aria-modal="true"><h2>${esc(serverName)}</h2><div class="body">${esc(UI.translate("Checking server and tools…"))}</div></div>`;
-    mountModal(overlay);
-    let tools, projectRoot = "";
-    try {
-      const [availableTools, projects] = await Promise.all([
-        api(`/projects/${encodeURIComponent(projectId)}/mcp/${encodeURIComponent(serverName)}/tools`),
-        api("/projects"),
-      ]);
-      tools = availableTools;
-      projectRoot = projects.find((project) => project.id === projectId)?.root || "";
-    } catch (err) { closeModal(); toast(err.message, true); return; }
-    if (!overlay.isConnected) return;
-    overlay.innerHTML = `
-      <div class="modal modal-wide" role="dialog" aria-modal="true">
-        <h2>${esc(serverName)}</h2>
-        <div class="body">${esc(UI.translate("Choose a tool and fill in its required fields. The result appears here and is not saved by this page."))}</div>
-        ${tools.length ? `
-          <div class="field"><label for="mcp-tool-select">${esc(UI.translate("Tool"))}</label><select id="mcp-tool-select">${tools.map((tool, index) => `<option value="${index}">${esc(tool.name)}</option>`).join("")}</select></div>
-          <div id="mcp-tool-fields"></div>
-          <div id="mcp-tool-validation" class="mcp-tool-validation" role="alert"></div>
-          <details class="schema-details"><summary>${esc(UI.translate("About this tool"))}</summary><div id="mcp-tool-description" class="mcp-tool-description"></div></details>
-          <details class="schema-details"><summary>${esc(UI.translate("Optional parameters (JSON)"))}</summary>
-            <div class="hint">${esc(UI.translate("Leave {} to use the tool's defaults. Add optional fields as a JSON object."))}</div>
-            <label for="mcp-tool-arguments">${esc(UI.translate("Optional arguments"))}</label><textarea id="mcp-tool-arguments" spellcheck="false">{}</textarea>
-          </details>
-          <details class="schema-details"><summary>${esc(UI.translate("Input schema"))}</summary><pre id="mcp-tool-schema" class="panel mono"></pre></details>
-          <div id="mcp-tool-result" aria-live="polite"></div>
-        ` : `<div class="empty">${esc(UI.translate("No enabled tools are available."))}</div>`}
-        <div class="actions"><button class="btn" id="mcp-tool-close">${esc(UI.translate("Close"))}</button>${tools.length ? `<button class="btn primary" id="mcp-tool-run">${esc(UI.translate("Run tool"))}</button>` : ""}</div>
-      </div>`;
-    overlay.addEventListener("click", (event) => { if (event.target === overlay) closeModal(); });
-    document.getElementById("mcp-tool-close").addEventListener("click", closeModal);
-    if (!tools.length) return;
-    const select = document.getElementById("mcp-tool-select");
-    const requiredFields = (tool) => {
-      const schema = tool.input_schema || {};
-      const required = Array.isArray(schema.required) ? schema.required : [];
-      const properties = schema.properties || {};
-      if (!required.length) return `<p class="mcp-tool-empty">${esc(UI.translate("This tool has no required parameters. Open Optional parameters to add any settings."))}</p>`;
-      return `<div class="mcp-tool-fields-title">${esc(UI.translate("Required parameters"))}</div>` + required.map((name, index) => {
-        const spec = properties[name] || {};
-        const kind = Array.isArray(spec.type) ? spec.type.find((type) => type !== "null") : spec.type;
-        const value = name === "repo_path" && projectRoot ? projectRoot : spec.default;
-        const label = name === "repo_path" ? UI.translate("Repository path (repo_path)") : (spec.title ? `${spec.title} (${name})` : name);
-        const fieldId = `mcp-required-${index}`;
-        let control;
-        if (Array.isArray(spec.enum)) {
-          control = `<select id="${fieldId}" data-required-index="${index}"><option value="">${esc(UI.translate("Choose a value"))}</option>${spec.enum.map((option) => `<option value="${esc(option)}" ${option === value ? "selected" : ""}>${esc(option)}</option>`).join("")}</select>`;
-        } else if (kind === "boolean") {
-          control = `<select id="${fieldId}" data-required-index="${index}"><option value="">${esc(UI.translate("Choose a value"))}</option><option value="true" ${value === true ? "selected" : ""}>true</option><option value="false" ${value === false ? "selected" : ""}>false</option></select>`;
-        } else if (kind === "object" || kind === "array") {
-          control = `<textarea id="${fieldId}" data-required-index="${index}" spellcheck="false">${esc(value === undefined ? "" : JSON.stringify(value, null, 2))}</textarea>`;
-        } else {
-          control = `<input id="${fieldId}" data-required-index="${index}" type="${kind === "number" || kind === "integer" ? "number" : "text"}" ${kind === "number" ? 'step="any"' : ""} value="${esc(value === undefined ? "" : value)}" />`;
-        }
-        const hint = name === "repo_path" && projectRoot
-          ? UI.translate("Current project folder is filled in. Change it to use another repository.")
-          : spec.description || "";
-        return `<div class="field mcp-required-field"><label for="${fieldId}">${esc(label)} <span class="required-mark">${esc(UI.translate("Required"))}</span></label>${control}${hint ? `<div class="hint">${esc(hint)}</div>` : ""}</div>`;
-      }).join("");
-    };
-    const refreshTool = () => {
-      const tool = tools[Number(select.value)];
-      document.getElementById("mcp-tool-description").textContent = tool.description || "";
-      document.getElementById("mcp-tool-schema").textContent = JSON.stringify(tool.input_schema || {}, null, 2);
-      document.getElementById("mcp-tool-fields").innerHTML = requiredFields(tool);
-      document.getElementById("mcp-tool-arguments").value = "{}";
-      document.getElementById("mcp-tool-validation").textContent = "";
-      document.getElementById("mcp-tool-result").replaceChildren();
-    };
-    select.addEventListener("change", refreshTool);
-    refreshTool();
-    select.focus();
-    document.getElementById("mcp-tool-run").addEventListener("click", async (event) => {
-      const tool = tools[Number(select.value)];
-      const schema = tool.input_schema || {};
-      const required = Array.isArray(schema.required) ? schema.required : [];
-      const properties = schema.properties || {};
-      const validation = document.getElementById("mcp-tool-validation");
-      validation.textContent = "";
-      let argumentsValue, invalidField = null;
-      try {
-        argumentsValue = JSON.parse(document.getElementById("mcp-tool-arguments").value || "{}");
-        if (!argumentsValue || Array.isArray(argumentsValue) || typeof argumentsValue !== "object") throw new Error();
-      } catch (_) {
-        validation.textContent = UI.translate("Optional parameters must be a JSON object, such as {}.");
-        const optionalInput = document.getElementById("mcp-tool-arguments");
-        optionalInput.closest("details").open = true;
-        optionalInput.focus();
-        return;
-      }
-      for (const [index, name] of required.entries()) {
-        const input = document.getElementById(`mcp-required-${index}`);
-        const raw = input.value.trim();
-        input.removeAttribute("aria-invalid");
-        if (!raw) {
-          validation.textContent = `${name}: ${UI.translate("This field is required.")}`;
-          invalidField = input;
-          break;
-        }
-        const spec = properties[name] || {};
-        const kind = Array.isArray(spec.type) ? spec.type.find((type) => type !== "null") : spec.type;
-        if (kind === "integer" || kind === "number") {
-          const number = Number(raw);
-          if (!Number.isFinite(number) || kind === "integer" && !Number.isInteger(number)) {
-            validation.textContent = `${name}: ${UI.translate(kind === "integer" ? "Enter a whole number." : "Enter a number.")}`;
-            invalidField = input;
-            break;
-          }
-          argumentsValue[name] = number;
-        } else if (kind === "boolean") {
-          argumentsValue[name] = raw === "true";
-        } else if (kind === "object" || kind === "array") {
-          try {
-            const value = JSON.parse(raw);
-            if (kind === "array" ? !Array.isArray(value) : !value || Array.isArray(value) || typeof value !== "object") throw new Error();
-            argumentsValue[name] = value;
-          } catch (_) {
-            validation.textContent = `${name}: ${UI.translate(kind === "array" ? "Enter a JSON array." : "Enter a JSON object.")}`;
-            invalidField = input;
-            break;
-          }
-        } else argumentsValue[name] = raw;
-      }
-      if (invalidField) {
-        invalidField.setAttribute("aria-invalid", "true");
-        invalidField.focus();
-        return;
-      }
-      const button = event.currentTarget;
-      button.disabled = true;
-      const result = document.getElementById("mcp-tool-result");
-      result.textContent = UI.translate("Running tool…");
-      try {
-        const response = await api(`/projects/${encodeURIComponent(projectId)}/mcp/${encodeURIComponent(serverName)}/tools/${encodeURIComponent(tool.name)}/call`, { method: "POST", body: { arguments: argumentsValue } });
-        result.innerHTML = `<div class="result-label ${response.is_error ? "error-text" : ""}">${esc(UI.translate(response.is_error ? "Tool returned an error" : "Tool result"))}${response.truncated ? ` · ${esc(UI.translate("truncated"))}` : ""}</div><pre class="log-panel" id="mcp-result-text"></pre>`;
-        document.getElementById("mcp-result-text").textContent = response.text || "";
-      } catch (err) { result.innerHTML = `<div class="notice">${esc(err.message)}</div>`; }
-      button.disabled = false;
-    });
-  }
-
-  // Turns a plain https?:// URL in an (already escaped) log line into a clickable
-  // link, so a URL the login CLI prints can be opened in a browser on another
-  // device when the computer running `ccc-mcp ui` has no browser of its own.
   function linkify(lines) {
     return lines
       .map((line) => esc(line).replace(/(https?:\/\/[^\s]+)/g, (url) => `<a href="${url}" target="_blank" rel="noopener">${url}</a>`))
@@ -3510,7 +1889,7 @@
         ? `<button class="btn small primary" data-provider-action="install">${esc(UI.translate("Install"))}</button>`
         : `${loggedIn ? "" : `<button class="btn small primary" data-provider-action="login">${esc(UI.translate("Sign in"))}</button>`}<button class="btn small danger" data-provider-action="uninstall">${esc(UI.translate("Uninstall"))}</button>`;
     const hint = login.error
-      ? `<div class="hint" style="color:var(--negative)">${esc(login.error)}</div>`
+      ? `<div class="hint" style="color:var(--negative)">${esc(UI.error(login.error))}</div>`
       : info.hint ? `<div class="hint">${esc(info.hint)}</div>` : "";
     const log = running
       ? `<div class="provider-login-log log-panel">${login.log && login.log.length ? linkify(login.log) : `<span class="muted-line">${esc(UI.translate("Waiting for output…"))}</span>`}</div>`
@@ -3609,8 +1988,15 @@
         if (stale(gen)) { clearInterval(intervalId); return; }
         const logPanel = el.querySelector(".provider-login-log");
         if (logPanel) {
-          logPanel.innerHTML = fresh.log && fresh.log.length ? linkify(fresh.log) : `<span class="muted-line">${esc(UI.translate("Waiting for output…"))}</span>`;
-          logPanel.scrollTop = logPanel.scrollHeight;
+          // Follow the output only while the person is reading its end.
+          const atEnd = logPanel.scrollHeight - logPanel.scrollTop - logPanel.clientHeight < 24;
+          const html = fresh.log && fresh.log.length ? linkify(fresh.log) : `<span class="muted-line">${esc(UI.translate("Waiting for output…"))}</span>`;
+          if (logPanel.dataset.shown !== html) {
+            const before = logPanel.scrollTop;
+            logPanel.innerHTML = html;
+            logPanel.dataset.shown = html;
+            logPanel.scrollTop = atEnd ? logPanel.scrollHeight : before;
+          }
         }
         if (fresh.state === "running") return;
         clearInterval(intervalId);
@@ -3631,25 +2017,26 @@
 
   async function renderConnect() {
     const gen = renderGen;
-    layout(`<div class="empty"><span class="spinner"></span> Loading…</div>`);
+    layout(loadingView());
     let status;
     try { status = await api("/connect/status"); }
     catch (err) { if (!stale(gen)) errorView(err); return; }
     if (stale(gen)) return;
     lastConnectStatus = status;
+    const pageHtml = () => {
     const live = status.state === "connected" || status.state === "starting" || status.state === "stopping";
     const dotCls = status.state === "connected" ? "on" : status.state === "error" ? "err" : status.state === "starting" || status.state === "stopping" ? "pending" : "";
     const savedConnections = status.saved_connections || [];
-    layout(`
+      return `
       <div class="title-row">
         <div><h1>Connect</h1><div class="sub">Link this ccc-mcp home to ChatGPT over an OpenAI Platform Tunnel.</div></div>
       </div>
       <div class="settings-stack">
         ${pageCard("link", "Connection status", "", `
           <div class="status-row connect-state is-${dotCls || "off"}"><span class="status-dot ${dotCls}"></span><strong>${esc(UI.translate(status.state))}</strong>${status.tunnel_id ? ` <span class="mono muted">${esc(status.tunnel_id)}</span>` : ""}</div>
-          ${status.error ? `<div class="kv-row"><span class="k">Error</span><span class="v" style="color:var(--negative)">${esc(status.error)}</span></div>` : ""}
+          ${status.error ? `<div class="kv-row"><span class="k">Error</span><span class="v" style="color:var(--negative)">${esc(UI.error(status.error))}</span></div>` : ""}
           ${!status.tunnel_client_installed ? `<div class="hint">tunnel-client is not installed yet — it downloads and verifies automatically on first connect.</div>` : ""}
-          <div id="connect-log-wrap" ${live ? 'style="margin-top:16px"' : ""}></div>`,
+          <div id="connect-log-wrap" data-morph-skip ${live ? 'style="margin-top:16px"' : ""}></div>`,
           live ? `<button class="btn small danger" id="btn-disconnect">Disconnect</button>` : "")}
         ${!live ? pageCard("key", "Connection profile", "Save several named connections, each with its own Tunnel ID and runtime key. One connection runs at a time.", `
             <input type="hidden" id="connect-profile-id" />
@@ -3683,47 +2070,46 @@
             </div>
           `).join("")) : ""}
         ${pageCard("test", "Native CLI login", "Install, sign in to, and uninstall Codex and Claude Code from here; ccc-mcp never stores their credentials. If this computer has no browser of its own, open any link that shows up below on another device and finish signing in there.",
-          `<div id="provider-login-codex"><span class="spinner small"></span> ${esc(UI.translate("Checking…"))}</div><div id="provider-login-claude"><span class="spinner small"></span> ${esc(UI.translate("Checking…"))}</div>`)}
+          `<div id="provider-login-codex" data-morph-skip><span class="spinner small"></span> ${esc(UI.translate("Checking…"))}</div><div id="provider-login-claude" data-morph-skip><span class="spinner small"></span> ${esc(UI.translate("Checking…"))}</div>`)}
       </div>
-    `, { narrow: true, contentClass: "settings-wide" });
-    api("/connect/providers").then((r) => {
-      if (stale(gen)) return;
-      providerInfoCache = r.providers || {};
-      renderProviderLogin(gen, "codex", "Codex");
-      renderProviderLogin(gen, "claude", "Claude Code");
-    }).catch(() => {
-      for (const provider of ["codex", "claude"]) {
-        const el = document.getElementById(`provider-login-${provider}`);
-        if (el) el.innerHTML = `<div class="kv-row"><span class="k muted">${esc(UI.translate("Could not check native CLI login status."))}</span></div>`;
-      }
-    });
-    if (live) {
-      const renderLog = (lines) => {
-        const wrap = document.getElementById("connect-log-wrap");
-        if (!wrap) return;
-        wrap.innerHTML = lines.length
-          ? `<div class="log-panel">${lines.map((l) => esc(l)).join("\n")}</div>`
-          : `<div class="log-panel"><span class="muted-line">${esc(UI.translate("Waiting for tunnel-client output…"))}</span></div>`;
-        wrap.scrollTop = wrap.scrollHeight;
-      };
-      api("/connect/logs").then((r) => renderLog(r.lines)).catch(() => {});
-      trackTimer(setInterval(async () => {
-        try {
-          const [logs, st] = await Promise.all([api("/connect/logs"), api("/connect/status")]);
-          renderLog(logs.lines);
-          if (st.state !== status.state) renderConnect();
-        } catch (e) {}
-      }, 2000));
+    `;
+    };
+    layout(pageHtml(), { narrow: true, contentClass: "settings-wide" });
+    // Everything below can run again after an in-place repaint: handlers are assigned (onclick), never
+    // stacked, and the cards that fill themselves (the log, the Codex/Claude sign-in) are left alone.
+    let paintedOnce = false;
+    const refresh = async () => {
+      try { status = await api("/connect/status"); lastConnectStatus = status; } catch (e) { return; }
+      if (!stale(gen)) paint();
+    };
+    const renderLog = (lines) => {
+      const wrap = document.getElementById("connect-log-wrap");
+      if (!wrap) return;
+      const panel = wrap.querySelector(".log-panel");
+      // Follow the output only if the person is already at the end of it; never pull them down.
+      const atEnd = !panel || panel.scrollHeight - panel.scrollTop - panel.clientHeight < 24;
+      const html = lines.length
+        ? `<div class="log-panel">${lines.map((l) => esc(l)).join("\n")}</div>`
+        : `<div class="log-panel"><span class="muted-line">${esc(UI.translate("Waiting for tunnel-client output…"))}</span></div>`;
+      if (wrap.dataset.shown === html) return;
+      const before = panel ? panel.scrollTop : 0;
+      wrap.innerHTML = html;
+      wrap.dataset.shown = html;
+      const next = wrap.querySelector(".log-panel");
+      if (next) next.scrollTop = atEnd ? next.scrollHeight : before;
+    };
+    const wire = () => {
+      const live = status.state === "connected" || status.state === "starting" || status.state === "stopping";
+      const savedConnections = status.saved_connections || [];
       const disconnectBtn = document.getElementById("btn-disconnect");
-      if (disconnectBtn) disconnectBtn.addEventListener("click", async () => {
+      if (disconnectBtn) disconnectBtn.onclick = async () => {
         disconnectBtn.disabled = true;
-        try { await api("/connect/stop", { method: "POST" }); toast("Disconnected."); renderConnect(); }
+        try { await api("/connect/stop", { method: "POST" }); toast("Disconnected."); await refresh(); }
         catch (err) { toast(err.message, true); disconnectBtn.disabled = false; }
-      });
-      return;
-    }
-    const connectBtn = document.getElementById("btn-connect");
-    if (connectBtn) connectBtn.addEventListener("click", async () => {
+      };
+      if (live) return;
+      const connectBtn = document.getElementById("btn-connect");
+      if (connectBtn) connectBtn.onclick = async () => {
       const tunnelId = document.getElementById("connect-tunnel-id").value.trim();
       const name = document.getElementById("connect-name").value.trim();
       const profileId = document.getElementById("connect-profile-id").value || undefined;
@@ -3742,324 +2128,83 @@
           body: { tunnel_id: tunnelId, name: name || undefined, profile_id: profileId, api_key: apiKey || undefined, remember },
         });
         toast("Connected.");
-        renderConnect();
+        await refresh();
       } catch (err) {
         clearTimeout(progressTimer);
         toast(err.message, true);
         connectBtn.disabled = false;
         connectBtn.textContent = UI.translate("Connect");
       }
-    });
-    document.getElementById("btn-save-connection").addEventListener("click", async (event) => {
-      const button = event.currentTarget;
-      button.disabled = true;
-      try {
-        await api("/connect/save", { method: "POST", body: {
-          profile_id: document.getElementById("connect-profile-id").value || undefined,
-          name: document.getElementById("connect-name").value.trim(),
-          tunnel_id: document.getElementById("connect-tunnel-id").value.trim(),
-          api_key: document.getElementById("connect-api-key").value || undefined,
-        } });
-        document.getElementById("connect-api-key").value = "";
-        toast("Connection saved.");
-        renderConnect();
-      } catch (err) { toast(err.message, true); button.disabled = false; }
-    });
-    document.getElementById("btn-clear-connection").addEventListener("click", () => {
-      for (const id of ["connect-profile-id", "connect-name", "connect-tunnel-id", "connect-api-key"]) document.getElementById(id).value = "";
-      document.getElementById("connect-remember").checked = false;
-      document.getElementById("connect-name").focus();
-    });
-    document.querySelectorAll("[data-use]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const profile = savedConnections.find((row) => row.id === btn.dataset.use);
-        document.getElementById("connect-profile-id").value = profile.id;
-        document.getElementById("connect-name").value = profile.name;
-        document.getElementById("connect-tunnel-id").value = profile.tunnel_id;
-        document.getElementById("connect-api-key").value = "";
-        document.getElementById("connect-name").focus();
-      });
-    });
-    document.querySelectorAll("[data-forget]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const profile = savedConnections.find((row) => row.id === btn.dataset.forget);
-        showModal({ title: "Forget connection", body: `${profile.name}\n\n${UI.translate("This removes the saved key from this device. It does not revoke the key at OpenAI.")}`,
-          danger: true, confirmLabel: "Forget", onSubmit: async () => {
-            await api("/connect/forget", { method: "POST", body: { profile_id: profile.id } });
-            toast("Forgotten.");
-            renderConnect();
+      };
+      document.getElementById("btn-save-connection").onclick = async (event) => {
+        const button = event.currentTarget;
+        button.disabled = true;
+        try {
+          await api("/connect/save", { method: "POST", body: {
+            profile_id: document.getElementById("connect-profile-id").value || undefined,
+            name: document.getElementById("connect-name").value.trim(),
+            tunnel_id: document.getElementById("connect-tunnel-id").value.trim(),
+            api_key: document.getElementById("connect-api-key").value || undefined,
           } });
+          document.getElementById("connect-api-key").value = "";
+          toast("Connection saved.");
+          await refresh();
+        } catch (err) { toast(err.message, true); } finally { button.disabled = false; }
+      };
+      document.getElementById("btn-clear-connection").onclick = () => {
+        for (const id of ["connect-profile-id", "connect-name", "connect-tunnel-id", "connect-api-key"]) document.getElementById(id).value = "";
+        document.getElementById("connect-remember").checked = false;
+        document.getElementById("connect-name").focus();
+      };
+      document.querySelectorAll("[data-use]").forEach((btn) => {
+        btn.onclick = () => {
+          const profile = savedConnections.find((row) => row.id === btn.dataset.use);
+          document.getElementById("connect-profile-id").value = profile.id;
+          document.getElementById("connect-name").value = profile.name;
+          document.getElementById("connect-tunnel-id").value = profile.tunnel_id;
+          document.getElementById("connect-api-key").value = "";
+          document.getElementById("connect-name").focus();
+        };
       });
+      document.querySelectorAll("[data-forget]").forEach((btn) => {
+        btn.onclick = () => {
+          const profile = savedConnections.find((row) => row.id === btn.dataset.forget);
+          showModal({ title: "Forget connection", body: `${profile.name}\n\n${UI.translate("This removes the saved key from this device. It does not revoke the key at OpenAI.")}`,
+            danger: true, confirmLabel: "Forget", onSubmit: async () => {
+              await api("/connect/forget", { method: "POST", body: { profile_id: profile.id } });
+              toast("Forgotten.");
+              await refresh();
+            } });
+        };
+      });
+    };
+    const paint = () => {
+      if (paintedOnce) morphContent(pageHtml());
+      wire();
+      paintedOnce = true;
+    };
+    paint();
+    api("/connect/providers").then((r) => {
+      if (stale(gen)) return;
+      providerInfoCache = r.providers || {};
+      renderProviderLogin(gen, "codex", "Codex");
+      renderProviderLogin(gen, "claude", "Claude Code");
+    }).catch(() => {
+      for (const provider of ["codex", "claude"]) {
+        const el = document.getElementById(`provider-login-${provider}`);
+        if (el) el.innerHTML = `<div class="kv-row"><span class="k muted">${esc(UI.translate("Could not check native CLI login status."))}</span></div>`;
+      }
     });
-    watchForChanges(gen, () => api("/connect/status"), renderConnect);
+    livePoll(gen, async () => {
+      const fresh = await api("/connect/status");
+      if (stale(gen)) return;
+      if (JSON.stringify(fresh) !== JSON.stringify(status)) { status = fresh; lastConnectStatus = fresh; paint(); }
+      if (status.state === "connected" || status.state === "starting" || status.state === "stopping") {
+        const logs = await api("/connect/logs");
+        if (!stale(gen)) renderLog(logs.lines);
+      }
+    }, 2000);
   }
-
-  // --- Get started (first-run status) ---------------------------------------------
-
-  const ONBOARDING_NEXT_ACTION = {
-    install_environment: { label: "Install Git and Python 3.11+, then reload this page.", target: null },
-    connect_tunnel: { label: "Connect ChatGPT", target: "#/connect" },
-    add_project: { label: "Add or create a project", target: "#/" },
-    authorize_project: { label: "Open the project and enable write access", target: (id) => `#/p/${encodeURIComponent(id)}/overview` },
-    set_chatgpt_only_profile: { label: "Select the chatgpt-only profile in Settings", target: (id) => `#/p/${encodeURIComponent(id)}/settings` },
-    all_set: { label: "You're set. Open ChatGPT and ask it to make a change.", target: null },
-  };
-
-  let onboardingStepCounter = 0;
-  function diagRow(state, label, detail, hint, fix, monoDetail) {
-    const icon = state === "ok" ? "decision" : state === "fail" ? "xcircle" : "neutral";
-    const numbered = state !== "neutral";
-    return `<div class="diag-row is-${state}">
-      <span class="diag-icon" aria-hidden="true">${pageIcon(icon)}</span>
-      <div class="diag-main">
-        <div class="diag-label-row">
-          ${numbered ? `<span class="diag-step-num">${esc(UI.translate("STEP"))} ${++onboardingStepCounter}</span>` : `<span class="pill neutral">${esc(UI.translate("Optional"))}</span>`}
-          <span class="diag-label">${esc(label)}</span>
-        </div>
-        ${detail ? `<div class="diag-detail${monoDetail ? " mono" : ""}">${esc(detail)}</div>` : ""}
-        ${state === "fail" && hint ? `<div class="diag-hint">${esc(hint)}</div>` : ""}
-      </div>
-      ${state !== "ok" && fix ? `<a class="btn small diag-fix" href="${fix.href}">${esc(fix.label)}</a>` : ""}
-    </div>`;
-  }
-
-  async function renderStart() {
-    const gen = renderGen;
-    layout(loadingView());
-    let projects = [];
-    try { projects = await api("/projects"); } catch (err) { projects = []; }
-    if (stale(gen)) return;
-
-    const currentRoute = parseRoute();
-    const requested = currentRoute.sub && projects.some((p) => p.id === currentRoute.sub) ? currentRoute.sub : null;
-    const selectedId = requested || projects[0]?.id || null;
-
-    let status;
-    try {
-      status = await api(selectedId ? `/onboarding/status?project_id=${encodeURIComponent(selectedId)}` : "/onboarding/status");
-    } catch (err) {
-      if (!stale(gen)) errorView(err);
-      return;
-    }
-    if (stale(gen)) return;
-
-    const env = status.environment;
-    const tunnel = status.tunnel;
-    const envOk = env.python.available && env.git.available;
-    const settingsHref = selectedId ? `#/p/${encodeURIComponent(selectedId)}/settings` : "#/";
-    const overviewHref = selectedId ? `#/p/${encodeURIComponent(selectedId)}/overview` : "#/";
-
-    onboardingStepCounter = 0;
-    const steps = [
-      diagRow(envOk ? "ok" : "fail", "Your computer is ready",
-        envOk ? `Python ${env.python.version} · Git ${env.git.version}` : "",
-        !env.python.available ? "Install Python 3.11 or later, then reload this page." : "Install Git, then reload this page.",
-        null, true),
-      diagRow(tunnel.state === "connected" ? "ok" : "fail", "ChatGPT is connected",
-        tunnel.state === "connected" ? "Tunnel connected" : "",
-        "ChatGPT talks to this computer through a Tunnel. Connect it below.",
-        { href: "#/connect", label: UI.translate("Connect") }),
-    ];
-    if (status.project) {
-      steps.push(diagRow(status.project.authorized ? "ok" : "fail", "This project can be edited",
-        status.project.authorized ? "Write access on" : "",
-        "ccc-mcp needs write access to this project before ChatGPT can change files.",
-        { href: overviewHref, label: UI.translate("Open project") }));
-      steps.push(diagRow(status.project.profile === "chatgpt-only" ? "ok" : "fail", "ChatGPT-only mode is selected",
-        status.project.profile === "chatgpt-only" ? "chatgpt-only" : status.project.profile,
-        "Select the chatgpt-only profile so no Codex/Claude install is required.",
-        { href: settingsHref, label: UI.translate("Open settings") }));
-      steps.push(diagRow("neutral", "Test command",
-        status.project.test_command_configured ? "Configured" : "Not set — ccc-mcp can still run tests automatically",
-        "", null));
-    } else {
-      steps.push(diagRow("fail", "Add or create a project", "",
-        "ChatGPT needs an authorized local folder to work on.",
-        { href: "#/", label: UI.translate("Add project") }));
-    }
-    const countable = [envOk, tunnel.state === "connected",
-      ...(status.project ? [status.project.authorized, status.project.profile === "chatgpt-only"] : [false])];
-    const readyCount = countable.filter(Boolean).length;
-    const totalCount = countable.length;
-
-    const next = ONBOARDING_NEXT_ACTION[status.next_action.key] || ONBOARDING_NEXT_ACTION.all_set;
-    const nextTarget = typeof next.target === "function" ? (selectedId ? next.target(selectedId) : "#/") : next.target;
-    const allSet = status.next_action.key === "all_set";
-
-    const projectPicker = projects.length > 1 ? `
-      <label class="onboarding-project-picker">${esc(UI.translate("Project"))}
-        <select id="onboarding-project">${projects.map((p) => `<option value="${esc(p.id)}" ${p.id === selectedId ? "selected" : ""} data-no-i18n>${esc(p.id)}</option>`).join("")}</select>
-      </label>` : "";
-
-    const heroBody = `<div class="onboarding-hero">
-      <div class="onboarding-hero-text"><strong>${esc(next.label)}</strong><span>${allSet ? esc(UI.translate("Everything below is ready.")) : esc(UI.translate("Finish this to keep moving."))}</span></div>
-      <span class="pill ${allSet ? "positive" : "accent"}">${readyCount}/${totalCount} ${esc(UI.translate("ready"))}</span>
-    </div>`;
-
-    layout(`
-      <div class="title-row"><div><h1>${esc(UI.translate("Get started"))}</h1><div class="sub">${esc(UI.translate("Let ChatGPT write and test code on your computer — with host-run test results you can check, not just its word that it works."))}</div></div></div>
-      <div class="settings-stack">
-        ${pageCard(allSet ? "decision" : "flag", "Next step", "", heroBody, "",
-          { tone: allSet ? "positive" : undefined, actions: nextTarget ? `<a class="btn small primary" href="${nextTarget}">${esc(UI.translate("Go"))}</a>` : "" })}
-        ${pageCard("list", "Setup checklist", "What's left before ChatGPT can work on an authorized project.",
-          `${projectPicker}<div class="diag-list">${steps.join("")}</div>`,
-          `<button class="btn small" id="btn-copy-diagnostics">${esc(UI.translate("Copy diagnostic info"))}</button>`)}
-        <div class="dashboard-usage-grid">
-          ${pageCard("question", "See it in action", "A read-only replay of a full send-back cycle — no setup, nothing touches a real project.",
-            `<p>${esc(UI.translate("Walk through a small real bug getting fixed, caught by a failing test, and reviewed with evidence — or watch the"))} <a href="https://github.com/bruce601080102/ccc-mcp#watch-the-demo" target="_blank" rel="noopener">${esc(UI.translate("recorded video"))}</a> ${esc(UI.translate("instead."))}</p>`,
-            "", { actions: `<a class="btn small primary" href="#/demo">${esc(UI.translate("Open the demo"))}</a>` })}
-          ${pageCard("package", "Advanced: Codex / Claude Code", "Optional. Only needed if you want to assign some roles to the native CLI instead of ChatGPT.",
-            `<p>${esc(UI.translate("chatgpt-only never needs this. Install and sign in to Codex or Claude Code from the"))} <a href="#/connect">${esc(UI.translate("Connect page"))}</a>.</p>`)}
-        </div>
-      </div>
-    `, { narrow: true });
-
-    const picker = document.getElementById("onboarding-project");
-    if (picker) picker.addEventListener("change", () => { navTo(`/start/${encodeURIComponent(picker.value)}`); });
-    document.getElementById("btn-copy-diagnostics").addEventListener("click", async () => {
-      try { await navigator.clipboard.writeText(JSON.stringify(status, null, 2)); toast("Diagnostic info copied."); }
-      catch (_) { toast("Could not copy. Select the text and copy it manually.", true); }
-    });
-  }
-
-  // --- Demo (offline replay) -------------------------------------------------------
-  //
-  // Entirely static, hand-authored sample data — illustrative of a real send-back
-  // cycle, not a captured execution. This function makes no `api()` call and touches
-  // no project, task, or agent: it only renders fixed strings defined below, reusing
-  // the same conversation/evidence renderer and CSS the real Task page uses. See
-  // tests/test_web_ui.py::test_demo_mode_page_makes_no_backend_calls for the
-  // automated guard on that boundary.
-
-  function demoFixtureEvents() {
-    return [
-      {
-        event_id: "demo-1", event_type: "task_created", role: null, execution_id: null,
-        timestamp: "2026-01-01T09:00:00Z",
-        summary: "clamp(value, lo, hi) isn't enforcing the upper bound: clamp(15, 0, 10) returns 15 instead of 10. Please fix it and add tests.",
-      },
-      {
-        event_id: "demo-2", event_type: "agent_completed", role: "SA", execution_id: "exec-sa-1",
-        timestamp: "2026-01-01T09:01:10Z",
-        summary: "Found it: clamp() in utils/clamp.py only checks the lower bound (lo), never the upper one (hi). Scope: one function, one file. Recommend adding the missing upper-bound check plus boundary tests (exactly at lo/hi, past each side, and a normal in-range value).",
-        detail: { report: { summary: "Root cause isolated to utils/clamp.py; no other callers affected.", next_action: "Hand off to the build role with the missing-upper-bound finding." } },
-      },
-      {
-        event_id: "demo-3", event_type: "agent_completed", role: "RD", execution_id: "exec-rd-1",
-        timestamp: "2026-01-01T09:04:40Z",
-        summary: "Implemented the fix: clamp() now returns min(value, lo, hi). Diff and tests are attached.",
-        detail: { report: { summary: "Rewrote clamp() to a one-line min() call.", next_action: "Run the host test suite." } },
-      },
-      {
-        event_id: "demo-4", event_type: "host_test_completed", role: null, execution_id: "exec-rd-1",
-        timestamp: "2026-01-01T09:04:55Z",
-        detail: {
-          executed_by_host: true, passed: false, no_tests_collected: false,
-          command: ["pytest", "-q", "tests/test_clamp.py"],
-          selection: { mode: "changed_test_files", paths: ["tests/test_clamp.py"] },
-          stdout: "tests/test_clamp.py::test_clamp_in_range PASSED\ntests/test_clamp.py::test_clamp_lower_bound PASSED\ntests/test_clamp.py::test_clamp_upper_bound FAILED\n\nassert 0 == 10\n 1 failed, 2 passed in 0.02s",
-        },
-      },
-      {
-        event_id: "demo-5", event_type: "agent_completed", role: "REVIEW", execution_id: "exec-review-1",
-        timestamp: "2026-01-01T09:05:30Z",
-        summary: "Blocking: min(value, lo, hi) always pulls the result toward the smallest of the three arguments, so it can never clamp upward. Evidence: the host run above — test_clamp_upper_bound asserts 0 == 10. Sending back to the build role with that failing test as the fix target.",
-        detail: { report: { summary: "min(value, lo, hi) is not a clamp; it collapses to the minimum of all three.", next_action: "Send back to the build role; fix target is test_clamp_upper_bound." }, evidence_refs: ["exec-rd-1"] },
-        evidence_refs: ["exec-rd-1"],
-      },
-      {
-        event_id: "demo-6", event_type: "agent_completed", role: "RD", execution_id: "exec-rd-2",
-        timestamp: "2026-01-01T09:07:15Z",
-        summary: "Fixed per review: clamp() now returns max(lo, min(value, hi)) — clamps to hi first, then guarantees the result never drops below lo.",
-        detail: { report: { summary: "Replaced min()-only with max(lo, min(value, hi)).", next_action: "Re-run the host test suite." } },
-      },
-      {
-        event_id: "demo-7", event_type: "host_test_completed", role: null, execution_id: "exec-rd-2",
-        timestamp: "2026-01-01T09:07:28Z",
-        detail: {
-          executed_by_host: true, passed: true, no_tests_collected: false,
-          command: ["pytest", "-q", "tests/test_clamp.py"],
-          selection: { mode: "changed_test_files", paths: ["tests/test_clamp.py"] },
-          stdout: "tests/test_clamp.py::test_clamp_in_range PASSED\ntests/test_clamp.py::test_clamp_lower_bound PASSED\ntests/test_clamp.py::test_clamp_upper_bound PASSED\n\n3 passed in 0.02s",
-        },
-      },
-      {
-        event_id: "demo-8", event_type: "agent_completed", role: "REVIEW", execution_id: "exec-review-2",
-        timestamp: "2026-01-01T09:07:50Z",
-        summary: "All three tests pass and the fix matches the finding above. Approved.",
-        detail: { report: { summary: "Verified against the host run: 3 passed.", next_action: "None — accepted." } },
-      },
-      {
-        event_id: "demo-9", event_type: "task_completed", role: null, execution_id: null,
-        timestamp: "2026-01-01T09:07:55Z",
-        summary: "This work round completed. Open the Results tab to read what each step produced.",
-      },
-    ];
-  }
-
-  const DEMO_DIFF = `--- a/utils/clamp.py
-+++ b/utils/clamp.py
-@@ -1,5 +1,5 @@
- def clamp(value, lo, hi):
--    return min(value, lo, hi)
-+    return max(lo, min(value, hi))`;
-
-  function renderDemo() {
-    const events = demoFixtureEvents();
-    const banner = `<div class="demo-banner" role="note">
-      <span><strong>${esc(UI.translate("Demo Replay"))}</strong> — ${esc(UI.translate("sample data, not a live AI session. Nothing here touches a real project."))}</span>
-      <span class="demo-banner-actions"><a class="btn small primary" href="#/start">${esc(UI.translate("Set up a real project"))} →</a></span>
-    </div>`;
-    const scenario = pageCard("question", "The scenario", "A small, reproducible bug — clamp(value, lo, hi) never enforces the upper bound.",
-      `<p>${esc(UI.translate("This replay shows one real kind of value this product adds: a review that sends work back with a specific failing test as evidence, not just an opinion — and the host actually re-running the tests before anyone calls it done."))}</p>`);
-    const conversation = `<div class="demo-conversation">${taskConversation(events, new Set())}</div>`;
-    const recap = pageCard("decision", "What happened", "",
-      `<p>${esc(UI.translate("The build role's first attempt failed a real host-run test. The reviewer cited that exact failure as evidence and sent it back. The second attempt passed, and the reviewer approved it against that passing run — not against anyone's say-so."))}</p>`);
-    const diffCard = pageCard("code", "Final diff", "", `<pre class="mono task-diff">${esc(DEMO_DIFF)}</pre>`);
-    const testCard = pageCard("test", "Host test evidence", "",
-      `<p class="muted">${esc(UI.translate("Run by the host on this machine — never taken from the agent's own word."))}</p>${verificationLine({ executed_by_host: true, passed: true })}<details><summary>${esc(UI.translate("View saved test result"))}</summary><pre class="mono">tests/test_clamp.py::test_clamp_in_range PASSED
-tests/test_clamp.py::test_clamp_lower_bound PASSED
-tests/test_clamp.py::test_clamp_upper_bound PASSED
-
-3 passed in 0.02s</pre></details>`);
-    const closing = `<div class="demo-banner" role="note"><span><strong>${esc(UI.translate("That's the whole replay."))}</strong> ${esc(UI.translate("Your own tasks look like this, built from what actually happened on your machine."))}</span><span class="demo-banner-actions"><a class="btn small primary" href="#/start">${esc(UI.translate("Set up a real project"))} →</a></span></div>`;
-    layout(`
-      ${banner}
-      <div class="title-row"><div><h1>${esc(UI.translate("Demo: a send-back cycle"))}</h1><div class="sub">${esc(UI.translate("Read-only. Scroll through the conversation, then see the final diff and test evidence below."))}</div></div></div>
-      <div class="settings-stack">
-        ${scenario}
-        <section class="task-result-card demo-scenario"><h2>${esc(UI.translate("Task meeting room"))}</h2>${conversation}</section>
-        ${recap}
-        ${diffCard}
-        ${testCard}
-      </div>
-      ${closing}
-    `, { narrow: true });
-    bindChatDetailButtons(events);
-  }
-
-  // ---- Role Studio ------------------------------------------------------------------------
-  // Every piece of text a person typed is put into the page with esc(), or with .value /
-  // .textContent after the markup exists. Nothing from a role is ever parsed as HTML.
-
-  const STUDIO_SECTIONS = {
-    goal: ["Goal", "What this role is for, in a sentence or two."],
-    duties: ["Duties", "What it does, step by step if the order matters."],
-    constraints: ["Limits", "What it must not do, or must stay within."],
-    io_format: ["Input and output", "What it reads, and what its findings and summary should contain. The report format itself is fixed by ccc-mcp."],
-    collaboration: ["Working with others", "Who it hands its result to, who checks it, and when to ask the PM."],
-    failure_handling: ["When something goes wrong", "What to do when information is missing or the work cannot be done."],
-  };
-  const STUDIO_LAYERS = {
-    operator_editable: ["You write this", "editable"],
-    fixed_contract: ["Fixed by ccc-mcp", "fixed"],
-    dynamic: ["Filled in when a task runs", "dynamic"],
-    provider_wrapper: ["Added by the provider's wrapper", "dynamic"],
-  };
-  const sectionsAsFreeform = (sections) => Object.keys(STUDIO_SECTIONS)
-    .filter((key) => (sections[key] || "").trim())
-    .map((key) => `## ${{ goal: "Goal", duties: "Duties", constraints: "Constraints", io_format: "Input and output format", collaboration: "Collaboration rules", failure_handling: "If something fails" }[key]}\n${sections[key]}`)
-    .join("\n\n");
 
   function driftChangeLabel(change) {
     const part = change.component ? change.component.replace("base_contract:", "") : "";
@@ -4087,447 +2232,61 @@ tests/test_clamp.py::test_clamp_upper_bound PASSED
     });
   }
 
-  async function renderRoleStudio() {
-    const gen = renderGen;
-    const route = parseRoute();
-    const id = route.project;
-    const base = `/projects/${encodeURIComponent(id)}/roles`;
-    layout(loadingView());
-    let data;
-    try { data = await api(base); }
-    catch (err) { if (!stale(gen)) errorView(err); return; }
-    if (stale(gen)) return;
-    const catalog = data.catalog;
-    setCustomRoles(data.roles);
-    const bases = Object.fromEntries(catalog.bases.map((item) => [item.id, item]));
-    const EVERYDAY = ["PA", "RS", "AN", "PL", "CS", "WR", "ED", "VC", "RV"];
-    const state = { ref: route.sub && route.sub !== "new" ? route.sub : null, creating: route.sub === "new", detail: null, review: null, tab: "edit", draft: null, version: null, lint: null, preview: null, diff: null, previewProvider: "", previewRequest: "" };
-
-    const blankDraft = (baseRole) => {
-      return { name: "", description: "", base_role: baseRole, avatar: "", kind: "", mode: "sections", sections: Object.fromEntries(catalog.sections.map((key) => [key, ""])), freeform: "", stats: null, runtime: null };
-    };
-    const draftFromRole = (role) => ({
-      name: role.definition.name, description: role.definition.description, base_role: role.base_role, avatar: role.definition.avatar || "", kind: role.definition.kind,
-      mode: role.definition.prompt.mode, sections: { ...role.definition.prompt.sections }, freeform: role.definition.prompt.freeform,
-      stats: role.definition.stats ? { ...role.definition.stats } : null, runtime: role.definition.runtime ? { ...role.definition.runtime } : null,
-    });
-    const definitionFromDraft = (draft) => ({
-      name: draft.name, description: draft.description, avatar: draft.avatar || null, kind: draft.kind || undefined,
-      prompt: { mode: draft.mode, sections: draft.sections, freeform: draft.freeform },
-      stats: draft.stats, runtime: draft.runtime && draft.runtime.provider ? draft.runtime : null,
-    });
-    const openLoaded = async () => {
-      if (state.ref) {
-        state.detail = await api(`${base}/${encodeURIComponent(state.ref)}`);
-        state.draft = draftFromRole(state.detail.role);
-        state.version = state.detail.role.current_version;
-        // A role that came from an imported file is read, not edited, until a person confirms it.
-        state.review = state.detail.role.status === "imported_pending" ? await api(`${base}/${encodeURIComponent(state.ref)}/import-review`) : null;
-        if (state.review && state.tab === "edit") state.tab = "review";
-        if (!state.review && state.tab === "review") state.tab = "edit";
-      } else if (state.creating) {
-        state.detail = null;
-        state.review = null;
-        state.draft = blankDraft("SA");
-        state.version = null;
-      }
-    };
-    try { await openLoaded(); }
-    catch (err) { if (!stale(gen)) errorView(err); return; }
-    if (stale(gen)) return;
-
-    const statusPill = (role) => `<span class="pill ${role.status === "active" ? "positive" : "neutral"}">${esc(UI.translate(role.status === "active" ? "On" : role.status === "disabled" ? "Off" : "Waiting for confirmation"))}</span>`;
-    const pendingNotice = () => (data.pending_imports || []).length ? `<div class="studio-banner" role="note"><strong>${esc(UI.translate("Imported roles are waiting."))}</strong> ${esc(UI.translate("They cannot run until you review and confirm each one."))}</div>` : "";
-    const listHtml = () => pendingNotice() + (data.roles.length
-      ? data.roles.map((role) => `<a class="studio-item${role.id === state.ref ? " active" : ""}" href="#/p/${encodeURIComponent(id)}/roles/${encodeURIComponent(role.id)}">
-          <span class="chat-avatar av-${roleAvatarTone(role.id)}" aria-hidden="true">${roleAvatarIcon(role.id)}</span>
-          <span class="studio-item-text"><strong data-no-i18n>${esc(role.name)}</strong><small>${esc(UI.translate(bases[role.base_role]?.name || role.base_role))} · v${esc(role.version)}</small></span>${statusPill(role)}</a>`).join("")
-      : `<div class="empty">${esc(UI.translate("No roles of your own yet."))}</div>`);
-
-    layout(`
-      <div class="title-row"><div><h1>${esc(UI.translate("Role Studio"))}</h1><div class="sub">${esc(id)} · ${esc(UI.translate("Create your own AI teammates and put them into a workflow."))}</div></div>
-        <a class="btn primary" href="#/p/${encodeURIComponent(id)}/roles/new">${esc(UI.translate("New role"))}</a></div>
-      <div class="studio-layout">
-        <aside class="studio-list" id="studio-list" aria-label="${esc(UI.translate("Your roles"))}"></aside>
-        <section class="studio-main" id="studio-main" aria-live="polite"></section>
-      </div>`, { contentClass: "settings-wide" });
-    const listEl = document.getElementById("studio-list");
-    const mainEl = document.getElementById("studio-main");
-    const paintList = () => { listEl.innerHTML = listHtml(); UI.localize(listEl); };
-
-    // ---- pieces of the editor
-    const baseOptions = (draft, locked) => {
-      const option = (code) => { const item = bases[code]; return `<option value="${esc(code)}" ${draft.base_role === code ? "selected" : ""}>${esc(UI.translate(item.name))} (${esc(item.abbreviation)})</option>`; };
-      const software = catalog.bases.map((item) => item.id).filter((code) => !EVERYDAY.includes(code));
-      return `<optgroup label="${esc(UI.translate("Software team roles"))}">${software.map(option).join("")}</optgroup><optgroup label="${esc(UI.translate("Everyday team roles"))}">${EVERYDAY.map(option).join("")}</optgroup>`;
-    };
-    const baseHelp = (code) => {
-      const item = bases[code];
-      return `${esc(UI.translate(item.description))} ${esc(UI.translate(item.may_write ? "It can change files in the task's workspace, but only after the plan is approved." : "It is read-only: it cannot change project files."))}${item.is_gate ? ` ${esc(UI.translate("It acts as a reviewer: when it finds a real problem the work goes back."))}` : ""}`;
-    };
-    const statsFor = (draft) => draft.stats || bases[draft.base_role].stats;
-    const avatarGrid = (draft) => `<div class="avatar-picker" role="radiogroup" aria-label="${esc(UI.translate("Avatar"))}">
-        <button type="button" class="avatar-option${!draft.avatar ? " selected" : ""}" role="radio" aria-checked="${!draft.avatar}" data-studio-avatar="" title="${esc(UI.translate("Use the default for this base role"))}"><span class="chat-avatar av-${roleAvatarTone(draft.base_role)}" aria-hidden="true">${spriteFor(DEFAULT_AVATAR[draft.base_role] || "person")}</span></button>
-        ${AVATAR_ORDER.filter((avatar) => catalog.avatars.includes(avatar)).map((avatar) => `<button type="button" class="avatar-option${draft.avatar === avatar ? " selected" : ""}" role="radio" aria-checked="${draft.avatar === avatar}" data-studio-avatar="${esc(avatar)}" title="${esc(UI.translate(avatar))}"><span class="chat-avatar av-${roleAvatarTone(draft.base_role)}" aria-hidden="true">${spriteFor(avatar)}</span></button>`).join("")}</div>`;
-    const abilityRows = (draft) => {
-      const values = statsFor(draft);
-      return `<label class="checkbox-row"><input type="checkbox" id="rs-use-base-stats" ${draft.stats ? "" : "checked"} /> <span>${esc(UI.translate("Use the base role's abilities"))}</span></label>
-        <div class="studio-abilities">${catalog.stat_axes.map((axis) => `<label class="ability"><span>${esc(UI.translate(STAT_NAMES[axis]))}</span><input type="range" min="0" max="${catalog.stat_max}" step="1" value="${esc(values[axis])}" data-studio-stat="${esc(axis)}" ${draft.stats ? "" : "disabled"} /><output>${esc(values[axis])}</output></label>`).join("")}</div>
-        <div class="studio-radar" id="rs-radar">${radarSvg(values, { size: 150, labels: "short" })}</div>
-        <div class="hint">${esc(UI.translate("These describe how the role is set up. They are not measured and do not change any score."))}</div>`;
-    };
-    const runtimeRows = (draft) => {
-      const runtime = draft.runtime || {};
-      const providers = Object.keys(catalog.providers);
-      const efforts = catalog.providers[runtime.provider] || [];
-      return `<div class="field narrow-field"><label for="rs-provider">${esc(UI.translate("Provider"))}</label><select id="rs-provider"><option value="">${esc(UI.translate("Use the project's setting for the base role"))}</option>${providers.map((p) => `<option value="${esc(p)}" ${runtime.provider === p ? "selected" : ""}>${esc(p)}</option>`).join("")}</select></div>
-        <div class="field narrow-field"><label for="rs-model">${esc(UI.translate("Model"))}</label><input type="text" id="rs-model" maxlength="160" ${runtime.provider && runtime.provider !== "chatgpt" ? "" : "disabled"} /></div>
-        <div class="field narrow-field"><label for="rs-effort">${esc(UI.translate("Effort"))}</label><select id="rs-effort" ${runtime.provider ? "" : "disabled"}><option value="">${esc(UI.translate("CLI default"))}</option>${efforts.map((e) => `<option value="${esc(e)}" ${runtime.effort === e ? "selected" : ""}>${esc(e)}</option>`).join("")}</select></div>
-        <div class="field narrow-field"><label for="rs-fallback">${esc(UI.translate("If this provider runs out of quota, try"))}</label><select id="rs-fallback" ${runtime.provider ? "" : "disabled"}><option value="">${esc(UI.translate("Nothing"))}</option>${providers.map((p) => `<option value="${esc(p)}" ${runtime.quota_fallback === p ? "selected" : ""}>${esc(p)}</option>`).join("")}</select></div>
-        <div class="hint">${esc(UI.translate("The provider settings are frozen with the role's version, so a running task keeps the ones it started with."))}</div>`;
-    };
-    const instructionFields = (draft) => `<div class="studio-modes" role="radiogroup" aria-label="${esc(UI.translate("How do you want to write the instructions?"))}">
-        <label class="mode-choice${draft.mode === "sections" ? " selected" : ""}"><input type="radio" name="rs-mode" value="sections" ${draft.mode === "sections" ? "checked" : ""} /> <span><strong>${esc(UI.translate("Guided sections"))}</strong><small>${esc(UI.translate("Six short boxes: goal, duties, limits and so on."))}</small></span></label>
-        <label class="mode-choice${draft.mode === "freeform" ? " selected" : ""}"><input type="radio" name="rs-mode" value="freeform" ${draft.mode === "freeform" ? "checked" : ""} /> <span><strong>${esc(UI.translate("Full text"))}</strong><small>${esc(UI.translate("One free box. Sent exactly as you write it."))}</small></span></label></div>
-      <div id="rs-sections" ${draft.mode === "sections" ? "" : "hidden"}>${catalog.sections.map((key) => `<div class="field"><label for="rs-sec-${esc(key)}">${esc(UI.translate(STUDIO_SECTIONS[key][0]))}</label><textarea id="rs-sec-${esc(key)}" rows="3" maxlength="${catalog.limits.section}"></textarea><div class="hint">${esc(UI.translate(STUDIO_SECTIONS[key][1]))}</div></div>`).join("")}
-        <button class="btn small" type="button" id="rs-to-freeform">${esc(UI.translate("Copy my sections into the Full text box"))}</button></div>
-      <div id="rs-freeform" ${draft.mode === "freeform" ? "" : "hidden"}><div class="field"><label for="rs-free">${esc(UI.translate("Instructions"))}</label><textarea id="rs-free" class="mono studio-free" rows="16" maxlength="${catalog.limits.prompt_total}" spellcheck="false"></textarea><div class="hint">${esc(UI.translate("Nothing is trimmed or rewritten: spaces, blank lines and indentation are kept."))}</div></div></div>
-      <div class="hint" id="rs-other-note"></div>`;
-
-    const editHtml = (draft) => `
-      ${pageCard("roles", esc(UI.translate("Who is this role?")), esc(UI.translate("A name and a job. The base role decides what it is allowed to do.")), `
-        <div class="field narrow-field"><label for="rs-name">${esc(UI.translate("Name"))}</label><input type="text" id="rs-name" maxlength="24" autocomplete="off" /></div>
-        <div class="field"><label for="rs-desc">${esc(UI.translate("Short description"))}</label><input type="text" id="rs-desc" maxlength="${catalog.limits.description}" autocomplete="off" /></div>
-        <div class="field narrow-field"><label for="rs-base">${esc(UI.translate("Based on"))}</label><select id="rs-base" ${state.ref ? "disabled" : ""}>${baseOptions(draft)}</select>
-          <div class="hint" id="rs-base-help">${baseHelp(draft.base_role)}</div>
-          ${state.ref ? `<div class="hint">${esc(UI.translate("The base role cannot be changed afterwards. Copy the role to start from another one."))}</div>` : ""}</div>
-        <div class="field"><span class="field-label">${esc(UI.translate("Avatar"))}</span><div id="rs-avatars">${avatarGrid(draft)}</div></div>`)}
-      ${pageCard("language", esc(UI.translate("Instructions")), esc(UI.translate("Tell the role how to do its work. ccc-mcp adds its own fixed rules around what you write; you can see them in Preview.")), `${instructionFields(draft)}
-        <div class="studio-lint-bar"><button class="btn" type="button" id="rs-lint">${esc(UI.translate("Check my instructions"))}</button><span class="hint">${esc(UI.translate("Free and local: no AI model is called. It looks for gaps and wording that cannot work. It gives no score."))}</span></div>
-        <div id="rs-lint-result" aria-live="polite"></div>`)}
-      ${pageCard("evaluation", esc(UI.translate("Abilities")), esc(UI.translate("Shown on the team chart when the role is in a workflow.")), `<div id="rs-abilities">${abilityRows(draft)}</div>`)}
-      <details class="settings-card studio-advanced"><summary>${esc(UI.translate("Advanced"))}</summary><div class="settings-card-body">
-        <div class="field narrow-field"><label for="rs-kind">${esc(UI.translate("Kind"))}</label><select id="rs-kind">${catalog.kinds.map((kind) => `<option value="${esc(kind)}" ${draft.kind === kind ? "selected" : ""}>${esc(UI.translate(kind))}</option>`).join("")}</select></div>
-        <div id="rs-runtime">${runtimeRows(draft)}</div>
-        ${state.detail ? `<dl class="ctx-fields"><div class="ctx-field"><dt>${esc(UI.translate("Role id"))}</dt><dd class="mono">${esc(state.detail.role.id)}</dd></div><div class="ctx-field"><dt>${esc(UI.translate("Version"))}</dt><dd>${esc(state.detail.role.current_version)}</dd></div><div class="ctx-field"><dt>${esc(UI.translate("Fingerprint"))}</dt><dd class="mono">${esc(state.detail.role.version_sha256)}</dd></div></dl>` : ""}
-      </div></details>
-      <div class="studio-actions">
-        <button class="btn primary" type="button" id="rs-save">${esc(UI.translate(state.ref ? "Save as a new version" : "Create role"))}</button>
-        <button class="btn" type="button" id="rs-goto-preview">${esc(UI.translate("Preview what will be sent"))}</button>
-        ${state.ref ? `<button class="btn" type="button" id="rs-clone">${esc(UI.translate("Make a copy"))}</button><button class="btn ${state.detail.role.status === "active" ? "danger" : ""}" type="button" id="rs-toggle">${esc(UI.translate(state.detail.role.status === "active" ? "Switch off" : "Switch on"))}</button>` : ""}
+  // ---- Projects: what ccc-mcp may touch ---------------------------------------------------------
+  function projectRowHtml(p) {
+    const link = `#/p/${encodeURIComponent(p.id)}`;
+    return `<div class="project-row" data-key="project:${esc(p.id)}">
+        <a class="project-row-link" href="${link}/overview">
+          <span class="project-row-text">
+            <span class="project-row-name" data-no-i18n>${esc(p.id)}</span>
+            <span class="project-row-path mono">${esc(p.root)}</span>
+          </span>
+        </a>
+        <span class="project-row-meta">${accessPill(p.access)}<a class="btn small" href="${link}/tasks">Tasks</a></span>
       </div>`;
-
-    const fillEditor = (draft) => {
-      document.getElementById("rs-name").value = draft.name;
-      document.getElementById("rs-desc").value = draft.description;
-      catalog.sections.forEach((key) => { document.getElementById(`rs-sec-${key}`).value = draft.sections[key] || ""; });
-      document.getElementById("rs-free").value = draft.freeform;
-      document.getElementById("rs-model").value = (draft.runtime && draft.runtime.model) || "";
-      noteOther();
-    };
-    const noteOther = () => {
-      const draft = state.draft;
-      const hasSections = catalog.sections.some((key) => (draft.sections[key] || "").trim());
-      const other = draft.mode === "sections" ? draft.freeform.trim() : hasSections;
-      const note = document.getElementById("rs-other-note");
-      if (note) note.textContent = other ? UI.translate(draft.mode === "sections" ? "You also have text in the Full text box. It is kept, but only the guided sections are sent." : "You also have text in the guided sections. It is kept, but only the Full text is sent.") : "";
-    };
-    const readEditor = () => {
-      const draft = state.draft;
-      draft.name = document.getElementById("rs-name").value;
-      draft.description = document.getElementById("rs-desc").value;
-      catalog.sections.forEach((key) => { draft.sections[key] = document.getElementById(`rs-sec-${key}`).value; });
-      draft.freeform = document.getElementById("rs-free").value;
-      draft.kind = document.getElementById("rs-kind").value;
-      const provider = document.getElementById("rs-provider").value;
-      draft.runtime = provider ? { provider, model: document.getElementById("rs-model").value.trim() || null, effort: document.getElementById("rs-effort").value || null, quota_fallback: document.getElementById("rs-fallback").value || null } : null;
-      return draft;
-    };
-
-    const lintHtml = (result) => {
-      const order = { error: "negative", warning: "warning", info: "neutral" };
-      const label = { error: "Must fix", warning: "Worth a look", info: "Suggestion" };
-      const findings = result.findings.map((finding) => `<li class="finding is-${esc(finding.severity)}"><span class="pill ${order[finding.severity]}">${esc(UI.translate(label[finding.severity]))}</span> <strong>${esc(finding.message)}</strong>${finding.why ? `<p>${esc(finding.why)}</p>` : ""}${finding.suggestion ? `<p class="muted">${esc(finding.suggestion)}</p>` : ""}${finding.evidence ? `<p class="mono studio-evidence">${esc(finding.evidence)}</p>` : ""}</li>`).join("");
-      const areas = result.areas.map((area) => `<span class="chip ${area.status === "found" ? "ok" : ""}">${esc(UI.translate(area.area.replace("_", " ")))}: ${esc(UI.translate(area.status === "found" ? "covered" : area.status === "thin" ? "brief" : area.how === "keyword" ? "not detected" : "empty"))}</span>`).join("");
-      return `<div class="studio-lint"><p>${result.findings.length ? esc(UI.translate("Here is what the check found.")) : esc(UI.translate("Nothing to point out."))}</p>${findings ? `<ul class="finding-list">${findings}</ul>` : ""}<div class="chip-row">${areas}</div><p class="hint">${esc(result.disclaimer)}</p></div>`;
-    };
-
-    const segmentHtml = (segment) => {
-      const [label, kind] = STUDIO_LAYERS[segment.layer] || ["", "fixed"];
-      return `<article class="seg seg-${kind}"><header><strong>${esc(UI.translate(segment.title))}</strong><span class="pill ${kind === "editable" ? "accent" : "neutral"}">${esc(UI.translate(label))}</span>${segment.placeholder ? `<span class="pill warning">${esc(UI.translate("example only"))}</span>` : ""}</header><pre class="mono seg-text" data-seg="${esc(segment.id)}"></pre>${segment.note ? `<small>${esc(segment.note)}</small>` : ""}</article>`;
-    };
-    const previewHtml = () => {
-      const p = state.preview;
-      const providerOptions = ["claude", "codex", "chatgpt"].map((name) => `<option value="${name}" ${((state.previewProvider || (state.draft.runtime && state.draft.runtime.provider) || bases[state.draft.base_role].default_provider) === name) ? "selected" : ""}>${name}</option>`).join("");
-      const controls = `<div class="studio-preview-controls"><div class="field narrow-field"><label for="rp-provider">${esc(UI.translate("Provider to preview"))}</label><select id="rp-provider">${providerOptions}</select></div>
-        <div class="field"><label for="rp-request">${esc(UI.translate("Example request"))}</label><textarea id="rp-request" rows="2" maxlength="2000" placeholder="${esc(UI.translate("Leave empty to see a placeholder"))}"></textarea></div>
-        <button class="btn primary" type="button" id="rp-run">${esc(UI.translate("Show what will be sent"))}</button></div>`;
-      if (!p) return `<div class="settings-card"><div class="settings-card-body">${controls}<div class="hint">${esc(UI.translate("This previews your current edits, saved or not."))}</div></div></div>`;
-      return `<div class="settings-card"><div class="settings-card-body">${controls}</div></div>
-        <div class="studio-banner" role="note"><strong>${esc(UI.translate("Preview only."))}</strong> ${esc(UI.translate("Nothing was sent to any model, no run was created and nothing was stored. A real run fills in the parts marked as examples, and its exact text is then kept with that run."))}</div>
-        <div class="studio-legend">${Object.values(STUDIO_LAYERS).filter((_, i, all) => all.findIndex((x) => x[1] === _[1]) === i).map(([label, kind]) => `<span class="legend seg-${kind}">${esc(UI.translate(label))}</span>`).join("")}</div>
-        <h3>${esc(UI.translate("The instruction your role is given"))}</h3>${p.instruction_segments.map(segmentHtml).join("")}
-        <h3>${esc(UI.translate("What surrounds it when it is sent"))}</h3>${p.prompt_segments.map(segmentHtml).join("")}
-        <details class="settings-card studio-advanced"><summary>${esc(UI.translate("Everything as one block"))}</summary><div class="settings-card-body"><pre class="mono seg-text" id="rp-all"></pre><div class="hint mono">${esc(p.preview_sha256)}</div></div></details>
-        <div class="settings-card"><div class="settings-card-body"><h3>${esc(UI.translate("What ccc-mcp enforces itself"))}</h3><ul class="plain-list">${p.enforced_by_code.map((line) => `<li>${esc(line)}</li>`).join("")}</ul><h3>${esc(UI.translate("Please note"))}</h3><ul class="plain-list">${p.notes.map((line) => `<li>${esc(line)}</li>`).join("")}</ul></div></div>`;
-    };
-    const fillPreview = () => {
-      const p = state.preview;
-      if (!p) return;
-      mainEl.querySelectorAll("[data-seg]").forEach((pre) => {
-        const segment = [...p.instruction_segments, ...p.prompt_segments].find((item) => item.id === pre.dataset.seg);
-        pre.textContent = segment ? segment.text : "";
-      });
-      const all = document.getElementById("rp-all");
-      if (all) all.textContent = p.prompt_text;
-    };
-
-    const historyHtml = () => {
-      const d = state.detail;
-      if (!d) return "";
-      const versions = d.versions.slice().reverse();
-      const usage = d.usage;
-      const unconfirmed = (d.unconfirmed_snapshots || []).length ? `<div class="studio-banner" role="note"><strong>${esc(UI.translate("Snapshots from the import are not confirmed."))}</strong> ${esc(UI.translate("A paused task pinned to one of them cannot continue until you confirm that exact snapshot."))}
-        <ul class="plain-list">${d.unconfirmed_snapshots.map((snap) => `<li>v${esc(snap.version)} <span class="mono">${esc(snap.snapshot_id.slice(0, 12))}</span> <button class="btn small" type="button" data-confirm-snapshot="${esc(snap.snapshot_id)}">${esc(UI.translate("Confirm this snapshot…"))}</button></li>`).join("")}</ul></div>` : "";
-      return `${unconfirmed}<div class="settings-card"><div class="settings-card-body">
-        <h3>${esc(UI.translate("Versions"))}</h3>
-        <p class="hint">${esc(UI.translate("Every save is a new version. Tasks keep the version they started with."))}</p>
-        <ul class="version-list">${versions.map((v) => `<li><span class="pill ${v.version === d.role.current_version ? "accent" : "neutral"}">v${esc(v.version)}</span> <time datetime="${esc(v.created)}">${esc(new Date(v.created).toLocaleString(UI.getLocale()))}</time> <span class="mono">${esc(v.sha256.slice(0, 10))}</span>
-          <label class="inline"><input type="radio" name="vf" value="${esc(v.version)}" /> ${esc(UI.translate("from"))}</label> <label class="inline"><input type="radio" name="vt" value="${esc(v.version)}" /> ${esc(UI.translate("to"))}</label></li>`).join("")}</ul>
-        <button class="btn" type="button" id="rh-diff">${esc(UI.translate("Show what changed"))}</button><div id="rh-diff-out"></div>
-        <h3>${esc(UI.translate("Where it is used"))}</h3>
-        <p>${usage.workflows.length ? usage.workflows.map((w) => `<span class="chip" data-no-i18n>${esc(w.name)}</span>`).join(" ") : esc(UI.translate("In no workflow yet."))}</p>
-        <p class="hint">${usage.tasks.length ? esc(`${UI.translate("Tasks that ran or are running it")}: ${usage.tasks.join(", ")}`) : esc(UI.translate("No task has used it yet."))}</p>
-        <h3>${esc(UI.translate("Activity"))}</h3>
-        <ul class="plain-list">${d.events.map((e) => `<li>${esc(UI.translate(e.action.replace("_", " ")))} · v${esc(e.version ?? "")} · <span data-no-i18n>${esc(e.actor)}</span> · <time datetime="${esc(e.created)}">${esc(new Date(e.created).toLocaleString(UI.getLocale()))}</time></li>`).join("")}</ul>
-      </div></div>`;
-    };
-
-
-    // ---- an imported role waiting for a person (read only until they confirm)
-    const promptText = (role) => {
-      const prompt = role.definition.prompt;
-      return prompt.mode === "freeform" ? prompt.freeform : catalog.sections.filter((key) => (prompt.sections[key] || "").trim()).map((key) => `${UI.translate(STUDIO_SECTIONS[key][0])}\n${prompt.sections[key]}`).join("\n\n");
-    };
-    const reviewHtml = () => {
-      const r = state.review;
-      const role = r.role;
-      const perms = r.permissions;
-      const when = (value) => value ? esc(new Date(value).toLocaleString(UI.getLocale())) : esc(UI.translate("Unknown"));
-      const runtime = (item) => item && item.provider ? `${esc(item.provider)}${item.model ? ` · ${esc(item.model)}` : ""}${item.effort ? ` · ${esc(item.effort)}` : ""}` : esc(UI.translate("The project's setting for the base role"));
-      const snapshots = r.snapshots.length ? r.snapshots.map((snap) => `<li class="snap-row"><span class="pill ${snap.is_current_version ? "accent" : "neutral"}">v${esc(snap.version)}</span> <span class="mono">${esc(snap.snapshot_id.slice(0, 12))}</span> <small>${runtime(snap.runtime)}</small>
-          ${snap.confirmed_with_role ? `<small class="hint">${esc(UI.translate("Confirmed together with the role."))}</small>` : `<label class="inline"><input type="checkbox" data-review-snapshot="${esc(snap.snapshot_id)}" /> ${esc(UI.translate("Also confirm this older snapshot"))}</label>`}
-          ${snap.source_trust.length ? `<small class="hint">${esc(UI.translate("The device it came from had confirmed this. That does not count here."))}</small>` : ""}</li>`).join("") : `<li class="hint">${esc(UI.translate("The file carries no frozen snapshot. One is made on this device when the role first joins a task."))}</li>`;
-      return `<div class="studio-banner" role="alert"><strong>${esc(UI.translate("This role came from an imported file."))}</strong> ${esc(UI.translate("It cannot be edited, added to a task or run until you read it and confirm it here. Switching on write access for the project does not confirm it."))}</div>
-        ${pageCard("package", esc(UI.translate("Where it came from")), esc(UI.translate("Taken from the file. A file can say anything, so treat it as a claim, not proof.")), `<dl class="ctx-fields">
-          <div class="ctx-field"><dt>${esc(UI.translate("Project in the file"))}</dt><dd class="mono" data-no-i18n></dd></div>
-          <div class="ctx-field"><dt>${esc(UI.translate("Exported"))}</dt><dd>${when(r.source.exported_at)}</dd></div>
-          <div class="ctx-field"><dt>${esc(UI.translate("Imported here"))}</dt><dd>${when(r.source.imported_at)}</dd></div>
-          <div class="ctx-field"><dt>${esc(UI.translate("State it was in"))}</dt><dd class="mono" data-no-i18n></dd></div>
-          <div class="ctx-field"><dt>${esc(UI.translate("File fingerprint"))}</dt><dd class="mono" data-no-i18n></dd></div></dl>`)}
-        ${pageCard("roles", esc(UI.translate("What it is allowed to do")), esc(UI.translate("This comes from ccc-mcp's own code for the base role. Nothing written in the role or the file can widen it.")), `
-          <p><strong>${esc(UI.translate(bases[perms.base_role]?.name || perms.base_role))}</strong> (${esc(perms.base_role)})</p>
-          <p>${esc(UI.translate(perms.may_write_files ? "It can change files in the task's workspace, but only after the plan is approved." : "It is read-only: it cannot change project files."))} ${perms.is_gate ? esc(UI.translate("It acts as a reviewer: when it finds a real problem the work goes back.")) : ""}</p>
-          <p class="hint">${esc(UI.translate("Provider it asks for"))}: ${runtime(r.runtime)}</p>`)}
-        ${pageCard("language", esc(UI.translate("Its instructions")), esc(UI.translate("Read all of it. This is the text you would be putting in front of a model.")), `<pre class="mono seg-text" id="rv-prompt" data-no-i18n></pre>
-          <div class="studio-actions"><button class="btn" type="button" id="rv-preview">${esc(UI.translate("Preview what will be sent"))}</button><button class="btn" type="button" id="rv-history">${esc(UI.translate("See its versions"))}</button></div>`)}
-        ${pageCard("evaluation", esc(UI.translate("Frozen snapshots in the file")), esc(UI.translate("A snapshot is the exact role a past task ran with. Confirming one lets tasks that were pinned to it continue.")), `<ul class="plain-list">${snapshots}</ul>
-          <p class="hint">${r.usage.workflows.length ? esc(`${UI.translate("Used in these workflows")}: `) : esc(UI.translate("In no workflow yet."))}${r.usage.workflows.map((w) => `<span class="chip" data-no-i18n>${esc(w.name)}</span>`).join(" ")}</p>`)}
-        <div class="studio-actions"><button class="btn primary" type="button" id="rv-confirm">${esc(UI.translate("Confirm and switch on…"))}</button></div>
-        <div class="hint">${esc(UI.translate("You will be asked to type a phrase that names this role and version, so you cannot confirm a different one by accident. The confirmation is recorded."))}</div>`;
-    };
-    const fillReview = () => {
-      const r = state.review;
-      const fields = mainEl.querySelectorAll(".ctx-field dd[data-no-i18n]");
-      const values = [r.source.source_project_id, r.source.source_status, r.source.bundle_sha256];
-      fields.forEach((node, index) => { node.textContent = values[index] || "—"; });
-      const prompt = document.getElementById("rv-prompt");
-      if (prompt) prompt.textContent = promptText(r.role);
-    };
-
-    // ---- painting and wiring
-    const paintMain = () => {
-      if (!state.draft) {
-        mainEl.innerHTML = `<div class="empty">${esc(UI.translate("Pick a role on the left, or make a new one."))}<br><a class="btn primary" href="#/p/${encodeURIComponent(id)}/roles/new">${esc(UI.translate("New role"))}</a></div>`;
-        UI.localize(mainEl);
-        return;
-      }
-      const tabs = state.review ? ["review", "preview", "history"] : ["edit", "preview", ...(state.ref ? ["history"] : [])];
-      const names = { review: "Review", edit: "Edit", preview: "Preview", history: "History" };
-      const head = state.ref
-        ? `<div class="studio-head"><span class="chat-avatar av-${roleAvatarTone(state.ref)}" aria-hidden="true">${roleAvatarIcon(state.ref)}</span><div><h2 data-no-i18n>${esc(state.detail.role.definition.name)}</h2><small>${esc(UI.translate(bases[state.detail.role.base_role].name))} · v${esc(state.detail.role.current_version)}</small></div>${statusPill(state.detail.role)}</div>`
-        : `<div class="studio-head"><div><h2>${esc(UI.translate("New role"))}</h2></div></div>`;
-      mainEl.innerHTML = `${head}<nav class="tabs" role="tablist">${tabs.map((tab) => `<button class="tab${state.tab === tab ? " active" : ""}" role="tab" aria-selected="${state.tab === tab}" data-studio-tab="${tab}">${esc(UI.translate(names[tab]))}</button>`).join("")}</nav>
-        <div class="studio-pane">${state.tab === "review" && state.review ? reviewHtml() : state.tab === "edit" ? editHtml(state.draft) : state.tab === "preview" ? previewHtml() : historyHtml()}</div>`;
-      if (state.tab === "review" && state.review) fillReview();
-      if (state.tab === "edit") fillEditor(state.draft);
-      if (state.tab === "preview") {
-        document.getElementById("rp-request").value = state.previewRequest;
-        fillPreview();
-      }
-      UI.localize(mainEl);
-      wire();
-    };
-    const runLint = async () => {
-      readEditor();
-      const out = document.getElementById("rs-lint-result");
-      try {
-        const body = state.ref ? { role_ref: state.ref, draft: definitionFromDraft(state.draft) } : { base_role: state.draft.base_role, draft: definitionFromDraft(state.draft) };
-        state.lint = await api(`${base}/lint`, { method: "POST", body });
-        out.innerHTML = lintHtml(state.lint);
-        UI.localize(out);
-      } catch (err) { toast(err.message, true); }
-    };
-    const runPreview = async () => {
-      // The edit form is not on this tab; its content was saved into state.draft when it was left.
-      state.previewProvider = document.getElementById("rp-provider").value;
-      state.previewRequest = document.getElementById("rp-request").value;
-      try {
-        const draftForPreview = { ...definitionFromDraft(state.draft), name: state.draft.name.trim() || "Untitled role" };
-        const body = { draft: draftForPreview, provider: state.previewProvider, requirement: state.previewRequest.trim() || null, ...(state.ref ? { role_ref: state.ref } : { base_role: state.draft.base_role }) };
-        state.preview = await api(`${base}/preview`, { method: "POST", body });
-        paintMain();
-      } catch (err) { toast(err.message, true); }
-    };
-    const save = async () => {
-      readEditor();
-      const definition = definitionFromDraft(state.draft);
-      try {
-        if (state.ref) {
-          const result = await api(`${base}/${encodeURIComponent(state.ref)}/update`, { method: "POST", body: { expected_version: state.version, changes: definition } });
-          toast(result.changed ? "Saved as a new version." : "Nothing changed.");
-          data = await api(base); setCustomRoles(data.roles);
-          await openLoaded(); paintList(); paintMain();
-        } else {
-          const created = await api(base, { method: "POST", body: { ...definition, base_role: state.draft.base_role } });
-          toast("Role created.");
-          navTo(`/p/${encodeURIComponent(id)}/roles/${encodeURIComponent(created.id)}`);
-        }
-      } catch (err) { toast(err.message, true); }
-    };
-    function wire() {
-      mainEl.querySelectorAll("[data-studio-tab]").forEach((button) => button.addEventListener("click", () => { if (state.tab === "edit") readEditor(); state.tab = button.dataset.studioTab; paintMain(); }));
-      if (state.tab === "review") {
-        document.getElementById("rv-preview")?.addEventListener("click", () => { state.tab = "preview"; paintMain(); });
-        document.getElementById("rv-history")?.addEventListener("click", () => { state.tab = "history"; paintMain(); });
-        document.getElementById("rv-confirm")?.addEventListener("click", () => {
-          const form = state.review.confirmation;
-          const older = [...mainEl.querySelectorAll("[data-review-snapshot]")].filter((box) => box.checked).map((box) => box.dataset.reviewSnapshot);
-          confirmTextModal({
-            title: "Confirm this imported role?",
-            description: "You are confirming the instructions, version and base role you just read. The role will be switched on for this project and can be used in workflows. This is recorded and cannot be taken back, only switched off.",
-            challenge: form.phrase, confirmLabel: "Confirm and switch on",
-            onConfirm: async (typed) => {
-              await api(`${base}/${encodeURIComponent(state.ref)}/confirm-import`, { method: "POST", body: { version: form.version, version_sha256: form.version_sha256, snapshot_ids: older, confirmation: typed } });
-              toast("Role confirmed and switched on.");
-              data = await api(base); setCustomRoles(data.roles);
-              state.tab = "edit"; await openLoaded(); paintList(); paintMain();
-            },
-          });
-        });
-        return;
-      }
-      if (state.tab === "preview") { document.getElementById("rp-run").addEventListener("click", runPreview); return; }
-      if (state.tab === "history") {
-        mainEl.querySelectorAll("[data-confirm-snapshot]").forEach((button) => button.addEventListener("click", () => {
-          const snap = state.detail.unconfirmed_snapshots.find((item) => item.snapshot_id === button.dataset.confirmSnapshot);
-          if (!snap) return;
-          confirmTextModal({
-            title: "Confirm this snapshot?",
-            description: "A snapshot is the exact role a past task ran with. Confirming it lets a paused task pinned to it continue. This is recorded.",
-            challenge: snap.phrase, confirmLabel: "Confirm this snapshot",
-            onConfirm: async (typed) => {
-              await api(`${base}/${encodeURIComponent(state.ref)}/confirm-snapshot`, { method: "POST", body: { snapshot_id: snap.snapshot_id, confirmation: typed } });
-              toast("Snapshot confirmed.");
-              await openLoaded(); paintMain();
-            },
-          });
-        }));
-        document.getElementById("rh-diff")?.addEventListener("click", async () => {
-          const from = document.querySelector('input[name="vf"]:checked')?.value, to = document.querySelector('input[name="vt"]:checked')?.value;
-          const out = document.getElementById("rh-diff-out");
-          if (!from || !to) { toast("Pick a version in each column.", true); return; }
-          try {
-            const diff = await api(`${base}/${encodeURIComponent(state.ref)}/diff?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
-            out.innerHTML = `<div class="diff-box">${diff.fields.length || diff.prompt.length ? "" : `<p>${esc(UI.translate("The two versions are the same."))}</p>`}${diff.fields.map((f) => `<p><strong>${esc(UI.translate(f.field))}</strong>: <span class="diff-del" data-f="b"></span> → <span class="diff-add" data-f="a"></span></p>`).join("")}${diff.prompt.map((part) => `<h4>${esc(part.part)}</h4><pre class="mono diff-lines">${part.lines.map(() => `<div class="diff-line"><span class="op"></span><span class="tx"></span></div>`).join("")}</pre>`).join("")}</div>`;
-            out.querySelectorAll("p").forEach((p, index) => { const field = diff.fields[index]; if (!field) return; p.querySelector('[data-f="b"]').textContent = JSON.stringify(field.before); p.querySelector('[data-f="a"]').textContent = JSON.stringify(field.after); });
-            out.querySelectorAll(".diff-lines").forEach((pre, index) => pre.querySelectorAll(".diff-line").forEach((row, i) => { const line = diff.prompt[index].lines[i]; row.classList.add(line.op === "+" ? "add" : line.op === "-" ? "del" : "same"); row.querySelector(".op").textContent = line.op === " " ? "" : line.op; row.querySelector(".tx").textContent = line.text; }));
-            UI.localize(out);
-          } catch (err) { toast(err.message, true); }
-        });
-        return;
-      }
-      const draft = state.draft;
-      document.getElementById("rs-base").addEventListener("change", (event) => {
-        readEditor(); draft.base_role = event.target.value; draft.stats = draft.stats ? draft.stats : null;
-        document.getElementById("rs-base-help").innerHTML = baseHelp(draft.base_role); UI.localize(document.getElementById("rs-base-help"));
-        document.getElementById("rs-avatars").innerHTML = avatarGrid(draft); bindAvatars();
-        document.getElementById("rs-abilities").innerHTML = abilityRows(draft); bindAbilities();
-      });
-      document.querySelectorAll('input[name="rs-mode"]').forEach((radio) => radio.addEventListener("change", () => {
-        readEditor(); draft.mode = radio.value;
-        document.getElementById("rs-sections").hidden = draft.mode !== "sections"; document.getElementById("rs-freeform").hidden = draft.mode !== "freeform";
-        document.querySelectorAll(".mode-choice").forEach((choice) => choice.classList.toggle("selected", choice.querySelector("input").checked));
-        noteOther();
-      }));
-      document.getElementById("rs-to-freeform").addEventListener("click", () => {
-        readEditor();
-        const text = sectionsAsFreeform(draft.sections);
-        if (!text) { toast("The sections are empty.", true); return; }
-        // A proposal only: it fills the box so the person can edit it; nothing is saved or switched.
-        document.getElementById("rs-free").value = text; draft.freeform = text; noteOther();
-        toast("Copied. Switch to Full text to use it.");
-      });
-      bindRuntime(); bindAvatars(); bindAbilities();
-      document.getElementById("rs-lint").addEventListener("click", runLint);
-      document.getElementById("rs-save").addEventListener("click", save);
-      document.getElementById("rs-goto-preview").addEventListener("click", () => { readEditor(); state.tab = "preview"; paintMain(); });
-      document.getElementById("rs-clone")?.addEventListener("click", () => showModal({
-        title: "Make a copy of this role?", body: "The copy starts at version 1 with the same instructions. Change anything you like; the original stays as it is.",
-        fields: [{ label: "Name of the copy", value: `${state.detail.role.definition.name} 2` }], confirmLabel: "Make a copy",
-        onSubmit: async ([name]) => { const copy = await api(`${base}/${encodeURIComponent(state.ref)}/clone`, { method: "POST", body: { name } }); toast("Copy created."); navTo(`/p/${encodeURIComponent(id)}/roles/${encodeURIComponent(copy.id)}`); },
-      }));
-      document.getElementById("rs-toggle")?.addEventListener("click", () => {
-        const turningOff = state.detail.role.status === "active";
-        showModal({
-          title: turningOff ? "Switch this role off?" : "Switch this role on?",
-          body: turningOff ? "It can no longer be added to a workflow, and a new task cannot start on a workflow that still uses it. Tasks that already started keep running with it." : "It can be added to workflows and used by new tasks again.",
-          confirmLabel: turningOff ? "Switch off" : "Switch on", danger: turningOff,
-          onSubmit: async () => { await api(`${base}/${encodeURIComponent(state.ref)}/status`, { method: "POST", body: { status: turningOff ? "disabled" : "active" } }); data = await api(base); setCustomRoles(data.roles); await openLoaded(); paintList(); paintMain(); toast(turningOff ? "Role switched off." : "Role switched on."); },
-        });
-      });
-    }
-    function bindRuntime() {
-      document.getElementById("rs-provider").addEventListener("change", () => {
-        readEditor();
-        const box = document.getElementById("rs-runtime");
-        box.innerHTML = runtimeRows(state.draft);
-        document.getElementById("rs-model").value = (state.draft.runtime && state.draft.runtime.model) || "";
-        UI.localize(box);
-        bindRuntime();
-      });
-    }
-    function bindAvatars() {
-      document.querySelectorAll("[data-studio-avatar]").forEach((button) => button.addEventListener("click", () => { readEditor(); state.draft.avatar = button.dataset.studioAvatar; document.getElementById("rs-avatars").innerHTML = avatarGrid(state.draft); bindAvatars(); }));
-    }
-    function bindAbilities() {
-      const box = document.getElementById("rs-abilities");
-      const repaint = () => { document.getElementById("rs-radar").innerHTML = radarSvg(statsFor(state.draft), { size: 150, labels: "short" }); };
-      document.getElementById("rs-use-base-stats").addEventListener("change", (event) => {
-        state.draft.stats = event.target.checked ? null : { ...bases[state.draft.base_role].stats };
-        box.innerHTML = abilityRows(state.draft); UI.localize(box); bindAbilities();
-      });
-      box.querySelectorAll("[data-studio-stat]").forEach((range) => range.addEventListener("input", () => {
-        state.draft.stats[range.dataset.studioStat] = Number(range.value); range.nextElementSibling.textContent = range.value; repaint();
-      }));
-    }
-    paintList();
-    paintMain();
   }
 
+  async function renderProjects() {
+    const gen = renderGen;
+    layout(loadingView());
+    let projects;
+    try { projects = await api("/projects"); } catch (err) { if (!stale(gen)) errorView(err); return; }
+    if (stale(gen)) return;
+    const list = (items) => items.length
+      ? items.map(projectRowHtml).join("")
+      : `<div class="empty" data-key="empty">${esc(UI.translate("No projects yet. Add an existing folder or create a new one."))}</div>`;
+    layout(`
+      <div class="title-row"><div><h1>Projects</h1><div class="sub">${esc(UI.translate("The folders ccc-mcp is allowed to work in."))}</div></div>
+        <div class="title-actions">
+          <button class="btn" id="btn-import-project">Import backup</button>
+          <button class="btn" id="btn-create-project">New project</button>
+          <button class="btn primary" id="btn-add-project">Add existing folder</button>
+        </div></div>
+      <div class="project-list" id="project-list">${list(projects)}</div>
+    `);
+    document.getElementById("btn-add-project").onclick = openAddProjectModal;
+    document.getElementById("btn-create-project").onclick = openCreateProjectModal;
+    document.getElementById("btn-import-project").onclick = openImportProjectModal;
+    const box = document.getElementById("project-list");
+    let signature = JSON.stringify(projects.map((p) => [p.id, p.root, p.access.mode]));
+    livePoll(gen, async () => {
+      const fresh = await api("/projects");
+      const next = JSON.stringify(fresh.map((p) => [p.id, p.root, p.access.mode]));
+      if (stale(gen) || next === signature) return;
+      signature = next;
+      window.cccMorph.morph(box, list(fresh), UI.localize);
+    }, 5000);
+  }
+
+  const teamUi = window.cccTeam({ api, esc, UI, toast, mountModal, closeModal });
+  const tasksUi = window.cccTasks({
+    api, esc, UI, layout, navTo, toast, showModal, parseRoute, stale, getGen: () => renderGen, livePoll,
+    whenHtml, loadingView, errorView, rememberedProject, taskStateTone, confirmDeleteTask,
+    removableStates: REMOVABLE_STATES,
+  });
   const goalsView = window.cccGoals({
-    api, esc, UI, layout, navTo, toast, showModal, parseRoute, stale, getGen: () => renderGen,
-    trackTimer, whenHtml, loadingView, errorView,
+    api, esc, UI, layout, navTo, toast, showModal, parseRoute, stale, getGen: () => renderGen, livePoll,
+    morphContent, whenHtml, loadingView, errorView,
   });
 
   function route() {
@@ -4535,21 +2294,12 @@ tests/test_clamp.py::test_clamp_upper_bound PASSED
     captureTokenFromHash();
     const r = parseRoute();
     refreshConnectDot();
-    if (r.view === "docs") return renderDocs();
-    if (r.view === "start") return renderStart();
-    if (r.view === "demo") return renderDemo();
-    if (r.view === "connect") return renderConnect();
-    if (r.view === "global-skills") return renderGlobalSkills();
-    if (r.view === "dashboard") return renderDashboard();
-    if (!r.project) return renderProjects();
-    if (r.view === "goals" && r.sub) return goalsView.renderGoalDetail();
-    if (r.view === "goals") return goalsView.renderGoals();
-    if (r.view === "tasks" && r.sub) return renderTaskDetail();
-    if (r.view === "tasks") return renderTasksList();
-    if (r.view === "settings") return renderSettings();
-    if (r.view === "roles") return renderRoleStudio();
-    if (r.view === "context") return renderContext();
-    if (r.view === "skills") return renderSkills();
+    if (r.view === "settings") return renderConnect();
+    if (r.view === "projects") return renderProjects();
+    if (r.view === "tasks-home") return tasksUi.renderHome();
+    if (r.view === "tasks") return tasksUi.renderList();
+    if (r.view === "goal") return goalsView.renderGoalDetail();
+    if (r.view === "task") return renderTaskDetail();
     return renderProjectOverview();
   }
 

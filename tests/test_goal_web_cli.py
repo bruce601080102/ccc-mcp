@@ -42,10 +42,13 @@ def goal_path(goal_id=""):
     return "/api/projects/demo/goals" + (f"/{goal_id}" if goal_id else "")
 
 
+CREATE = "/api/projects/demo/work/goals"
+WORK = "/api/projects/demo/work"
+
+
 def make_goal(client, **extra):
-    response = client.post(goal_path(), json={"requirement": REQUIREMENT, **extra})
-    assert response.status_code == 200, response.text
-    return response.json()
+    """A draft goal, as a person who asked ChatGPT (or the CLI) for one would have: no plan yet."""
+    return client.app.state.bridge.create_goal("demo", REQUIREMENT, **extra)
 
 
 # The API ---------------------------------------------------------------------------------------------
@@ -53,7 +56,7 @@ def make_goal(client, **extra):
 
 def test_every_goal_route_is_behind_the_session_token(client, tmp_path):
     anonymous = TestClient(client.app)
-    for method, path in [("get", goal_path()), ("post", goal_path()), ("get", goal_path("GOAL-0001")),
+    for method, path in [("get", WORK), ("post", CREATE), ("get", goal_path("GOAL-0001")),
                          ("post", goal_path("GOAL-0001") + "/plan"),
                          ("post", goal_path("GOAL-0001") + "/approve"),
                          ("post", goal_path("GOAL-0001") + "/cancel")]:
@@ -109,14 +112,14 @@ def test_creating_a_goal_twice_with_one_key_returns_the_same_goal(client):
     first = make_goal(client, request_key="ui-key-one-goal")
     again = make_goal(client, request_key="ui-key-one-goal")
     assert first["id"] == again["id"] and again["created_now"] is False
-    assert len(client.get(goal_path()).json()) == 1
+    assert len(client.get(WORK).json()["groups"]) == 1
 
 
 def test_the_api_refuses_unknown_and_unsafe_fields(client):
     goal = make_goal(client)
     base = goal_path(goal["id"])
     for path, body in [
-        (goal_path(), {"requirement": "x", "adapter": "fake"}),
+        (CREATE, {"requirement": "x", "adapter": "fake"}),
         (base + "/plan", {"adapter": "fake"}),
         (base + "/plan", {"fake_scenario": "success"}),
         (base + "/plan", {"provider": "chatgpt"}),
@@ -125,7 +128,7 @@ def test_the_api_refuses_unknown_and_unsafe_fields(client):
         (base + "/cancel", {"force": True}),
     ]:
         assert client.post(path, json=body).status_code == 400, (path, body)
-    assert client.post(goal_path(), json={"requirement": "  "}).status_code == 400
+    assert client.post(CREATE, json={"requirement": "  "}).status_code == 400
     assert client.get(goal_path("GOAL-9999")).status_code == 400
 
 
@@ -291,7 +294,17 @@ def test_the_goal_pages_never_put_server_text_into_markup_unescaped():
     assert "${esc(" in GOALS_JS and "${T(" in GOALS_JS
 
 
-def test_the_goal_page_is_linked_from_the_project_navigation():
+def test_a_goal_opens_from_the_tasks_page_and_has_no_page_of_its_own():
     app_js = (STATIC / "app.js").read_text(encoding="utf-8")
-    assert 'href="#/p/${p}/goals"' in app_js and "goalsView.renderGoalDetail" in app_js
-    assert '"Goals"' in I18N
+    assert "goalsView.renderGoalDetail" in app_js and 'data-nav="goals"' not in app_js
+    assert "/tasks/${encodeURIComponent(group.id)}" in (STATIC / "tasks.js").read_text(encoding="utf-8")
+
+
+
+def test_the_consoles_start_button_also_asks_the_planner_so_nobody_hunts_for_a_plan_button(client):
+    started = client.post(CREATE, json={"requirement": REQUIREMENT, "title": "Slug tool"})
+    assert started.status_code == 200, started.text
+    body = started.json()
+    assert body["planning"] == "started" and body["created_now"] is True
+    shown = client.get(goal_path(body["id"])).json()
+    assert shown["state"] == "AWAITING_APPROVAL" and shown["approval"] is None   # planned, never approved

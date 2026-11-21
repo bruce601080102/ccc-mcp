@@ -470,7 +470,7 @@ class CustomRoleHub:
         if role["status"] == "imported_pending":
             raise PermissionDenied(
                 f"Role {role_ref} was imported and has not been confirmed on this device; "
-                "review and confirm it in the console's Role Studio first"
+                "review and confirm it in the console's AI team settings first"
             )
         if role["status"] != "active":
             raise BridgeError(f"Role {role_ref} is {role['status']} and cannot be pinned")
@@ -562,12 +562,12 @@ class CustomRoleHub:
         configured = {key: runtime[key] for key in ("provider", "model", "effort", "quota_fallback")}
         return self._resolve_settings(configured, agent, model, effort)
 
-    def compose_pinned_instruction(self, project_id, snapshot_id, requirement, feedback=None):
+    def compose_pinned_instruction(self, project_id, snapshot_id, requirement, feedback=None, *, gate=None):
         """The instruction a pinned custom role is dispatched with: its frozen operator text and
         base-role contract, then the same strictness, gate, feedback and requirement parts a
         built-in role gets. The only thing read from the snapshot is the snapshot."""
         content = self.role_snapshot(project_id, snapshot_id)["content"]
-        gate = self.get_project_settings(project_id)["review_gate"]
+        gate = gate or self.get_project_settings(project_id)["review_gate"]
         return custom_instruction(
             (content["definition"]["name"], content["role_ref"], content["version"],
              content["base_role"]),
@@ -715,7 +715,7 @@ class CustomRoleHub:
                 "id": role["id"], "name": definition["name"], "base_role": role["base_role"],
                 "status": role["status"], "origin": role["origin"], "version": role["version"],
                 "avatar": definition["avatar"], "kind": definition["kind"],
-                "description": definition["description"],
+                "description": definition["description"], "runtime": definition["runtime"],
                 "stats": declared_stats(definition, role["base_role"]),
                 "stats_declared": definition["stats"] is not None,
             })
@@ -837,17 +837,6 @@ class CustomRoleHub:
             })
         return details
 
-    def flow_declared_stats(self, project_id, flow):
-        """{role id: six scores} for the custom roles of a pinned workflow, as pinned."""
-        extra = {}
-        for step in flow["steps"]:
-            if step.get("snapshot_id"):
-                content = self.role_snapshot(project_id, step["snapshot_id"])["content"]
-                extra[step["role_ref"]] = tuple(
-                    declared_stats(content["definition"], content["base_role"]).values()
-                )
-        return extra
-
     @staticmethod
     def drift_confirmation(task_id, step_id, contract_hash):
         """The exact words a person types to accept one specific change."""
@@ -891,7 +880,15 @@ class CustomRoleHub:
                 "role_ref": None, "snapshot_id": None, "role_version": None,
             }
             if role_ref is not None:
-                snapshot_id = self._snapshot_in(conn, project_id, role_ref)
+                snapshot_id = step.get("snapshot_id") or self._snapshot_in(conn, project_id, role_ref)
+                if step.get("snapshot_id"):
+                    snapshot = conn.execute(
+                        "SELECT s.role_ref, v.trusted FROM role_snapshots s JOIN role_snapshot_status v "
+                        "USING(project_id,snapshot_id) WHERE s.project_id=? AND s.snapshot_id=?",
+                        (project_id, snapshot_id),
+                    ).fetchone()
+                    if not snapshot or snapshot["role_ref"] != role_ref or not snapshot["trusted"]:
+                        raise PermissionDenied("The pinned role snapshot is not trusted for this role")
                 stored = self._role_row(project_id, role_ref, conn)
                 if stored["base_role"] != role:
                     raise BridgeError(f"{role_ref} is not based on {role}")

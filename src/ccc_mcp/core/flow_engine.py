@@ -25,7 +25,7 @@ from .flows import (
     judge_gate,
     step_instruction,
 )
-from .roles import ROLE_STATS, STAT_AXES, return_greeting, role_stats, team_stats
+from .roles import return_greeting
 
 _DECISIONS = {"proceed", "retry", "stop"}
 
@@ -57,19 +57,12 @@ class FlowHub:
         settings = self.get_project_settings(project_id)
         custom = settings["workflows"]
         directory = self.custom_role_directory(project_id)
-        declared = {role["id"]: tuple(role["stats"].values()) for role in directory}
         return {
             "selected": settings["workflow"],
             "selection": settings["workflow_selection"],
             "workflows": [
-                {**flow, "stats": team_stats(
-                    [step.get("role_ref") or step["role"] for step in flow["steps"]], declared)}
-                for flow in (
-                    flow_definition(flow_id, custom) for flow_id in [*BUILTIN_FLOWS, *custom]
-                )
+                flow_definition(flow_id, custom) for flow_id in [*BUILTIN_FLOWS, *custom]
             ],
-            "role_stats": {role: role_stats(role) for role in ROLE_STATS},
-            "stat_axes": list(STAT_AXES),
             "custom_roles": directory,
         }
 
@@ -94,7 +87,7 @@ class FlowHub:
 
     # -- which workflow a task runs -------------------------------------------------
 
-    def _task_flow(self, project_id, task_id, conn=None):
+    def _task_flow(self, project_id, task_id, conn=None, *, include_legacy=False):
         """The pinned flow of a task that runs on the step engine, else None."""
         query = "SELECT flow_id,snapshot FROM task_flows WHERE project_id=? AND task_id=?"
         row = (
@@ -105,14 +98,28 @@ class FlowHub:
         if not row:
             return None
         flow = json.loads(row["snapshot"])
-        return flow if not flow.get("legacy") else None
+        return flow if include_legacy or not flow.get("legacy") else None
 
-    def _pin_task_flow(self, conn, project_id, task_id, choice):
-        """Pin the chosen workflow (id, selected_by, reason) to a task that is starting a work
-        round. Classic keeps no row, so existing projects behave exactly as before."""
+    def freeze_workflow(self, conn, project_id, choice):
+        """Capture the actual team settings and trusted role versions for the selected workflow."""
         workflow, selected_by, reason = choice
-        flow = flow_definition(workflow, self.get_project_settings(project_id)["workflows"])
-        flow = {**flow, "selected_by": selected_by, "reason": reason}
+        settings = self.get_project_settings(project_id)
+        flow = flow_definition(workflow, settings["workflows"])
+        steps = []
+        for step in flow["steps"]:
+            if step.get("role_ref"):
+                step["snapshot_id"] = self._snapshot_in(conn, project_id, step["role_ref"])
+            else:
+                step["runtime"] = settings["roles"][step["role"]]
+            steps.append(step)
+        # Goal phases use the resumable step engine even for the Classic roster.
+        return {**flow, "legacy": flow["legacy"] and selected_by != "goal_plan",
+                "steps": steps, "review_gate": settings["review_gate"],
+                "selected_by": selected_by, "reason": reason}
+
+    def _pin_task_flow(self, conn, project_id, task_id, choice, frozen=None):
+        """Attach the chosen workflow to a work round before any role is dispatched."""
+        flow = frozen if frozen is not None else self.freeze_workflow(conn, project_id, choice)
         if any(step.get("role_ref") for step in flow["steps"]):
             # The team is fixed here, in the transaction that creates the task (or starts its
             # next work round), before any step runs and before any plan can be approved. Each
@@ -125,17 +132,23 @@ class FlowHub:
                 for step, entry in zip(flow["steps"], pin["roster"], strict=True)
             ]
             flow["roster_pin"], flow["roster_hash"] = pin["id"], pin["roster_hash"]
-        if flow["legacy"]:
-            conn.execute(
-                "DELETE FROM task_flows WHERE project_id=? AND task_id=?", (project_id, task_id)
-            )
-            return
         conn.execute(
             "INSERT INTO task_flows(project_id,task_id,flow_id,snapshot,created) "
             "VALUES(?,?,?,?,?) ON CONFLICT(project_id,task_id) DO UPDATE SET "
             "flow_id=excluded.flow_id,snapshot=excluded.snapshot,created=excluded.created",
             (project_id, task_id, flow["id"], json.dumps(flow), now()),
         )
+
+    def _task_gate(self, project_id, task_id, flow=None):
+        flow = flow or self._task_flow(project_id, task_id)
+        return (flow or {}).get("review_gate") or self.get_project_settings(project_id)["review_gate"]
+
+    def _task_agent_settings(self, project_id, task_id, role, agent="auto", model=None, effort=None):
+        flow = self._task_flow(project_id, task_id, include_legacy=True)
+        for step in (flow or {}).get("steps", []):
+            if step["role"] == role and step.get("runtime"):
+                return self._resolve_settings(step["runtime"], agent, model, effort)
+        return self.resolve_agent_settings(project_id, role, agent, model, effort)
 
     def _flow_roles(self, project_id, task_id):
         """Roles a task will need, for preflight; None for a Classic task."""
@@ -192,13 +205,13 @@ class FlowHub:
     ):
         step = flow["steps"][index]
         role = step["role"]
-        gate = self.get_project_settings(project_id)["review_gate"]
+        gate = self._task_gate(project_id, task_id, flow)
         if requirement is None:
             requirement = self.task(project_id, task_id)["requirement"]
         identity = self._step_identity(step)
         if identity:
             instruction = self.compose_pinned_instruction(
-                project_id, step["snapshot_id"], requirement, feedback
+                project_id, step["snapshot_id"], requirement, feedback, gate=gate
             )
         else:
             instruction = step_instruction(
@@ -262,7 +275,6 @@ class FlowHub:
         elif role in BUILDER_ROLES:
             evidence = self.run_configured_test_command(project_id, task_id)
             result["test_evidence"] = evidence
-            self.maybe_auto_evaluate(pointer["source_execution_id"], after_tests=True)
             notes.append(self._test_note(evidence))
             if self._phase_run_of_task(project_id, task_id) and not (
                 evidence.get("executed_by_host") and evidence.get("passed")
@@ -371,7 +383,7 @@ class FlowHub:
             return {**json.loads(existing["detail"]), "verdict": existing["verdict"]}
         saved = json.loads(source["result"]) if source["result"] else {}
         report = saved.get("report") or {}
-        settings = self.get_project_settings(project_id)["review_gate"]
+        settings = self._task_gate(project_id, task_id)
         strictness = settings["ar_strictness"] if role == "AR" else None
         gate = judge_gate(role, report, strictness or "normal")
         if role in VERIFYING_GATES and gate["verdict"] == "PASS":
@@ -422,7 +434,7 @@ class FlowHub:
                 f"{gate['role']} did not pass the work: " + (gate.get("reason") or gate["verdict"]),
                 gate, adapter, fake_scenario,
             )
-        limit = self.get_project_settings(project_id)["review_gate"]["max_rounds"]
+        limit = self._task_gate(project_id, task_id, flow)["max_rounds"]
         target = bounce_index(flow["steps"], index)
         failed = self._flow_failed_rounds(project_id, task_id, index)
         if gate["verdict"] == "REJECT":
@@ -444,7 +456,7 @@ class FlowHub:
         )
 
     def _flow_escalate(self, project_id, task_id, flow, index, reason, detail, adapter, fake_scenario):
-        escalation = self.get_project_settings(project_id)["review_gate"]["escalation"]
+        escalation = self._task_gate(project_id, task_id, flow)["escalation"]
         row_id = "ESC-" + uuid.uuid4().hex[:16]
         with self.lock(project_id):
             with self.store.transaction() as conn:

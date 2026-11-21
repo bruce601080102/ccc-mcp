@@ -6,6 +6,8 @@
 // esc(), never as raw markup.
 window.cccGoalRun = function (ctx) {
   "use strict";
+  // Assigning onclick replaces the previous handler, so binding again after an in-place update never stacks them.
+  const click = (element, handler) => { element.onclick = handler; };
   const { api, esc, UI, toast, showModal, whenHtml } = ctx;
   const T = (text) => esc(UI.translate(text));
 
@@ -92,7 +94,7 @@ window.cccGoalRun = function (ctx) {
       case "goal_run_waiting_user":
       case "goal_run_exhausted":
       case "goal_run_failed":
-        return notice(`${T((d.detail && d.detail.message) || "The goal run stopped.")}`, event.created, true);
+        return notice(`${esc(UI.system(d.detail?.message || "The goal run stopped.", "The goal run stopped."))}`, event.created, true);
       case "goal_run_cancelled": return notice(T("The goal run was stopped."), event.created, true);
       case "goal_run_passed": return notice(T("The goal passed its final verification."), event.created);
       default: return "";
@@ -115,7 +117,7 @@ window.cccGoalRun = function (ctx) {
     if (run.status === "CANCELLED") return T("You stopped this goal.");
     const why = run.reason_text || detail.message || "The goal run stopped.";
     const phase = detail.phase_id ? ` (${T("phase")} <span class="mono">${esc(detail.phase_id)}</span>)` : "";
-    return `${T(why)}${phase}`;
+    return `${esc(UI.system(why, "The goal run stopped."))}${phase}`;
   }
 
   // ---- the phases --------------------------------------------------------------------------------
@@ -166,7 +168,7 @@ window.cccGoalRun = function (ctx) {
       const e = v.evidence || {};
       const host = e.host_test || {};
       const tone = v.status === "PASSED" ? "positive" : v.status === "RUNNING" ? "accent" : "negative";
-      const problems = (e.problems || []).map((p) => `<li>${T(PROBLEM[p.code] || p.code)} <span class="muted">${esc(p.detail)}</span></li>`).join("");
+      const problems = (e.problems || []).map((p) => `<li>${T(PROBLEM[p.code] || p.code)} <span class="muted">${p.detail ? esc(UI.system(p.detail, "Details are available in the technical record.")) : ""}</span></li>`).join("");
       const criteria = (e.criteria || []).map((c) => `<li>${esc(c.statement)} ${pill(c.coverage === "host_test" ? "positive" : "neutral", c.coverage === "host_test" ? "Checked by the host test" : "Needs you")}</li>`).join("");
       return `<div class="goalrun-verification">
         <p>${T("Check")} ${esc(v.seq)}: ${pill(tone, v.status === "PASSED" ? "Passed" : v.status === "FAILED" ? "Failed" : v.status === "NEEDS_PERSON" ? "Needs you" : v.status === "RUNNING" ? "Working" : "No result")}
@@ -251,7 +253,7 @@ window.cccGoalRun = function (ctx) {
     const base = `/projects/${encodeURIComponent(project)}`;
     const start = document.getElementById("goalrun-start");
     if (start) {
-      start.addEventListener("click", () => showModal({
+      click(start, () => showModal({
         title: "Run the whole goal",
         body: "The developer roles will change the project's files and the project's own test command will run on your computer, phase after phase, until the goal is verified or something needs you. One set of limits (agent runs and minutes) covers the whole goal. Nothing is committed, pushed or released.",
         confirmLabel: "Run the whole goal",
@@ -271,7 +273,7 @@ window.cccGoalRun = function (ctx) {
       await reload();
     };
     root.querySelectorAll("[data-grun-act]").forEach((button) => {
-      button.addEventListener("click", () => {
+      click(button, () => {
         const act = button.dataset.grunAct;
         if (act === "pause") send(url("pause"));
         else if (act === "recover") send(`${base}/goal-runs/recover`);
@@ -301,7 +303,7 @@ window.cccGoalRun = function (ctx) {
           api(url("accept-preview")).then((info) => {
             const challenge = info.challenge;
             const list = (info.criteria || []).map((c) => c.id + " " + c.statement)
-              .concat((info.problems || []).map((p) => p.code + ": " + p.detail)).join("; ");
+              .concat((info.problems || []).map((p) => UI.translate(PROBLEM[p.code] || "The operation reported a problem."))).join("; ");
             showModal({
               title: "Accept the final result",
               body: UI.translate("Every phase passed and the host test passed on the whole project. By accepting you say that you decided on the following yourself: ") + list,
