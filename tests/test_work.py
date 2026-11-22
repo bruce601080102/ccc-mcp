@@ -207,7 +207,8 @@ async def _call(session, name, arguments):
 
 async def test_chatgpt_tools_create_and_read_the_same_goal_the_console_lists(bridge, human):
     async with stdio_client(_server(bridge.home)) as (reader, writer):
-        async with ClientSession(reader, writer, read_timeout_seconds=30) as session:
+        # Starting a real Python server can take longer on a busy parallel runner.
+        async with ClientSession(reader, writer, read_timeout_seconds=60) as session:
             await session.initialize()
             names = {t.name for t in (await session.list_tools()).tools}
             assert {"start_goal", "plan_goal", "get_goal", "get_work_overview",
@@ -260,7 +261,7 @@ async def test_the_tunnel_launches_this_exact_server_and_ships_the_goal_tools_wi
     assert "-m ccc_mcp" in source and "serve" in source
 
     async with stdio_client(_server(bridge.home)) as (reader, writer):
-        async with ClientSession(reader, writer, read_timeout_seconds=30) as session:
+        async with ClientSession(reader, writer, read_timeout_seconds=60) as session:
             await session.initialize()
             tools = {t.name: t for t in (await session.list_tools()).tools}
     assert len(tools) <= 36                      # few enough that a model is not left choosing between lookalikes

@@ -434,9 +434,13 @@ def test_each_workflow_shows_its_own_roles_in_traditional_chinese_without_a_relo
             " open: [...document.querySelectorAll('#team-card details')].some(e => e.open)"
             " || [...document.querySelectorAll('.team-step-more')].some(e => !e.hidden)};")
 
-    page.eval("const select = document.querySelector('#ui-locale'); select.value = 'zh-TW';"
+    page.eval("window.__oldTeam = document.querySelector('#team-card');"
+              " const select = document.querySelector('#ui-locale'); select.value = 'zh-TW';"
               " select.dispatchEvent(new Event('change', {bubbles: true})); return 1;")
-    page.wait_for("document.getElementById('skip-link')?.textContent === '跳到主要內容'")
+    # The sidebar is translated before the overview has finished fetching and rendering.
+    page.wait_for("!window.__oldTeam.isConnected && "
+                  "document.querySelector('#team-card h2')?.textContent === 'AI 團隊與工作流'")
+    assert page.eval("return document.getElementById('skip-link').textContent;") == "跳到主要內容"
     assert page.eval("return document.querySelector('nav.sidebar').getAttribute('aria-label');") == "主選單"
     token = mark(page)
     choose("content")

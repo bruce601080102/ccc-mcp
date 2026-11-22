@@ -16,6 +16,7 @@ import tempfile
 import threading
 import time
 import urllib.request
+from pathlib import Path
 
 import aiohttp
 
@@ -45,31 +46,44 @@ class Browser:
     """One headless Chrome; `page()` opens a tab (a second call is a second tab of the same browser)."""
 
     def __init__(self, chrome):
-        self.port = free_port()
         self.profile = tempfile.mkdtemp(prefix="ccc-chrome-")
         # GitHub-hosted Linux runners restrict the user namespaces Chrome's sandbox needs and have a
         # small /dev/shm; the browser only opens this program's own local pages there.
         ci_flags = ["--no-sandbox", "--disable-dev-shm-usage"] if os.environ.get("CI") else []
         self.process = subprocess.Popen(
-            [chrome, "--headless=new", f"--remote-debugging-port={self.port}",
+            [chrome, "--headless=new", "--remote-debugging-port=0",
              f"--user-data-dir={self.profile}", "--no-first-run", "--no-default-browser-check",
              "--disable-gpu", "--window-size=1280,900", "--disable-background-timer-throttling",
              "--disable-renderer-backgrounding", "--disable-backgrounding-occluded-windows",
              *ci_flags, "about:blank"],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            self.port = self._wait_for_port()
+        except BaseException:
+            self._stop_chrome()
+            raise
         self.loop = asyncio.new_event_loop()
         self.thread = threading.Thread(target=self.loop.run_forever, daemon=True)
         self.thread.start()
-        deadline = time.time() + 20
-        while time.time() < deadline:
-            try:
-                urllib.request.urlopen(f"http://127.0.0.1:{self.port}/json/version", timeout=1).read()
-                break
-            except Exception:
-                time.sleep(0.2)
-        else:
-            raise RuntimeError("Chrome did not start")
         self.session = self.run(self._session())
+
+    def _wait_for_port(self):
+        # Chrome binds its own port and publishes it after listening. Reserving a port
+        # in Python and releasing it before Chrome starts races other xdist workers.
+        port_file = Path(self.profile) / "DevToolsActivePort"
+        deadline = time.monotonic() + 45
+        while time.monotonic() < deadline:
+            code = self.process.poll()
+            if code is not None:
+                raise RuntimeError(f"Chrome exited before opening DevTools (exit {code})")
+            try:
+                port, endpoint = port_file.read_text(encoding="ascii").splitlines()
+                if endpoint.startswith("/devtools/browser/"):
+                    return int(port)
+            except (OSError, ValueError):
+                pass
+            time.sleep(0.15)
+        raise RuntimeError("Chrome did not open DevTools within 45 seconds")
 
     async def _session(self):
         return aiohttp.ClientSession()
@@ -88,12 +102,17 @@ class Browser:
             self.run(self.session.close(), 5)
         except Exception:
             pass
-        self.process.terminate()
-        try:
-            self.process.wait(5)
-        except subprocess.TimeoutExpired:
-            self.process.kill()
         self.loop.call_soon_threadsafe(self.loop.stop)
+        self._stop_chrome()
+
+    def _stop_chrome(self):
+        if self.process.poll() is None:
+            self.process.terminate()
+            try:
+                self.process.wait(5)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+                self.process.wait(5)
         shutil.rmtree(self.profile, ignore_errors=True)
 
 

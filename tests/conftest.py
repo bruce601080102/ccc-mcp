@@ -7,6 +7,24 @@ import pytest
 
 from ccc_mcp.service import CCCMCP
 
+# Typer forces colour whenever GITHUB_ACTIONS (or FORCE_COLOR / PY_COLORS) is set, and then splits an
+# option such as `--confirm-host-tests-stopped` across escape codes, so a plain substring check on
+# `--help` output passes on a laptop and fails on a CI runner. Tests read plain text everywhere.
+try:
+    import typer.rich_utils as _typer_rich_utils
+
+    _typer_rich_utils.FORCE_TERMINAL = False
+except ImportError:  # a Typer without rich help formatting has nothing to turn off
+    pass
+
+
+def pytest_addoption(parser):
+    parser.addoption(
+        "--shard", default="1/1",
+        help="run only part of the suite, as INDEX/COUNT (for example 2/4); CI uses it to spread the "
+             "slow platforms over several runners. The parts together are the whole suite.",
+    )
+
 
 def remove_tree(path):
     """Remove a test Git repository, including read-only object files on Windows."""
@@ -35,7 +53,12 @@ def _template_repository(tmp_path_factory):
         ["add", "."],
         ["-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-m", "initial"],
     ]:
-        subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True)
+        # The template is copied as soon as this fixture returns. Git's background maintenance
+        # can otherwise create and remove locks while copytree is walking the template.
+        subprocess.run(
+            ["git", "-c", "maintenance.auto=false", "-c", "gc.auto=0", "-C", str(repo), *args],
+            check=True, capture_output=True,
+        )
     return repo
 
 
@@ -85,7 +108,18 @@ INTEGRATION_FILES = {
 }
 
 
-def pytest_collection_modifyitems(items):
+def pytest_collection_modifyitems(config, items):
     for item in items:
         if item.path.name in INTEGRATION_FILES:
             item.add_marker(pytest.mark.integration)
+    # `--shard INDEX/COUNT`: deal the tests out one by one, in a fixed order, so every part gets a share
+    # of each slow file. The tests do not depend on one another (they already run on any worker under
+    # xdist).
+    index, count = (int(part) for part in config.getoption("--shard").split("/"))
+    if count == 1:
+        return
+    ordered = sorted(items, key=lambda item: item.nodeid)
+    mine = {id(item) for position, item in enumerate(ordered) if position % count == index - 1}
+    skipped = [item for item in items if id(item) not in mine]
+    config.hook.pytest_deselected(items=skipped)
+    items[:] = [item for item in items if id(item) in mine]

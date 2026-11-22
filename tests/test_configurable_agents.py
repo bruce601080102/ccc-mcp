@@ -1,4 +1,5 @@
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -920,3 +921,64 @@ def test_new_review_roles_default_to_codex_and_are_configurable(bridge):
         assert settings[role]["provider"] == "codex"
     bridge.configure_role("demo", "AR", "chatgpt")
     assert bridge.get_project_settings("demo")["roles"]["AR"]["provider"] == "chatgpt"
+
+
+def test_a_host_command_that_exits_at_once_is_not_a_failure_to_track_it(tmp_path):
+    """On Windows a process that is gone before it joins its job object gets 'Access is denied';
+    that must not fail the run. Quick commands are what host tests usually are."""
+    for _ in range(20):
+        with pytest.raises(AgentProcessError) as failed:
+            run_process([sys.executable, "-c", "import sys; sys.exit(3)"], tmp_path, "", 10, lambda: False)
+        assert failed.value.returncode == 3
+
+
+def _fake_win32(monkeypatch, assign_error):
+    import types
+
+    class Denied(Exception):
+        winerror = 5
+
+    class Handle:
+        def Close(self):
+            pass
+
+    class Job:
+        closed = False
+
+        def Close(self):
+            self.closed = True
+
+    made = []
+    job_module = types.SimpleNamespace(
+        JobObjectExtendedLimitInformation=9, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE=0x2000,
+        CreateJobObject=lambda *a: made.append(Job()) or made[-1],
+        QueryInformationJobObject=lambda *a: {"BasicLimitInformation": {"LimitFlags": 0}},
+        SetInformationJobObject=lambda *a: None,
+        AssignProcessToJobObject=lambda *a: (_ for _ in ()).throw(assign_error(Denied)),
+    )
+    monkeypatch.setitem(sys.modules, "win32job", job_module)
+    monkeypatch.setitem(sys.modules, "win32api", types.SimpleNamespace(OpenProcess=lambda *a: Handle()))
+    monkeypatch.setitem(sys.modules, "win32con", types.SimpleNamespace(PROCESS_SET_QUOTA=1, PROCESS_TERMINATE=2))
+    return made
+
+
+def test_windows_job_accepts_access_denied_only_for_a_process_that_has_exited(monkeypatch):
+    from ccc_mcp.adapters.agents.base import windows_job
+
+    class Process:
+        pid = 1
+
+        def __init__(self, exited):
+            self.exited = exited
+
+        def wait(self, timeout=None):
+            if not self.exited:
+                raise subprocess.TimeoutExpired("fake", timeout)
+            return 1
+
+    made = _fake_win32(monkeypatch, lambda denied: denied())
+    assert windows_job(Process(exited=True)) is None
+    assert made[0].closed
+    with pytest.raises(Exception):  # noqa: B017 - the fake's own "denied" error
+        windows_job(Process(exited=False))
+    assert made[1].closed

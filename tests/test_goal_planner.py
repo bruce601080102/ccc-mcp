@@ -560,6 +560,11 @@ else:
 '''
 
 
+posix_script = pytest.mark.skipif(
+    os.name == "nt", reason="the fake claude/codex executables are POSIX scripts")
+
+
+@posix_script
 @pytest.mark.parametrize("provider", ["codex", "claude"])
 def test_the_real_adapters_run_the_delivery_pm_read_only_and_store_a_valid_plan(
     bridge, human, monkeypatch, tmp_path, provider
@@ -594,6 +599,7 @@ def test_the_real_adapters_run_the_delivery_pm_read_only_and_store_a_valid_plan(
     assert stored["prompt_sha256"] and json.loads(stored["invocation"])["source"] == "native_cli"
 
 
+@posix_script
 def test_an_invalid_answer_from_a_real_adapter_is_refused(bridge, human, monkeypatch, tmp_path):
     folder = tmp_path / "bin"
     folder.mkdir()

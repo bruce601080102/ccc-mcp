@@ -36,38 +36,40 @@ jobs:
           node --check src/ccc_mcp/interfaces/webui_static/i18n.js
 
   test:
-    name: test (${{ matrix.os }}, py${{ matrix.python-version }})
-    needs: lint
+    name: test (${{ matrix.os }}, py${{ matrix.python-version }}, part ${{ matrix.shard }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
+        # Each OS/Python pair still runs every test. Spread the full run across runners
+        # as well as their cores so the slowest group holds up Release for less time.
+        os: [ubuntu-latest]
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
+        shard: ["1/2", "2/2"]
         include:
-          # Linux covers every supported Python version. macOS and Windows run the
-          # same suite once to catch OS-specific path, process and locking behavior.
-          - os: ubuntu-latest
-            python-version: "3.11"
-          - os: ubuntu-latest
-            python-version: "3.12"
-          - os: ubuntu-latest
-            python-version: "3.13"
-          - os: ubuntu-latest
-            python-version: "3.14"
-          - os: macos-latest
-            python-version: "3.14"
-          - os: windows-latest
-            python-version: "3.14"
+          - {os: macos-latest, python-version: "3.14", shard: "1/3"}
+          - {os: macos-latest, python-version: "3.14", shard: "2/3"}
+          - {os: macos-latest, python-version: "3.14", shard: "3/3"}
+          - {os: windows-latest, python-version: "3.14", shard: "1/6"}
+          - {os: windows-latest, python-version: "3.14", shard: "2/6"}
+          - {os: windows-latest, python-version: "3.14", shard: "3/6"}
+          - {os: windows-latest, python-version: "3.14", shard: "4/6"}
+          - {os: windows-latest, python-version: "3.14", shard: "5/6"}
+          - {os: windows-latest, python-version: "3.14", shard: "6/6"}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
-      - name: Configure Git identity
+      - name: Configure Git for disposable test repositories
         run: |
           git config --global user.name "ci"
           git config --global user.email "ci@example.invalid"
           git config --global init.defaultBranch main
+          git config --global maintenance.auto false
+          git config --global gc.auto 0
       - name: Install release version validator
         if: inputs.release_version != ''
         run: python -m pip install packaging
@@ -78,15 +80,23 @@ jobs:
           RELEASE_VERSION: ${{ inputs.release_version }}
         run: python scripts/release_version.py "$RELEASE_VERSION"
       - run: python -m pip install -e ".[dev]"
-      - name: Show how many cores the runner gives pytest
+      - name: Require a browser for the UI tests
+        run: python -c "import sys; sys.path.insert(0, 'tests'); from browser_driver import find_chrome; assert find_chrome(), 'Chrome or Chromium is required for CI'"
+      - name: Show the logical CPU count used by pytest
         run: python -c "import os; print('cpu_count =', os.cpu_count())"
-      # Tests spawn many subprocesses, so run them across the runner's cores. The slowest tests
-      # are listed so a slow platform shows where its time goes.
-      - run: python -m pytest -q -n auto --durations=25
+      # Tests spawn many subprocesses, so run them across the runner's cores; `worksteal` lets a
+      # core that is done take over the queue of one that is still busy, so one slow test does not
+      # leave the others idle. The slowest tests are listed so a slow platform shows where its time
+      # goes.
+      - name: Run the test shard
+        env:
+          # The suite also spawns pytest in sample projects. Only the outer run
+          # needs the asyncio and xdist plugins.
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+        run: python -m pytest -p pytest_asyncio.plugin -p xdist.plugin -q -n logical --dist worksteal --shard ${{ matrix.shard }} --durations=25
 
   build:
     name: build sdist + wheel
-    needs: lint
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.artifacts.outputs.version }}

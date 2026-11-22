@@ -220,6 +220,27 @@ def test_atomic_projection_crash_recovers_from_committed_db(bridge, monkeypatch)
     ] == [1, 2]
 
 
+def test_sync_repairs_drift_without_rewriting_current_projections(bridge, monkeypatch):
+    from ccc_mcp.core import context as context_module
+
+    root = Path(bridge.project("demo")["root"]) / ".ccc-mcp"
+    changed = root / DOCUMENTS["architecture"]
+    missing = root / DOCUMENTS["handoff"]
+    changed.write_text("stale", encoding="utf-8")
+    missing.unlink()
+    original = context_module.atomic_write
+    written = []
+
+    def record(path, content):
+        written.append(path)
+        original(path, content)
+
+    monkeypatch.setattr(context_module, "atomic_write", record)
+    bridge.recover_context("demo")
+    assert written == [changed, missing]
+    assert bridge.validate_context("demo")["valid"]
+
+
 def test_missing_or_stale_sources_rejected(bridge):
     ref = bridge.source_ref("demo", "app.py")
     ref["sha256"] = "0" * 64

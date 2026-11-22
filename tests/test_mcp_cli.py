@@ -181,7 +181,9 @@ def test_cli_help_text_switches_language_with_env_var(lang, needle):
     zh-TW default). This is a subprocess test, not CliRunner, because help= strings are
     built once at module import time — a later env var change inside the same process
     can't affect an already-imported Typer app."""
-    env = {k: v for k, v in os.environ.items() if k != "CCC_MCP_LANG"}
+    # No forced colour (GitHub Actions sets it), or escape codes would split the text we look for.
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("CCC_MCP_LANG", "GITHUB_ACTIONS", "FORCE_COLOR", "PY_COLORS")}
     if lang is not None:
         env["CCC_MCP_LANG"] = lang
     result = subprocess.run(
@@ -682,14 +684,14 @@ def test_update_dev_installs_editable_from_repo_root(tmp_path, monkeypatch):
     assert calls[0][1]["cwd"] is not None
 
 
-def test_setup_rejects_unsupported_provider():
-    result = CliRunner().invoke(app, ["setup", "grok"])
+def test_setup_rejects_unsupported_provider(tmp_path):
+    result = CliRunner().invoke(app, ["--home", str(tmp_path / "home"), "setup", "grok"])
     assert result.exit_code == 1
     assert isinstance(result.exception, BridgeError)
     assert "Unsupported provider" in str(result.exception)
 
 
-def test_setup_all_is_best_effort_per_provider(monkeypatch):
+def test_setup_all_is_best_effort_per_provider(tmp_path, monkeypatch):
     """One provider's broken npm cache, missing Node.js, etc. must not prevent even
     attempting the other (regression: this used to abort the whole command on the
     first failure, so e.g. a stale root-owned ~/.npm cache entry for codex meant
@@ -705,7 +707,7 @@ def test_setup_all_is_best_effort_per_provider(monkeypatch):
         return {"provider": "claude", "path": "C:/claude.exe", "logged_in": True}
 
     monkeypatch.setattr(cli_module, "setup_provider", fake_setup_provider)
-    result = CliRunner().invoke(app, ["setup", "all"])
+    result = CliRunner().invoke(app, ["--home", str(tmp_path / "home"), "setup", "all"])
 
     assert calls == ["codex", "claude"]
     assert result.exit_code == 0, result.output
@@ -718,7 +720,7 @@ def test_setup_all_is_best_effort_per_provider(monkeypatch):
     }
 
 
-def test_setup_single_provider_reports_next_action(monkeypatch):
+def test_setup_single_provider_reports_next_action(tmp_path, monkeypatch):
     from ccc_mcp.interfaces import cli as cli_module
 
     monkeypatch.setattr(
@@ -726,7 +728,7 @@ def test_setup_single_provider_reports_next_action(monkeypatch):
         "setup_provider",
         lambda provider: {"provider": provider, "path": "C:/codex.exe", "logged_in": True},
     )
-    result = CliRunner().invoke(app, ["setup", "codex"])
+    result = CliRunner().invoke(app, ["--home", str(tmp_path / "home"), "setup", "codex"])
 
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)

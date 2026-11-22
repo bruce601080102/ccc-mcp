@@ -1,5 +1,7 @@
-"""Keep checks automatic and publishing strictly opt-in."""
+"""Keep release checks and publishing behind the manual Release workflow."""
 
+from collections import defaultdict
+from itertools import product
 from pathlib import Path
 
 import yaml
@@ -29,8 +31,6 @@ def test_all_workflows_are_manual_or_reusable_only():
     assert checks["on"]["workflow_call"]["inputs"]["release_version"]["default"] == ""
     assert checks["permissions"] == {"contents": "read"}
     assert set(checks["jobs"]) == {"lint", "test", "build", "smoke-install"}
-    for name in ("test", "build"):
-        assert checks["jobs"][name]["needs"] == "lint"
     assert checks["jobs"]["smoke-install"]["needs"] == "build"
     for job in checks["jobs"].values():
         assert "if" not in job
@@ -46,4 +46,26 @@ def test_all_workflows_are_manual_or_reusable_only():
     assert release["jobs"]["verify"]["uses"] == "./.github/workflows/checks.yaml"
     assert release["jobs"]["verify"]["with"] == {"release_version": "${{ inputs.version }}"}
     assert release["jobs"]["verify"]["with"]["release_version"] == "${{ inputs.version }}"
-    assert {"github-release", "publish"} <= set(release["jobs"])
+    assert release["jobs"]["github-release"]["needs"] == "verify"
+    assert set(release["jobs"]["publish"]["needs"]) == {"verify", "github-release"}
+
+
+def test_every_supported_ci_platform_runs_all_its_shards():
+    matrix = _workflow("checks.yaml")["jobs"]["test"]["strategy"]["matrix"]
+    keys = ("os", "python-version", "shard")
+    jobs = [dict(zip(keys, values, strict=True)) for values in product(*(matrix[k] for k in keys))]
+    # Extra platforms have distinct OS labels, so each include entry adds a job.
+    assert all(job["os"] not in matrix["os"] for job in matrix["include"])
+    shards = defaultdict(list)
+    for job in [*jobs, *matrix["include"]]:
+        shards[job["os"], job["python-version"]].append(
+            tuple(map(int, job["shard"].split("/")))
+        )
+
+    assert set(shards) == {
+        *(("ubuntu-latest", version) for version in ("3.11", "3.12", "3.13", "3.14")),
+        ("macos-latest", "3.14"),
+        ("windows-latest", "3.14"),
+    }
+    for parts in shards.values():
+        assert sorted(parts) == [(index, len(parts)) for index in range(1, len(parts) + 1)]

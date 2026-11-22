@@ -4,6 +4,8 @@ host test that fails on a script, and a driver that does what the spawned worker
 import json
 import sys
 
+import pytest
+
 from ccc_mcp.worker import run_execution
 
 ACTIVE = ("STARTING", "RUNNING")
@@ -254,6 +256,8 @@ def install_fake_cli(tmp_path, monkeypatch, **config):
     import os
     import stat
 
+    if os.name == "nt":
+        pytest.skip("the scripted codex/claude are POSIX scripts, which Windows cannot run as programs")
     folder = tmp_path / "bin"
     folder.mkdir(exist_ok=True)
     for name in ("codex", "claude"):

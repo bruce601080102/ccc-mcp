@@ -10,6 +10,7 @@ import json
 import pytest
 from phase_support import drive, make_ready_goal, plan_dict, scripted_test
 
+from ccc_mcp.core.approval import local_identity
 from ccc_mcp.infra.errors import BridgeError, PermissionDenied
 
 
@@ -525,7 +526,8 @@ def test_pause_stops_new_work_and_resume_carries_on_from_the_same_place(env, tmp
     assert done["status"] == "PASSED"
     audit = [e for e in done["events"] if e["kind"] in ("phase_run_paused", "phase_run_resumed")]
     assert [e["kind"] for e in audit] == ["phase_run_paused", "phase_run_resumed"]
-    assert audit[0]["actor"].startswith("uid:") and audit[0]["detail"]["detail"]["note"] == "lunch"
+    assert [e["actor"] for e in audit] == [local_identity()] * 2
+    assert audit[0]["detail"]["detail"]["note"] == "lunch"
     assert len(builders(env, done["task_id"])) == 1        # nothing already done was done again
 
 
@@ -561,7 +563,7 @@ def test_manual_criteria_end_awaiting_a_persons_acceptance_not_passed(env, tmp_p
     assert passed["status"] == "PASSED"
     accepted = [e for e in passed["events"] if e["kind"] == "phase_run_passed"][-1]
     assert accepted["detail"]["detail"]["accepted_criteria"] == ["M1"]
-    assert accepted["actor"].startswith("uid:")
+    assert accepted["actor"] == local_identity()
     with pytest.raises(BridgeError, match="not waiting"):
         env.accept_phase_web("demo", done["id"], info["challenge"])
 

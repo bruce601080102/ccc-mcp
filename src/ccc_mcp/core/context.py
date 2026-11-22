@@ -1164,14 +1164,30 @@ class ContextHub:
     def sync_documents(self, project_id):
         """Caller holds the project lock. Rebuild all projections after a crash."""
         root = Path(self.project(project_id)["root"])
+        metadata = metadata_name(root)
         language = self.get_project_settings(project_id)["language"]
+
+        def sync_file(relative, content):
+            target = safe_path(root, relative)
+            # Repeated transitions revisit history and all saved reports. Avoid a temp file,
+            # fsync and rename for each unchanged file, while still repairing on-disk drift.
+            expected = content.encode("utf-8")
+            try:
+                if target.is_file():
+                    with target.open("rb") as current:
+                        if current.read(len(expected) + 1) == expected:
+                            return
+            except (FileNotFoundError, PermissionError):
+                pass
+            atomic_write(target, content)
+
         for relative, content in self.projection(project_id).items():
-            atomic_write(safe_path(root, metadata_name(root) + "/" + relative), content)
+            sync_file(f"{metadata}/{relative}", content)
         for record in self.store.all("SELECT * FROM artifacts WHERE project_id=?", (project_id,)):
-            atomic_write(safe_path(root, record["path"]), record["content"])
+            sync_file(record["path"], record["content"])
         for task in self.store.all("SELECT id FROM tasks WHERE project_id=?", (project_id,)):
             for doc in TASK_DOCUMENTS:
-                target = safe_path(root, f"{metadata_name(root)}/tasks/{task['id']}/{doc}")
+                target = safe_path(root, f"{metadata}/tasks/{task['id']}/{doc}")
                 if not target.exists():
                     pending = (
                         "尚未產生；不得視為已完成。"
@@ -1185,14 +1201,14 @@ class ContextHub:
             "SELECT version,metadata FROM context_versions WHERE project_id=? ORDER BY version",
             (project_id,),
         )
-        atomic_write(
-            safe_path(root, metadata_name(root) + "/history/context-events.jsonl"),
+        sync_file(
+            f"{metadata}/history/context-events.jsonl",
             "".join(
                 canonical({"version": r["version"], **json.loads(r["metadata"])}) + "\n"
                 for r in rows
             ),
         )
-        config = safe_path(root, metadata_name(root) + "/config.yaml")
+        config = safe_path(root, f"{metadata}/config.yaml")
         if not config.exists():
             atomic_write(
                 config,

@@ -61,6 +61,34 @@ def wait_for(predicate, timeout=20.0):
     raise AssertionError("condition not reached in time")
 
 
+# These kill a runner with SIGKILL or rely on file locks, which ccc-mcp itself only verifies on POSIX
+# (the product refuses to recover automatically elsewhere). The rest run on every platform.
+POSIX_ONLY = {
+    "test_reproduction_a_killed_runner_must_not_block_the_task_forever",
+    "test_after_sigkill_the_residue_is_recognised_and_recorded_as_interrupted",
+    "test_an_interrupted_test_is_never_read_as_a_pass_by_the_review_gate",
+    "test_a_dead_runner_does_not_keep_a_stop_request_stuck",
+    "test_an_unstoppable_orphan_keeps_the_conservative_state",
+    "test_after_a_service_restart_the_host_test_is_run_again_from_scratch",
+    "test_the_database_is_reopened_from_disk_before_recovering",
+    "test_an_earlier_pass_is_not_reused_after_an_interrupted_rerun",
+    "test_recovering_twice_records_one_interruption_and_changes_nothing_more",
+    "test_resuming_after_an_interrupted_host_test_dispatches_the_next_role_once",
+    "test_a_legacy_database_gains_only_the_ledger_and_keeps_working",
+    "test_an_orphan_that_was_never_recorded_still_blocks_a_rerun",
+    "test_a_recorded_child_that_no_longer_matches_is_never_trusted",
+    "test_the_reliability_check_names_network_file_systems_and_other_platforms",
+    "test_two_interruptions_then_a_pass_leave_one_unbroken_chain",
+    "test_an_interrupted_test_cannot_pass_a_review_gate",
+}
+
+
+@pytest.fixture(autouse=True)
+def posix_only(request):
+    if os.name == "nt" and request.node.originalname in POSIX_ONLY:
+        pytest.skip("SIGKILL and file-lock recovery are only verified on POSIX")
+
+
 @pytest.fixture
 def tag():
     return "ccc-hosttest-" + uuid.uuid4().hex[:12]

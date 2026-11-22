@@ -387,6 +387,16 @@ def schema_file(folder, model=AgentReport):
     return path
 
 
+def _exits_soon(process, grace=2.0):
+    """True when the process is gone, or goes within `grace` seconds (poll() can still say
+    "running" for a moment after a process has ended)."""
+    try:
+        process.wait(timeout=grace)
+    except subprocess.TimeoutExpired:
+        return False
+    return True
+
+
 def windows_job(process):
     """Kill descendants if a Windows worker crashes or is terminated."""
     import win32api
@@ -405,7 +415,12 @@ def windows_job(process):
             win32job.AssignProcessToJobObject(job, handle)
         finally:
             handle.Close()
-    except BaseException:
+    except BaseException as error:
         job.Close()
+        # A process that has already exited, or is exiting (a quick `python -c ...` host test),
+        # cannot join a job: Windows answers "Access is denied". It has nothing left to clean up,
+        # so that is not a failure. A process that stays alive and is still refused is.
+        if getattr(error, "winerror", None) == 5 and _exits_soon(process):
+            return None
         raise
     return job

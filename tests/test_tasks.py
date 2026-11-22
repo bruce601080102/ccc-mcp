@@ -1,6 +1,8 @@
+import subprocess
 import time
 from pathlib import Path
 
+import portalocker
 import pytest
 from conftest import approve, dispatch
 
@@ -50,8 +52,6 @@ def test_get_task_status_does_not_flag_freshly_queued_execution(bridge, human):
 
 
 def test_get_task_status_does_not_flag_execution_with_live_lock(bridge, human):
-    import portalocker
-
     bridge.create_task("demo", "新增 API", ["API 回傳 200"])
     queued = dispatch(bridge)
     bridge.store.execute(
@@ -225,17 +225,47 @@ def test_duplicate_dispatch_and_illegal_transition(bridge):
 def test_asynchronous_detached_worker_returns_before_result(bridge, monkeypatch):
     bridge.create_task("demo", "分析")
     monkeypatch.setattr(bridge, "spawn_worker", CCCMCP.spawn_worker.__get__(bridge))
-    started = time.monotonic()
-    queued = dispatch(bridge, fake_delay=1)
-    assert time.monotonic() - started < 1
-    deadline = time.monotonic() + 15
-    while time.monotonic() < deadline:
-        status = bridge.get_task_result("demo", "TASK-0001")[-1]["status"]
-        if status not in {"QUEUED", "RUNNING"}:
-            break
-        time.sleep(0.1)
-    assert status == "SUCCEEDED"
-    assert queued["task_id"] == "TASK-0001"
+    gate = bridge.home / "test-worker-gate.lock"
+    popen = subprocess.Popen
+    workers = []
+    gated_worker = """
+import runpy
+import sys
+import portalocker
+
+with portalocker.Lock(sys.argv.pop(1), timeout=60):
+    pass
+runpy.run_module("ccc_mcp.worker", run_name="__main__", alter_sys=True)
+"""
+
+    def launch(argv, **kwargs):
+        if argv[1:3] != ["-m", "ccc_mcp.worker"]:
+            return popen(argv, **kwargs)
+        worker = popen([argv[0], "-c", gated_worker, str(gate), *argv[3:]], **kwargs)
+        workers.append(worker)
+        return worker
+
+    monkeypatch.setattr(subprocess, "Popen", launch)
+    try:
+        # The real child can only enter the worker after dispatch has returned.
+        with portalocker.Lock(gate):
+            queued = dispatch(bridge, fake_delay=0)
+            [worker] = workers
+            assert worker.poll() is None
+            assert queued["task_id"] == "TASK-0001"
+            assert queued["status"] == "QUEUED"
+            [pending] = bridge.get_task_result("demo", "TASK-0001")
+            assert pending["id"] == queued["execution_id"]
+            assert pending["status"] == "QUEUED" and pending["result"] is None
+
+        assert worker.wait(timeout=60) == 0
+        [completed] = bridge.get_task_result("demo", "TASK-0001")
+        assert completed["status"] == "SUCCEEDED"
+    finally:
+        for worker in workers:
+            if worker.poll() is None:
+                worker.kill()
+                worker.wait(timeout=10)
 
 
 def test_accept_requires_pm_review_and_terminal(bridge, human):
