@@ -16,7 +16,7 @@ from typer.core import TyperGroup
 from ..adapters.agent_setup import setup_provider, uninstall_provider
 from ..adapters.agents.base import native_executable
 from ..adapters.environment import git_check, python_version
-from ..adapters.skills import install_skill, list_skills, remove_skill
+from ..adapters.skills import discover_skills, install_skill, list_skills, remove_skill
 from ..adapters.tunnel_client import (
     ensure_tunnel_client,
     forget_tunnel_key,
@@ -151,6 +151,14 @@ app.add_typer(config_app, name="config")
 app.add_typer(workspace_app, name="workspace", hidden=True)
 app.add_typer(schema_app, name="schema")
 app.add_typer(skill_app, name="skill")
+mcp_app = typer.Typer(
+    no_args_is_help=True,
+    help=t(
+        "本機 MCP 伺服器：列出本機各客戶端定義的伺服器，以及這個專案已安裝給 agent 用的",
+        "Local MCP servers: list what clients on this machine define, and what this project installed for agents",
+    ),
+)
+app.add_typer(mcp_app, name="mcp")
 
 
 @app.callback(
@@ -1480,7 +1488,7 @@ def task_dispatch(
     instruction: str,
     version: Annotated[int, typer.Option()],
     adapter: str = "real",
-    timeout: float = 600,
+    timeout: float = 1800,
     model: str | None = None,
     effort: str | None = None,
 ):
@@ -2106,11 +2114,68 @@ def schema_export(out_dir: Path):
 @skill_app.command(
     "install",
     help=t(
-        "從本機資料夾或 URL（.md 單檔／.zip 封存）安裝一個全局 Skill。",
-        "Install a global skill from a local folder or URL (a single .md file, or a .zip archive).",
+        "從本機資料夾或 URL（.md 單檔／.zip 封存）安裝一個全局 Skill。"
+        "`skill install mcp <名稱>` 則是讓 agent 能即時呼叫本機的 stdio MCP 伺服器"
+        "（先確認指令存在並完成 MCP 握手，記下完整路徑，所以之後不依賴 conda/venv 的啟用）。",
+        "Install a global skill from a local folder or URL (a single .md file, or a .zip archive). "
+        "`skill install mcp <name>` instead lets dispatched agents call a local stdio MCP server "
+        "live (the command must exist and complete an MCP handshake; its full path is recorded, "
+        "so later runs do not depend on an activated conda/venv).",
     ),
 )
-def skill_install(ctx: typer.Context, source: str):
+def skill_install(
+    ctx: typer.Context,
+    source: str,
+    name: Annotated[
+        str | None, typer.Argument(help=t("MCP 名稱（搭配 mcp）", "MCP name (with `mcp`)"))
+    ] = None,
+    command: Annotated[
+        str | None,
+        typer.Option(
+            "--command", help=t("MCP 伺服器的完整指令路徑", "Full path of the MCP server command")
+        ),
+    ] = None,
+    arg: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--arg",
+            help=t("傳給 MCP 指令的參數（可重複）", "Argument for the MCP command (repeatable)"),
+        ),
+    ] = None,
+    tools: Annotated[
+        str | None,
+        typer.Option(
+            "--tools",
+            help=t(
+                "只啟用這些工具，逗號分隔（預設全部）",
+                "Enable only these tools, comma-separated (default: all)",
+            ),
+        ),
+    ] = None,
+):
+    if source == "mcp":
+        if not name:
+            raise BridgeError(
+                t("用法：skill install mcp <名稱>", "Usage: skill install mcp <name>")
+            )
+        scope = ctx.obj["project"]  # only an explicit --project narrows it; none = global
+        result = bridge(ctx).install_mcp_server(
+            scope, name, command, arg, tools.split(",") if tools else None
+        )
+        if scope is None:
+            typer.echo(
+                t(
+                    "! 已安裝為「全域」：所有專案的 agent 都能使用這個 MCP 啟用的工具。"
+                    "只想給單一專案請加 --project <id>。",
+                    "! Installed GLOBALLY: every project's agents can use this MCP's enabled "
+                    "tools. Add --project <id> to scope it to one project.",
+                ),
+                err=True,
+            )
+        for warning in result["warnings"]:
+            typer.echo(f"! {warning}", err=True)
+        output(result)
+        return
     if source.startswith(("http://", "https://")):
         typer.echo(
             t(
@@ -2125,6 +2190,74 @@ def skill_install(ctx: typer.Context, source: str):
 @skill_app.command("list", help=t("列出所有已安裝的 Skill。", "List every installed skill."))
 def skill_list(ctx: typer.Context):
     output(list_skills(bridge(ctx).home))
+
+
+@mcp_app.command(
+    "list",
+    help=t(
+        "列出本機客戶端定義的 MCP 伺服器，以及已安裝的。有 --project：該專案的 agent 實際拿到的"
+        "（全域＋專案自己的，同名以專案為準）；沒有 --project（或加 --all）：全域安裝與各專案自己的安裝。",
+        "List MCP servers defined by clients on this machine and the installed ones. With --project: "
+        "what that project's agents actually get (global + its own; a project entry replaces a "
+        "global one of the same name). Without --project (or with --all): the global installs and "
+        "each project's own.",
+    ),
+)
+def mcp_list(
+    ctx: typer.Context,
+    all_projects: Annotated[
+        bool, typer.Option("--all", help=t("列出全域與所有專案", "List global and every project"))
+    ] = False,
+):
+    output(bridge(ctx).list_mcp_servers(ctx.obj["project"], all_projects))
+
+
+@mcp_app.command(
+    "calls",
+    help=t(
+        "唯讀：最近經由 ccc-mcp 中介（list/call_installed_mcp_tool）發生的 MCP 呼叫紀錄——"
+        "ChatGPT 有沒有真的呼叫的證據。只記錄參數摘要與結果狀態，不記錄回傳內容。",
+        "Read-only: recent MCP calls made through ccc-mcp's bridge (call_installed_mcp_tool) — "
+        "evidence of whether ChatGPT really called. Records argument summaries and outcome, "
+        "never the returned content.",
+    ),
+)
+def mcp_calls(
+    ctx: typer.Context,
+    limit: Annotated[
+        int, typer.Option("--limit", help=t("顯示最近幾筆", "How many recent calls"))
+    ] = 20,
+):
+    output(bridge(ctx).mcp_call_log(limit))
+
+
+@mcp_app.command(
+    "remove",
+    help=t(
+        "移除 MCP 伺服器：有 --project 移除該專案自己的；沒有則移除全域安裝。",
+        "Remove an MCP server: with --project this project's own install, without it the global one.",
+    ),
+)
+def mcp_remove(ctx: typer.Context, name: str):
+    output(bridge(ctx).remove_mcp_server(ctx.obj["project"], name))
+
+
+@skill_app.command(
+    "discover",
+    help=t(
+        "列出本機 Claude Code（~/.claude/skills）與 Codex（~/.codex/skills）全域目錄中找得到的 "
+        "Skill——例如由 `npx <工具> init --global` 這類第三方安裝器裝的。每筆標示是否可安裝"
+        "（usable：SKILL.md 讀得到且有內容）以及是否已安裝到 ccc-mcp。可安裝的直接用 "
+        "`skill install <path>` 安裝。",
+        "List skills found in Claude Code's (~/.claude/skills) and Codex's (~/.codex/skills) "
+        "global directories on this machine — for example ones a third-party installer put "
+        "there via `npx <tool> init --global`. Each entry marks whether it is usable (a "
+        "readable SKILL.md with content) and whether it is already installed into ccc-mcp. "
+        "Install a usable one with `skill install <path>`.",
+    ),
+)
+def skill_discover(ctx: typer.Context):
+    output(discover_skills(bridge(ctx).home))
 
 
 @skill_app.command("remove", help=t("移除一個已安裝的 Skill。", "Remove an installed skill."))

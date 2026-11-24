@@ -91,6 +91,33 @@ def reject_secrets(value) -> None:
         raise BridgeError("Possible secret detected; remove credentials before saving")
 
 
+# Output written by an AI role or produced by its edits is mostly source code and prose, where a
+# word such as `token = os.getenv(...)` or "password: ask the user" is ordinary. Only text that
+# looks like an actual credential is refused there; user-entered text keeps the stricter check.
+_CREDENTIAL_PATTERNS = (
+    re.compile(r"-----BEGIN [^-]*PRIVATE KEY-----"),
+    re.compile(r"\bsk-[\w-]{20,}"),
+    re.compile(r"\bgh[pousr]_\w{30,}"),
+    re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
+    re.compile(r"\bxox[baprs]-[\w-]{10,}"),
+    re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{24,}"),
+    re.compile(r"(?i)/api/webhooks/\d+/[\w-]{20,}"),
+    # name = "literal": the value must be a long mixed letters-and-digits string, not a variable,
+    # a call, a path or a sentence.
+    re.compile(
+        r"""(?i)["']?(?:api[_-]?key|token|password|secret)["']?\s*[:=]\s*["']?"""
+        r"""(?=[A-Za-z0-9+/_=-]*\d)(?=[A-Za-z0-9+/_=-]*[A-Za-z])[A-Za-z0-9+/_=-]{16,}(?![\w.(\[])"""
+    ),
+)
+
+
+def reject_credentials(value) -> None:
+    """Refuse AI output that contains what looks like a real credential."""
+    serialized = canonical(value).replace('\\"', '"').replace("\\n", "\n")
+    if any(pattern.search(serialized) for pattern in _CREDENTIAL_PATTERNS):
+        raise BridgeError("Possible secret detected; remove credentials before saving")
+
+
 def same_text_content(old: bytes, new: bytes | None) -> bool:
     """Match bytes or UTF-8 text differing only in Windows line endings."""
     if new is None:

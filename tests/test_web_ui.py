@@ -941,8 +941,7 @@ def test_the_console_cannot_start_a_goal_that_nobody_approved(tmp_path, client):
 
 @pytest.mark.parametrize("path", [
     "/api/dashboard", "/api/dashboard/reliability", "/api/dashboard/account-usage",
-    "/api/docs/en/README", "/api/onboarding/status", "/api/skills", "/api/skills/discover",
-    "/api/mcp/calls", "/api/project-groups", "/api/projects/x/roles", "/api/projects/x/mcp",
+    "/api/docs/en/README", "/api/onboarding/status", "/api/project-groups", "/api/projects/x/roles",
     "/api/projects/x/workflows", "/api/projects/x/context", "/api/projects/x/tasks/T/evaluations",
 ])
 def test_removed_console_endpoints_are_gone_not_hidden(client, path):
@@ -954,10 +953,9 @@ async def test_removed_mcp_tools_are_not_offered_and_the_goal_tools_are(tmp_path
 
     names = {tool.name for tool in await create_server(tmp_path / "h").list_tools()}
     assert not names & {
-        "evaluate_task", "reevaluate_execution", "get_task_evaluations", "get_agent_reliability",
-        "list_installed_mcp_tools", "call_installed_mcp_tool"}
+        "evaluate_task", "reevaluate_execution", "get_task_evaluations", "get_agent_reliability"}
     assert {"start_goal", "plan_goal", "control_goal", "get_goal", "get_work_overview",
-            "request_goal_approval"} <= names
+            "request_goal_approval", "list_installed_mcp_tools", "call_installed_mcp_tool"} <= names
 
 
 def test_removed_cli_commands_are_gone(tmp_path):
@@ -969,8 +967,7 @@ def test_removed_cli_commands_are_gone(tmp_path):
     shown = runner.invoke(app, ["--home", str(tmp_path / "h"), "--help"]).output
     for gone in ("reputation", "compare-tokens", "validate-scoring"):
         assert gone not in shown
-    for argv in (["reputation"], ["compare-tokens"], ["validate-scoring"], ["mcp", "list"],
-                 ["skill", "discover"], ["goal", "phase-start"]):
+    for argv in (["reputation"], ["compare-tokens"], ["validate-scoring"], ["goal", "phase-start"]):
         result = runner.invoke(app, ["--home", str(tmp_path / "h"), *argv])
         assert result.exit_code != 0, argv
 
@@ -1007,3 +1004,324 @@ def test_the_role_and_workflow_routes_refuse_bad_input_and_anonymous_callers(tmp
                        ("review-gate", {"max_rounds": 99})):
         assert client.post(f"/api/projects/adv2/config/{path}", json=body).status_code == 400, (path, body)
         assert TestClient(client.app).post(f"/api/projects/adv2/config/{path}", json=body).status_code == 401
+
+
+# --- Skills and local MCP servers (restored) ----------------------------------------------
+
+
+def test_global_skill_install_and_remove_affects_every_project(tmp_path, client, monkeypatch):
+    from ccc_mcp.adapters import skills as skill_registry
+
+    provider_root = tmp_path / "provider-skills"
+    source = provider_root / "shared-guidance"
+    source.mkdir(parents=True)
+    (source / "SKILL.md").write_text(
+        "---\nname: shared-guidance\ndescription: Shared guidance\n---\nFollow this guidance.\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(skill_registry, "_provider_skill_roots", lambda: [("Codex", provider_root)])
+    for project_id in ("first", "second"):
+        repo = mkrepo(tmp_path, project_id)
+        assert (
+            client.post("/api/projects/add", json={"path": str(repo), "id": project_id}).status_code
+            == 200
+        )
+
+    discovered = client.get("/api/skills/discover").json()
+    selected = next(item for item in discovered if item["id"] == "shared-guidance")
+    assert selected["already_installed"] is False
+    installed = client.post(
+        "/api/skills/install-discovered",
+        json={"id": selected["id"], "path": selected["path"]},
+    )
+    assert installed.status_code == 200, installed.text
+    assert [skill["id"] for skill in client.get("/api/skills").json()] == ["shared-guidance"]
+    for project_id in ("first", "second"):
+        # The console has no context page any more; what an agent is handed is what counts.
+        context = client.app.state.bridge.get_context(project_id, "PM")
+        assert any(
+            skill["id"] == "shared-guidance" for skill in context["content"]["available_skills"]
+        )
+
+    path = "/api/skills/shared-guidance/remove"
+    assert client.post(path, json={"confirm": "wrong"}).status_code == 400
+    assert client.get("/api/skills").json()
+    removed = client.post(path, json={"confirm": "REMOVE SKILL shared-guidance"})
+    assert removed.status_code == 200, removed.text
+    assert client.get("/api/skills").json() == []
+    assert (source / "SKILL.md").is_file()
+
+
+def test_mcp_ui_probes_selected_tools_and_installs_only_the_selected_subset(
+    tmp_path, client, monkeypatch
+):
+    from ccc_mcp.adapters import mcp_servers
+
+    repo = mkrepo(tmp_path, "mcp-repo")
+    client.post("/api/projects/add", json={"path": str(repo), "id": "mcp-demo"})
+    discovered = {
+        "name": "example-mcp",
+        "client": "VS Code",
+        "source_file": "local-mcp.json",
+        "transport": "stdio",
+        "command": sys.executable,
+        "args": [],
+        "has_env": False,
+    }
+    monkeypatch.setattr(mcp_servers, "discover", lambda root=None: [discovered])
+    monkeypatch.setattr(
+        mcp_servers,
+        "probe_tools",
+        lambda command, args: [
+            {"name": "read", "description": "Read data", "read_only": True},
+            {"name": "delete", "description": "Delete data", "read_only": False},
+        ],
+    )
+    selected = {key: discovered[key] for key in ("name", "client", "source_file")}
+    preview = client.post("/api/projects/mcp-demo/mcp/probe", json=selected)
+    assert preview.status_code == 200, preview.text
+    assert [tool["name"] for tool in preview.json()["tools"]] == ["read", "delete"]
+
+    empty = client.post("/api/projects/mcp-demo/mcp/install", json={**selected, "tools": []})
+    assert empty.status_code == 400
+    unknown = client.post(
+        "/api/projects/mcp-demo/mcp/install", json={**selected, "tools": ["unknown"]}
+    )
+    assert unknown.status_code == 400
+
+    installed = client.post(
+        "/api/projects/mcp-demo/mcp/install", json={**selected, "tools": ["read"]}
+    )
+    assert installed.status_code == 200, installed.text
+    listed = client.get("/api/projects/mcp-demo/mcp").json()["installed"]["example-mcp"]
+    assert listed["allowed_tools"] == ["read"]
+    assert listed["scope"] == "project"
+
+    monkeypatch.setattr(
+        mcp_servers,
+        "describe_tools",
+        lambda scope, command, args: [
+            {"name": "read", "description": "Read data", "input_schema": {"type": "object"}},
+            {"name": "delete", "description": "Delete data", "input_schema": {"type": "object"}},
+        ],
+    )
+    monkeypatch.setattr(
+        mcp_servers,
+        "call_tool",
+        lambda scope, command, args, tool, arguments: {
+            "is_error": False,
+            "text": f"{tool}:{arguments['value']}",
+            "truncated": False,
+        },
+    )
+    tools = client.get("/api/projects/mcp-demo/mcp/example-mcp/tools")
+    assert tools.status_code == 200
+    assert [tool["name"] for tool in tools.json()] == ["read"]
+    called = client.post(
+        "/api/projects/mcp-demo/mcp/example-mcp/tools/read/call",
+        json={"arguments": {"value": "hello"}},
+    )
+    assert called.status_code == 200
+    assert called.json()["text"] == "read:hello"
+    assert (
+        client.post(
+            "/api/projects/mcp-demo/mcp/example-mcp/tools/delete/call",
+            json={"arguments": {"value": "bad"}},
+        ).status_code
+        == 400
+    )
+    assert client.get("/api/mcp/calls").json()[-1]["tool"] == "read"
+
+    removed = client.post("/api/projects/mcp-demo/mcp/example-mcp/remove")
+    assert removed.status_code == 200
+    assert client.get("/api/projects/mcp-demo/mcp").json()["installed"] == {}
+
+
+def test_mcp_ui_lists_venv_executable_and_installs_after_tool_selection(
+    tmp_path, client, monkeypatch
+):
+    from ccc_mcp.adapters import mcp_servers
+
+    repo = mkrepo(tmp_path, "mcp-venv-repo")
+    executable = "codebase-memory-mcp.exe" if os.name == "nt" else "codebase-memory-mcp"
+    binary = repo / ".venv" / ("Scripts" if os.name == "nt" else "bin") / executable
+    binary.parent.mkdir(parents=True)
+    binary.write_text("#!/bin/sh\n")
+    binary.chmod(0o755)
+    client.post("/api/projects/add", json={"path": str(repo), "id": "mcp-venv"})
+    monkeypatch.setattr(mcp_servers, "client_config_files", lambda root=None: [])
+
+    probes = []
+
+    def probe(command, args):
+        probes.append(command)
+        return [{"name": "search", "description": "Search", "read_only": True}]
+
+    monkeypatch.setattr(
+        mcp_servers,
+        "probe_tools",
+        probe,
+    )
+
+    listed = client.get("/api/projects/mcp-venv/mcp")
+    assert listed.status_code == 200
+    candidate = next(
+        item
+        for item in listed.json()["discovered"]
+        if item["name"] == "codebase-memory-mcp" and item["command"] == str(binary)
+    )
+    assert listed.json()["installed"] == {}
+    assert probes == []
+    selected = {key: candidate[key] for key in ("name", "client", "source_file")}
+    preview = client.post("/api/projects/mcp-venv/mcp/probe", json=selected)
+    assert preview.status_code == 200, preview.text
+    assert preview.json()["tools"][0]["name"] == "search"
+    assert probes == [str(binary)]
+    installed = client.post(
+        "/api/projects/mcp-venv/mcp/install", json={**selected, "tools": ["search"]}
+    )
+    assert installed.status_code == 200, installed.text
+    assert client.get("/api/projects/mcp-venv/mcp").json()["installed"]["codebase-memory-mcp"][
+        "allowed_tools"
+    ] == ["search"]
+
+
+def test_resume_dispatch_endpoint_is_token_gated_and_has_nothing_to_resume_normally(tmp_path, client, human):
+    repo = mkrepo(tmp_path, "dispatch")
+    assert client.post("/api/projects/add", json={"path": str(repo), "id": "dispatch"}).status_code == 200
+    bridge = client.app.state.bridge
+    bridge.authorize_project_local("dispatch")
+    task_id = bridge.start_project_request("dispatch", "Plan a trip")["workstream"]["id"]
+    url = f"/api/projects/dispatch/tasks/{task_id}/resume-dispatch"
+
+    assert TestClient(client.app).post(url, json={}).status_code == 401
+    answer = client.post(url, json={})
+    assert answer.status_code == 200
+    assert answer.json()["resumed"] is False
+
+
+def test_a_database_with_an_extra_legacy_approvals_column_still_records_approvals(
+        tmp_path, client, human, monkeypatch):
+    # Older versions added approvals.roster_hash; the column was later replaced by approval_rosters but
+    # stays in existing databases. Positional INSERTs failed there and left the next step unstarted.
+    repo = mkrepo(tmp_path, "legacy")
+    assert client.post("/api/projects/add", json={"path": str(repo), "id": "legacy"}).status_code == 200
+    bridge = client.app.state.bridge
+    bridge.authorize_project_local("legacy")
+    monkeypatch.setattr(bridge, "spawn_worker", lambda execution_id: None)
+    task_id = bridge.start_project_request("legacy", "Plan a trip")["workstream"]["id"]
+    with bridge.store.transaction() as conn:
+        conn.execute("UPDATE agent_executions SET status='SUCCEEDED' WHERE task_id=?", (task_id,))
+        conn.execute("ALTER TABLE approvals ADD COLUMN roster_hash TEXT")
+    version = bridge.latest("legacy")["version"]
+    plan = bridge.propose_plan("legacy", task_id, "PLAN-A", "Do the work.", version)
+    assert plan["status"] == "APPROVED"
+    assert bridge.store.one("SELECT COUNT(*) AS n FROM approvals WHERE task_id=?", (task_id,))["n"] == 1
+
+
+def test_runtime_discovery_endpoint_is_token_gated_and_lists_this_computers_python(client):
+    assert TestClient(client.app).get("/api/runtimes/discover?language=python").status_code == 401
+    answer = client.get("/api/runtimes/discover?language=python")
+    assert answer.status_code == 200
+    found = answer.json()["runtimes"]
+    assert found and {"executable", "version", "short_version", "label"} <= set(found[0])
+    assert client.get("/api/runtimes/discover?language=cobol").status_code == 400
+
+
+def test_host_tests_can_be_started_from_the_console_without_a_terminal(tmp_path, client, human, monkeypatch):
+    repo = mkrepo(tmp_path, "runtests")
+    assert client.post("/api/projects/add", json={"path": str(repo), "id": "runtests"}).status_code == 200
+    bridge = client.app.state.bridge
+    monkeypatch.setattr(bridge, "spawn_worker", lambda execution_id: None)
+    bridge.authorize_project_local("runtests")
+    task_id = bridge.start_project_request("runtests", "Plan a trip")["workstream"]["id"]
+    bridge.store.execute(
+        "UPDATE agent_executions SET status='SUCCEEDED' WHERE project_id='runtests' AND task_id=?", (task_id,))
+    url = f"/api/projects/runtests/tasks/{task_id}/run-tests"
+
+    assert TestClient(client.app).post(url, json={}).status_code == 401
+
+    calls = []
+
+    def fake_execute(bridge_, project_id, task_id_, command, identity, *rest):
+        calls.append((project_id, task_id_, identity))
+        return {"executed_by_host": True, "passed": True, "command": ["python", "-m", "pytest"]}
+
+    monkeypatch.setattr("ccc_mcp.adapters.test_runner.execute_test_command", fake_execute)
+    answer = client.post(url, json={})
+    assert answer.status_code == 200 and answer.json()["started"] is True
+    bridge._host_test_thread.join(timeout=20)
+    assert [(c[0], c[1]) for c in calls] == [("runtests", task_id)]
+
+    bridge.store.execute(
+        "UPDATE agent_executions SET status='RUNNING' WHERE project_id='runtests' AND task_id=?", (task_id,))
+    busy = client.post(url, json={})
+    assert busy.status_code >= 400 and "active agent" in busy.text
+
+
+def test_starting_host_tests_is_refused_for_a_project_that_is_not_authorized(tmp_path, client, human, monkeypatch):
+    repo = mkrepo(tmp_path, "noauth")
+    assert client.post("/api/projects/add", json={"path": str(repo), "id": "noauth"}).status_code == 200
+    bridge = client.app.state.bridge
+    monkeypatch.setattr(bridge, "spawn_worker", lambda execution_id: None)
+    bridge.authorize_project_local("noauth")
+    task_id = bridge.start_project_request("noauth", "Plan a trip")["workstream"]["id"]
+    bridge.store.execute(
+        "UPDATE agent_executions SET status='SUCCEEDED' WHERE project_id='noauth' AND task_id=?", (task_id,))
+    bridge.revoke_project_local("noauth")
+    refused = client.post(f"/api/projects/noauth/tasks/{task_id}/run-tests", json={})
+    assert refused.status_code >= 400 and "not authorized" in refused.text
+
+
+def test_the_task_status_says_when_host_tests_are_running_and_which_stage(tmp_path, client, human, monkeypatch):
+    repo = mkrepo(tmp_path, "stage")
+    assert client.post("/api/projects/add", json={"path": str(repo), "id": "stage"}).status_code == 200
+    bridge = client.app.state.bridge
+    monkeypatch.setattr(bridge, "spawn_worker", lambda execution_id: None)
+    bridge.authorize_project_local("stage")
+    task_id = bridge.start_project_request("stage", "Plan a trip")["workstream"]["id"]
+    bridge.store.execute(
+        "UPDATE agent_executions SET status='SUCCEEDED' WHERE project_id='stage' AND task_id=?", (task_id,))
+    assert bridge.get_task_status("stage", task_id)["brief"]["control"]["host_test_running"] is False
+
+    bridge.store.execute(
+        "INSERT INTO task_controls(project_id,task_id,host_test_running) VALUES('stage',?,1) "
+        "ON CONFLICT(project_id,task_id) DO UPDATE SET host_test_running=1", (task_id,))
+    bridge.store.execute(
+        "INSERT INTO host_test_runs(id,project_id,task_id,owner,status,started) "
+        "VALUES('HTRUN-x','stage',?,'{}','RUNNING','2026-11-24T03:00:00+00:00')", (task_id,))
+    control = bridge.get_task_status("stage", task_id)["brief"]["control"]
+    assert control["host_test_running"] is True
+    assert control["host_test_started"] == "2026-11-24T03:00:00+00:00"
+    assert control["host_test_stage"] == "starting"
+
+
+def test_the_person_can_close_a_task_from_the_console_and_it_is_recorded_as_their_decision(
+    tmp_path, client, human, monkeypatch
+):
+    repo = mkrepo(tmp_path, "closing")
+    assert client.post("/api/projects/add", json={"path": str(repo), "id": "closing"}).status_code == 200
+    bridge = client.app.state.bridge
+    monkeypatch.setattr(bridge, "spawn_worker", lambda execution_id: None)
+    bridge.authorize_project_local("closing")
+    task_id = bridge.start_project_request("closing", "Plan a trip")["workstream"]["id"]
+    url = f"/api/projects/closing/tasks/{task_id}/close"
+
+    assert TestClient(client.app).post(url, json={}).status_code == 401
+    running = client.post(url, json={})
+    assert running.status_code >= 400 and "still running" in running.text
+
+    bridge.store.execute(
+        "UPDATE agent_executions SET status='SUCCEEDED' WHERE project_id='closing' AND task_id=?", (task_id,))
+    bridge.store.execute("UPDATE tasks SET state='BLOCKED' WHERE project_id='closing' AND id=?", (task_id,))
+    done = client.post(url, json={"note": "I ran the tests myself"})
+    assert done.status_code == 200
+    assert bridge.task("closing", task_id)["state"] == "COMPLETED"
+    events = client.get(f"/api/projects/closing/tasks/{task_id}/timeline").json()["events"]
+    closing = [e for e in events if e["event_type"] == "task_completed"][-1]
+    assert closing["summary"] == "Closed by the user: I ran the tests myself"
+    assert closing["actor"] == "user"                       # shown as the person's own decision
+    assert not [e for e in events if e["event_type"] == "closed_by_user"]   # no duplicate "system" entry
+    # Test evidence is left alone: closing never makes a task host-verified.
+    assert bridge.get_task_status("closing", task_id)["brief"]["tests"]["executed_by_host"] is False
+    assert client.post(url, json={}).status_code >= 400

@@ -10,7 +10,7 @@ from .core.host_test_run import child_identity
 from .core.role_prompt import describe_sent
 from .core.roles import REVIEWER_ROLES, writes_files
 from .infra.errors import AgentCancelled, AgentTimeout, BridgeError
-from .infra.security import canonical, comment_check, redact, reject_secrets, same_text_content
+from .infra.security import canonical, comment_check, redact, reject_credentials, same_text_content
 from .infra.telemetry import PROCESS_OBSERVER, audit_scope, is_quota_error
 from .service import CCCMCP
 
@@ -159,7 +159,7 @@ def run_execution(bridge, execution_id):
                     )
             finally:
                 PROCESS_OBSERVER.reset(observer)
-            reject_secrets(report)
+            reject_credentials(report)
             extras = {
                 "invocation": audit,
                 "log": {
@@ -193,9 +193,9 @@ def run_execution(bridge, execution_id):
                     for p in before
                     if before[p] != after.get(p) and same_text_content(before[p], after.get(p))
                 ]
-                reject_secrets(diff)
+                reject_credentials(diff)
                 with bridge.store.transaction() as conn:
-                    path = bridge.save_artifact(
+                    path = bridge.save_artifact_ai(
                         conn, project_id, task_id, "CHANGES.diff", execution_id, diff
                     )
                 extras["diff_reference"] = path

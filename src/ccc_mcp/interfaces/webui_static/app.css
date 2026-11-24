@@ -1135,9 +1135,9 @@ a.work-step:hover .work-step-title { color: var(--accent); text-decoration: unde
 .team-step { display: grid; grid-template-columns: 28px minmax(140px, 1.4fr) minmax(150px, 1fr) auto; gap: 10px; align-items: center; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--raised); }
 .team-step.is-repeat .team-step-tool { color: var(--muted); }
 .team-step-no { display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: var(--accent-bg); color: var(--accent); font-size: 12px; font-weight: 700; }
-.team-step-name { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; overflow-wrap: anywhere; }
+.team-step-name { display: grid; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
 .team-step-actions { display: flex; gap: 6px; justify-content: flex-end; }
-.team-step-more { grid-column: 2 / -1; display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; padding-top: 6px; }
+.team-step-more { grid-column: 2 / -1; display: grid; grid-template-columns: minmax(250px, 1.7fr) repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; padding-top: 6px; }
 .team-step-more[hidden] { display: none; }
 .team-step-more label { display: grid; gap: 4px; font-size: 12.5px; color: var(--muted); }
 .team-roles-row { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 14px; margin: 16px 0; }
@@ -1159,3 +1159,101 @@ a.work-step:hover .work-step-title { color: var(--accent); text-decoration: unde
 .team-wf-steps li { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto auto auto; gap: 8px; align-items: center; }
 .team-wf-steps select { min-width: 0; }
 @media (max-width: 760px) { .team-step { grid-template-columns: 28px 1fr; } .team-step-tool, .team-step-actions { grid-column: 2; justify-content: flex-start; } }
+.team-step-desc { display: block; color: var(--muted); font-size: 12.5px; font-weight: 400; line-height: 1.45; }
+.team-flow-help { margin: 2px 0 0; color: var(--muted); font-size: 13.5px; line-height: 1.55; }
+.team-selection-help { margin: 8px 0 14px; line-height: 1.55; }
+.team-presets-label { color: var(--muted); font-size: 13px; }
+.team-model-field { display: grid; gap: 4px; }
+.team-model-field [hidden] { display: none; }
+.team-step-more .team-model-note, .team-model-note { align-self: auto; padding-bottom: 0; color: var(--faint); font-size: 12px; font-weight: 400; }
+.team-wf-pick { display: grid; gap: 3px; min-width: 0; }
+.team-wf-pick select { width: 100%; }
+.settings-grid .field .hint { display: block; margin-top: 4px; line-height: 1.45; }
+
+/* Skills & MCP page */
+.skill-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px; }
+.skill-card { padding: 14px 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--raised); }
+.skill-card strong { font-size: 13.5px; overflow-wrap: anywhere; }
+.skill-card p { display: -webkit-box; margin: 5px 0 0; overflow: hidden; color: var(--muted); font-size: 12.5px; line-height: 1.55; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
+.skill-grid.wide { grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
+.skill-card.has-action { display: grid; gap: 8px; }
+.skill-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.skill-card-head > div { display: grid; min-width: 0; gap: 2px; }
+.skill-id { color: var(--faint); font-size: 11px; overflow-wrap: anywhere; }
+.skill-card.has-action p { margin: 0; }
+.pick-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: start; gap: 14px; padding: 13px 16px; background: var(--surface); }
+.pick-row + .pick-row { border-top: 1px solid var(--rule); }
+.pick-row:hover:not(.is-muted) { background: var(--hover); }
+.pick-row.is-muted .pick-main { opacity: .62; }
+.pick-row input[type="checkbox"] { margin-top: 2px; }
+.pick-main { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: baseline; gap: 2px 10px; min-width: 0; }
+.pick-main strong { font-size: 13.5px; }
+.pick-main p { grid-column: 1 / -1; display: -webkit-box; margin: 0; overflow: hidden; color: var(--muted); font-size: 12.5px; line-height: 1.55; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.skill-bulk-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 14px; }
+.skill-bulk-actions .checkbox-row { margin: 0; }
+.tool-list { max-height: 300px; overflow-y: auto; border: 1px solid var(--border); border-radius: var(--radius-control); }
+.tool-choice { display: flex; align-items: flex-start; gap: 12px; padding: 12px 14px; border-bottom: 1px solid var(--rule); cursor: pointer; }
+.tool-choice:last-child { border-bottom: none; }
+.tool-choice:hover { background: var(--raised); }
+.tool-choice:focus-within { background: var(--hover); outline: 2px solid var(--accent); outline-offset: -2px; }
+.tool-choice:has(input:checked) { background: var(--hover); }
+.tool-choice input { margin-top: 4px; }
+.tool-choice span { min-width: 0; }
+.tool-choice strong { display: block; font-size: 13px; overflow-wrap: anywhere; }
+.tool-choice small { display: block; color: var(--muted); font-size: 11px; line-height: 1.45; margin-top: 2px; }
+.tool-risk { display: inline-block; margin-left: 6px; font-style: normal; font-size: 10px; font-weight: 600; padding: 2px 6px; border-radius: 5px; }
+.tool-risk.read { background: var(--pill-positive-bg); color: var(--pill-positive-ink); }
+.tool-risk.write { background: var(--pill-warning-bg); color: var(--pill-warning-ink); }
+.mcp-tool-fields-title { margin: 20px 0 13px; font-size: 13px; font-weight: 650; }
+.mcp-required-field :where(input, select, textarea) { width: 100%; }
+.mcp-required-field .hint, .schema-details .hint { color: var(--muted); font-size: 12px; line-height: 1.5; margin-top: 6px; }
+.required-mark { color: var(--negative); font-size: 11px; margin-left: 6px; }
+.mcp-tool-validation { color: var(--negative); font-size: 12px; min-height: 0; margin-bottom: 10px; }
+.mcp-tool-validation:empty { display: none; }
+.mcp-required-field [aria-invalid="true"] { border-color: var(--negative); }
+.mcp-tool-empty { color: var(--muted); font-size: 13px; margin: 18px 0; }
+.mcp-tool-description { color: var(--muted); font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; margin-top: 8px; }
+.schema-details { margin: 14px 0 18px; }
+.schema-details summary { cursor: pointer; color: var(--accent); font-size: 12px; padding: 4px 0; }
+.schema-details summary:hover { text-decoration: underline; }
+.schema-details pre { white-space: pre-wrap; max-height: 180px; overflow: auto; margin-top: 9px; padding: 12px; font-size: 11px; }
+.schema-details label { display: block; font-size: 12px; font-weight: 600; margin: 12px 0 7px; }
+@media (max-width: 760px) {
+  .pick-row { grid-template-columns: auto minmax(0, 1fr); }
+  .pick-row .pill { grid-column: 2; justify-self: start; }
+  .skill-grid.wide { grid-template-columns: 1fr; }
+}
+.team-step-more label { min-width: 0; }
+.team-step-more select, .team-step-more input, .team-model-field select, .team-model-field input { width: 100%; min-width: 0; max-width: 100%; text-overflow: ellipsis; }
+
+/* The step the task is waiting to start (or running now), so a quiet step never looks like a hang. */
+.conversation-step.current { color: var(--text); font-weight: 650; }
+.conversation-step.current.waiting i { border-color: var(--warning, #d9a441); box-shadow: 0 0 0 3px color-mix(in srgb, var(--warning, #d9a441) 28%, transparent); }
+.conversation-step.current.running i { border-color: var(--positive); box-shadow: 0 0 0 3px color-mix(in srgb, var(--positive) 28%, transparent); animation: step-pulse 1.4s ease-in-out infinite; }
+@keyframes step-pulse { 50% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--positive) 0%, transparent); } }
+@media (prefers-reduced-motion: reduce) { .conversation-step.current.running i { animation: none; } }
+.task-next.waiting { border-top-color: var(--warning, #d9a441); }
+.task-next.waiting.running { border-top-color: var(--positive); }
+.task-next.waiting .btn { margin-top: 8px; }
+.task-workflow { margin: 8px 0 0; font-size: 13px; color: var(--text); }
+.task-workflow strong { margin-right: 4px; color: var(--muted); font-weight: 600; }
+.task-workflow small { color: var(--muted); font-size: 12.5px; }
+
+/* The chat room grows with what is in it. It used to have a fixed height, so a couple of alert cards
+   and the composer squeezed the messages down to nothing and pushed the buttons out of reach. Now the
+   messages keep a floor, long alerts scroll inside themselves, and the page scrolls to the rest. */
+.task-conversation-room, .task-conversation-room[class] { height: auto; overflow: clip; }
+.conversation-feed { flex: 0 1 auto; min-height: clamp(220px, 34dvh, 380px); max-height: 56dvh; }
+.task-next { max-height: 24dvh; overflow-y: auto; }
+@media (max-width: 760px) {
+  .task-conversation-room { height: auto; }
+  .conversation-feed { min-height: 200px; }
+}
+
+.check-row { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px; }
+.check-row input { width: auto; margin: 0; }
+
+.done-checks { list-style: none; margin: 6px 0 4px; padding: 0; }
+.done-checks li { display: flex; gap: 8px; margin: 4px 0; font-size: 13px; }
+.done-checks li.ok { color: var(--positive); }
+.task-next .note-muted { color: var(--muted); font-size: 12px; }

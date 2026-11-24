@@ -221,6 +221,10 @@ ccc-mcp project delete demo-app   # 互動確認，需輸入 DELETE demo-app
 
 控制台其他功能——列出專案、任務狀態、設定讀取、不涉及派工的設定修改——全部重用 `cli.py`／`interfaces/server.py` 呼叫的同一套 bridge 方法，因此自動繼承上面提到的路徑驗證、symlink 防護與 append-only 稽核紀錄，不存在另一條會漂移的程式碼路徑。
 
+## 給 agent 使用的 MCP 伺服器
+
+除非操作者執行 `ccc-mcp skill install mcp <名稱>`——不加 `--project` 為全域（所有專案），加 `--project <id>` 則只給單一專案；只有明確寫出的 `--project` 才會縮小範圍——否則 agent 一律不帶 MCP。安裝時會驗證指令並記下完整路徑；只有本機 CLI 能安裝（沒有 MCP 工具，`settings.json` 也不是匯入來源），而且三種 provider 都能用：Claude 與 Codex 以啟動時的設定取得，ChatGPT 則透過 `list_installed_mcp_tools`／`call_installed_mcp_tool` 由 ccc-mcp 代為執行，範圍僅限操作者啟用過的伺服器＋工具。已安裝的 MCP 工具不受角色唯讀檔案工具限制，它能做什麼取決於該伺服器，且 Claude 此時不帶 `--safe-mode`（詳見 [Skills](6-skills.md)）。請把安裝 MCP 視為「把它的工具授權給它涵蓋範圍內所有專案的所有角色（全域安裝就是所有專案），包含 ChatGPT PM」。
+
 **Connect 與記住的 runtime 金鑰。** 控制台的「設定」頁走的是跟 `ccc-mcp connect` 相同的流程（`admin tunnels get` → profile `init`／修復 → `doctor --explain` → `tunnel-client run`，共用 `adapters/tunnel_client.prepare_tunnel_connection`），但以背景 subprocess 監督，讓頁面能顯示即時狀態與 log。勾選「記住這台裝置上的金鑰」、明確儲存具名稱的連線設定，或使用 CLI 的 `connect --remember`，會把 runtime Secret Key 寫進 `<home>/tunnel/credentials.json`，POSIX 上 `chmod 600`；只有本機 OS 帳號可讀，並非另行加密的金鑰庫。可儲存多筆名稱與金鑰，同一 Tunnel ID 也可有不同金鑰，但同時間只執行一組連線。網頁輸入的金鑰會送到受 session token 保護的 localhost API，之後僅供 `tunnel-client` 的 `CONTROL_PLANE_API_KEY` 環境變數使用。存檔後不會回傳給瀏覽器；忘記設定只刪除對應紀錄，舊版 CLI 紀錄仍可讀取。
 
 ## 測試涵蓋

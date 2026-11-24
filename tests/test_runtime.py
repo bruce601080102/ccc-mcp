@@ -213,3 +213,82 @@ def test_resolves_bare_sibling_tools_using_runtime_path(tmp_path):
     env = runtime_environment(runtime)
     assert env["PATH"].split(os.pathsep)[0] == str(tmp_path)
     assert resolve_runtime_command(["go", "test"], runtime, env) == [str(tmp_path / "go"), "test"]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="uses shell-script stand-ins for interpreters")
+def test_discovery_lists_installed_interpreters_newest_first_and_ignores_broken_ones(tmp_path, monkeypatch):
+    from ccc_mcp.adapters.runtime import discover_runtimes
+
+    def fake(path, version):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"#!/bin/sh\necho {version}\n")
+        path.chmod(0o755)
+
+    home = tmp_path / "home"
+    fake(home / "miniconda3/envs/stock311/bin/python", "3.11.13")
+    fake(home / "miniconda3/envs/old/bin/python", "3.8.18")
+    fake(home / ".pyenv/versions/3.12.4/bin/python", "3.12.4")
+    broken = home / "miniconda3/envs/broken/bin/python"
+    broken.parent.mkdir(parents=True)
+    broken.write_text("#!/bin/sh\nexit 1\n")
+    broken.chmod(0o755)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("PATH", str(tmp_path / "empty"))
+
+    found = discover_runtimes("python")
+    mine = [e for e in found if e["executable"].startswith(str(home))]
+    assert [e["version"] for e in mine] == ["3.12.4", "3.11.13", "3.8.18"]
+    stock = next(e for e in mine if e["label"] == "conda: stock311")
+    assert (stock["short_version"], stock["source"]) == ("3.11", "conda")
+    assert stock["executable"].endswith("envs/stock311/bin/python")
+    assert not any("broken" in e["executable"] for e in found)
+
+
+def test_discovery_rejects_an_unknown_language():
+    from ccc_mcp.adapters.runtime import discover_runtimes
+    from ccc_mcp.infra.errors import BridgeError
+
+    with pytest.raises(BridgeError, match="Unsupported runtime language"):
+        discover_runtimes("cobol")
+
+
+@pytest.mark.skipif(os.name == "nt", reason="uses shell-script stand-ins for interpreters")
+def test_a_version_alone_finds_an_interpreter_that_is_not_on_path_such_as_a_conda_env(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    python = home / "miniconda3/envs/stock311/bin/python"
+    python.parent.mkdir(parents=True)
+    python.write_text("#!/bin/sh\necho 3.11.13\n")
+    python.chmod(0o755)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("PATH", str(tmp_path / "empty"))
+
+    found = resolve_runtime({"language": "python", "version": "3.11", "executable": None})
+    assert found["available"] and found["matches"]
+    assert found["executable"] == str(python) and found["actual_version"] == "3.11.13"
+    missing = resolve_runtime({"language": "python", "version": "3.99", "executable": None})
+    assert not missing["available"] or not missing["matches"]
+
+
+def test_a_runtime_can_say_to_use_the_environment_as_it_is_without_installing_packages():
+    assert validate_runtime({"language": "python", "version": "3.11", "executable": None}) == {
+        "language": "python", "version": "3.11", "executable": None}
+    kept = validate_runtime({"language": "python", "version": "3.11", "executable": None,
+                             "install_packages": False})
+    assert kept["install_packages"] is False
+    assert "install_packages" not in validate_runtime(
+        {"language": "python", "version": "3.11", "executable": None, "install_packages": True})
+    with pytest.raises(Exception, match="true or false"):
+        validate_runtime({"language": "python", "version": "3.11", "install_packages": "no"})
+
+
+def test_with_install_packages_off_no_environment_is_built_and_the_chosen_python_runs_the_tests(tmp_path):
+    from ccc_mcp.adapters.test_runner import install_dependencies
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "requirements.txt").write_text("definitely-not-a-real-package-xyz==1.0\n")
+    runtime = {"language": "python", "version": None, "executable": sys.executable, "install_packages": False}
+    result = install_dependencies(repo, home=tmp_path / "home", project_id="demo", runtime=runtime)
+    assert result["detected"] is False and result["installed"] is None
+    assert result["venv_scripts_dir"] is None
+    assert not (tmp_path / "home" / "venvs").exists()

@@ -369,3 +369,24 @@ def test_cli_task_handoff_round_trip(bridge, human):
     payload = json.loads(result.output)
     assert payload["execution_id"] == sa_execution
     assert payload["chatgpt_prompt"]
+
+
+def test_a_task_blocked_on_unchecked_files_says_which_files_in_its_brief(bridge, human):
+    import json
+
+    from conftest import dispatch
+
+    from ccc_mcp.worker import run_execution
+
+    bridge.create_task("demo", "change a spec")
+    execution = dispatch(bridge, "SA")["execution_id"]
+    run_execution(bridge, execution)
+    check = {"ok": False, "requires_human_review": [".gitignore", "docs/spec.md"], "violations": []}
+    bridge.store.execute(
+        "UPDATE agent_executions SET result=? WHERE id=?", (json.dumps({"comment_check": check}), execution))
+    bridge.store.execute("UPDATE tasks SET state='BLOCKED' WHERE project_id='demo' AND id='TASK-0001'")
+
+    brief = bridge.get_task_status("demo", "TASK-0001")["brief"]
+    assert brief["comment_review"] == {"violations": [], "needs_human_review": [".gitignore", "docs/spec.md"]}
+    bridge.store.execute("UPDATE tasks SET state='ANALYZING' WHERE project_id='demo' AND id='TASK-0001'")
+    assert bridge.get_task_status("demo", "TASK-0001")["brief"]["comment_review"] is None

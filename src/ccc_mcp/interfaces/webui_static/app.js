@@ -94,6 +94,8 @@
   }
 
   let modalReturnFocus = null;
+  const hostTestKickoff = {}; // task -> when the person started its tests here, until a result shows up
+  let focusRuntime = false; // set by the failed-install help link: scroll to the runtime card after navigating
   function mountModal(overlay) {
     modalReturnFocus = document.activeElement;
     document.body.appendChild(overlay);
@@ -210,8 +212,9 @@
   const rememberProject = (id) => { try { localStorage.setItem(LAST_PROJECT_KEY, id); } catch (e) {} };
   const rememberedProject = () => { try { return localStorage.getItem(LAST_PROJECT_KEY) || ""; } catch (e) { return ""; } };
 
-  // The console has three places: Tasks (every piece of work, grouped), Projects (what ccc-mcp may
-  // touch) and Settings (the connection to ChatGPT and the AI tools). Old addresses still resolve,
+  // The console has four places: Tasks (every piece of work, grouped), Projects (what ccc-mcp may
+  // touch), Skills & MCP (extra guidance and local tools for the AI team) and Settings (the
+  // connection to ChatGPT and the AI tools). Old addresses still resolve,
   // to the page that now holds that content; they never open a second way of doing the same thing.
   function parseRoute() {
     const hash = location.hash.replace(/^#/, "") || "/";
@@ -227,6 +230,7 @@
       return { project, view: "overview" };
     }
     if (parts[0] === "tasks") return { view: "tasks-home" };
+    if (parts[0] === "skills") return { view: "skills" };
     if (parts[0] === "settings" || parts[0] === "connect") return { view: "settings" };
     return { view: "projects" };
   }
@@ -236,6 +240,7 @@
   const ICON = {
     projects: `<svg class="icon" viewBox="0 0 16 16"><path d="M1.5 4.5a1 1 0 0 1 1-1h3l1.2 1.5H13.5a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1v-7.5Z"/></svg>`,
     tasks: `<svg class="icon" viewBox="0 0 16 16"><path d="M3 4.5h10M3 8h10M3 11.5h6"/></svg>`,
+    skills: `<svg class="icon" viewBox="0 0 16 16"><path d="M5.7 2.3a1.3 1.3 0 0 1 2.6 0c0 .5-.3.8-.3 1.3 0 .4.3.7.7.7h1.6a.7.7 0 0 1 .7.7v1.6c0 .4.3.7.7.7.5 0 .8-.3 1.3-.3a1.3 1.3 0 0 1 0 2.6c-.5 0-.8-.3-1.3-.3-.4 0-.7.3-.7.7v1.6a.7.7 0 0 1-.7.7H8.7c-.4 0-.7-.3-.7-.7 0-.5.3-.8.3-1.3a1.3 1.3 0 0 0-2.6 0c0 .5.3.8.3 1.3 0 .4-.3.7-.7.7H3.7a.7.7 0 0 1-.7-.7v-1.6c0-.4-.3-.7-.7-.7-.5 0-.8.3-1.3.3a1.3 1.3 0 0 1 0-2.6c.5 0 .8.3 1.3.3.4 0 .7-.3.7-.7V5c0-.4.3-.7.7-.7h1.6c.4 0 .7-.3.7-.7 0-.5-.3-.8-.3-1.3Z"/></svg>`,
     settings: `<svg class="icon" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.1"/><path d="M8 2v1.6M8 12.4V14M13.3 5.3l-1.3.8M4 9.9l-1.3.8M14 8h-1.6M3.6 8H2M13.3 10.7l-1.3-.8M4 6.1l-1.3-.8"/></svg>`,
     up: `<svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 13V3M4.5 6.5 8 3l3.5 3.5"/></svg>`,
     down: `<svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10m-3.5-3.5L8 13l3.5-3.5"/></svg>`,
@@ -329,6 +334,7 @@
           <div class="brand"><span class="mark">C</span><span>ccc-mcp<small>CONTROL CENTER <span id="app-version" data-no-i18n>${appVersion ? `· v${esc(appVersion)}` : ""}</span></small></span></div>
           <a class="nav-item" data-nav="tasks" href="#/tasks">${ICON.tasks}Tasks<span id="nav-needs-badge" class="nav-badge" hidden></span></a>
           <a class="nav-item" data-nav="projects" href="#/">${ICON.projects}Projects</a>
+          <a class="nav-item" data-nav="skills" href="#/skills">${ICON.skills}Skills &amp; MCP</a>
           <a class="nav-item" data-nav="settings" href="#/settings">${ICON.settings}Settings<span id="nav-connect-dot" class="${dotClass}"></span></a>
           <div class="sidebar-spacer"></div>
           <button type="button" id="theme-toggle" class="nav-item" aria-pressed="${currentTheme() === "dark"}" aria-label="Toggle dark mode">${currentTheme() === "dark" ? ICON.moon : ICON.sun}<span>Dark mode</span><span class="dot${currentTheme() === "dark" ? " on" : ""}"></span></button>
@@ -354,7 +360,7 @@
       });
       UI.localize(root);
     }
-    const active = r.view === "settings" ? "settings" : ["projects", "overview"].includes(r.view) ? "projects" : "tasks";
+    const active = r.view === "settings" ? "settings" : r.view === "skills" ? "skills" : ["projects", "overview"].includes(r.view) ? "projects" : "tasks";
     root.querySelectorAll(".sidebar .nav-item[data-nav]").forEach((item) => item.classList.toggle("active", item.dataset.nav === active));
     const activeNav = root.querySelector(".sidebar .nav-item.active");
     if (activeNav && activeNav.scrollIntoView) activeNav.scrollIntoView({ block: "nearest", inline: "center" });
@@ -628,6 +634,14 @@
     USER: ["user", '<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>'],
   };
   const ROLE_ABBREVIATIONS = { REVIEW: "CR" };
+  // The names the team card uses, so a step on the task page is called what the person set up.
+  const ROLE_TITLES = {
+    SA: "Analyst", SD: "Designer", RD: "Developer", "SD/RD": "Designer and developer in one step",
+    REVIEW: "Code reviewer", SR: "Specification reviewer", AR: "Adversarial reviewer",
+    SEC: "Security reviewer", QA: "Tester", SW: "Specification writer", PA: "Personal assistant",
+    RS: "Researcher", AN: "Data analyst", PL: "Planner", CS: "Consultant", WR: "Writer", ED: "Editor",
+    VC: "Fact checker", RV: "Reviewer",
+  };
   // Everyday roles are shown by what they do, not by an abbreviation.
   const ROLE_FRIENDLY = { PA: "Personal assistant", RS: "Researcher", AN: "Analyst", PL: "Planner", CS: "Consultant", WR: "Writer", ED: "Editor", VC: "Fact checker", RV: "Reviewer", AR: "Strict reviewer" };
   const EVERYDAY_ROLES = ["PA", "RS", "AN", "PL", "CS", "WR", "ED", "VC", "RV"];
@@ -637,6 +651,7 @@
   let customRoleMap = {};
   const isCustomRole = (role) => typeof role === "string" && /^u-[a-z0-9]/.test(role);
   const baseOfRole = (role) => (customRoleMap[role] ? customRoleMap[role].base_role : role);
+  const roleTitle = (role) => customRoleMap[role]?.name || activeRoleNames[role] || (ROLE_TITLES[role] ? UI.translate(ROLE_TITLES[role]) : roleName(role));
   const roleName = (role) => customRoleMap[role]?.name || activeRoleNames[role] || (ROLE_FRIENDLY[role] ? UI.translate(ROLE_FRIENDLY[role]) : ROLE_ABBREVIATIONS[role] || role);
   const roleAvatarTone = (role) => (ROLE_AVATARS[baseOfRole(role)] || ROLE_AVATARS.SA)[0];
   // Replace the registry of the project's custom roles; their declared abilities join the chart maths.
@@ -724,7 +739,7 @@
     return (spriteCache[id] = `<svg class="role-sprite" viewBox="0 0 14 14" shape-rendering="crispEdges" aria-hidden="true">${rects.join("")}</svg>`);
   };
 
-  const chatParticipants = (roles) => [...(roles || ["SA", "SD/RD", "REVIEW"]), "PM"].map((role) => `<span class="chat-avatar av-${roleAvatarTone(role)}" title="${esc(roleName(role))}">${roleAvatarIcon(role).replace('width="18" height="18"', 'width="15" height="15"')}</span>`).join("");
+  const chatParticipants = (roles) => [...(roles || ["SA", "SD/RD", "REVIEW"]), "PM"].map((role) => `<span class="chat-avatar av-${roleAvatarTone(role)}" title="${esc(roleTitle(role))}">${roleAvatarIcon(role).replace('width="18" height="18"', 'width="15" height="15"')}</span>`).join("");
   const PAGE_ICONS = {
     profile: '<path d="m12 2 10 5-10 5L2 7z"/><path d="m2 17 10 5 10-5"/><path d="m2 12 10 5 10-5"/>',
     roles: '<circle cx="9" cy="7" r="4"/><path d="M2 21v-2a4 4 0 0 1 4-4h6a4 4 0 0 1 4 4v2"/><path d="M16 3.1a4 4 0 0 1 0 7.8"/><path d="M22 21v-2a4 4 0 0 0-3-3.9"/>',
@@ -774,12 +789,8 @@
             <input type="text" id="test-command" class="mono" value="${esc((overview.editable.test_command || []).join(" "))}" placeholder="e.g. python -m pytest -q" aria-label="${esc(UI.translate("Test command"))}" />
             <div class="hint">Leave blank to test changed Python test files automatically. Goals that run on their own need a command here.</div>
           </div>`, `<button class="btn small primary" id="save-test-command">Save</button>`)}
-        ${pageCard("language", "Language", "The language the AI team writes its reports in.",
-          `<div class="field narrow-field"><select id="language-select" aria-label="${esc(UI.translate("Language"))}">
-            ${[["zh-TW", "繁體中文"], ["ch", "简体中文"], ["en", "English"]].map(([l, name]) => `<option value="${l}" ${overview.editable.language === l ? "selected" : ""} data-no-i18n>${name}</option>`).join("")}
-          </select></div>`, `<button class="btn small primary" id="save-language">Save</button>`)}
-        <details class="settings-more"><summary>${esc(UI.translate("Runtime for tests (advanced)"))}</summary>
-        ${pageCard("runtime", "Project runtime", "Choose the language and installed runtime used for this project's code and tests.",
+        <div id="project-runtime">
+        ${pageCard("runtime", "Language and version for tests", "Choose which programming language and version the host uses to install packages and run this project's tests. Leave the language on the default to use ccc-mcp's own Python.",
           `<div class="settings-grid">
             <div class="field">
               <label for="runtime-language">Programming language</label>
@@ -789,19 +800,34 @@
               </select>
             </div>
             <div class="field">
+              <label for="runtime-found">Installed on this computer</label>
+              <select id="runtime-found" disabled><option value="">${esc(UI.translate("Pick a language first"))}</option></select>
+              <div class="hint" id="runtime-scan-note" role="status" aria-live="polite"></div>
+            </div>
+          </div>
+          <div class="settings-grid">
+            <div class="field">
               <label for="runtime-version">Runtime version</label>
               <input type="text" id="runtime-version" value="${esc(runtime.version)}" placeholder="e.g. 3.9 or 22.14.0" autocomplete="off" />
               <div class="hint">3.9 accepts any 3.9.x patch. JavaScript and TypeScript use the Node.js version.</div>
             </div>
+            <div class="field">
+              <label for="runtime-executable">Local executable (optional)</label>
+              <input type="text" id="runtime-executable" class="mono" value="${esc(runtime.executable)}" placeholder="e.g. C:/Python39/python.exe" autocomplete="off" />
+              <div class="hint">Absolute executable path or command name, without arguments. Leave empty to find an installed runtime.</div>
+            </div>
           </div>
           <div class="field">
-            <label for="runtime-executable">Local executable (optional)</label>
-            <input type="text" id="runtime-executable" class="mono" value="${esc(runtime.executable)}" placeholder="e.g. C:/Python39/python.exe" autocomplete="off" />
-            <div class="hint">Absolute executable path or command name, without arguments. Leave empty to find an installed runtime.</div>
+            <label class="check-row"><input type="checkbox" id="runtime-install" ${runtime.install_packages === false ? "" : "checked"} /> ${esc(UI.translate("Install the project's packages before testing"))}</label>
+            <div class="hint">${esc(UI.translate("Turn this off to use the packages already installed in the chosen environment, for example a conda environment you set up yourself. Nothing is installed or built."))}</div>
           </div>
           <div id="runtime-status" class="hint settings-status" role="status" aria-live="polite"></div>`,
-          `<button class="btn small" id="check-runtime">Check local version</button><button class="btn small primary" id="save-runtime">Save runtime</button>`)}
-        </details>`;
+          `<button class="btn small" id="rescan-runtime">Scan this computer</button><button class="btn small" id="check-runtime">Check local version</button><button class="btn small primary" id="save-runtime">Save runtime</button>`)}
+        </div>
+        ${pageCard("language", "Language", "The language the AI team writes its reports in.",
+          `<div class="field narrow-field"><select id="language-select" aria-label="${esc(UI.translate("Language"))}">
+            ${[["zh-TW", "繁體中文"], ["ch", "简体中文"], ["en", "English"]].map(([l, name]) => `<option value="${l}" ${overview.editable.language === l ? "selected" : ""} data-no-i18n>${name}</option>`).join("")}
+          </select></div>`, `<button class="btn small primary" id="save-language">Save</button>`)}`;
   }
 
   // A role that came in with an imported backup stays off until a person trusts it, here, by typing the
@@ -855,14 +881,61 @@
       language: language.value,
       version: document.getElementById("runtime-version").value.trim() || null,
       executable: document.getElementById("runtime-executable").value.trim() || null,
+      ...(document.getElementById("runtime-install").checked ? {} : { install_packages: false }),
     } : null);
     const fieldsChanged = () => {
       document.getElementById("runtime-version").disabled = !language.value;
       document.getElementById("runtime-executable").disabled = !language.value;
+      document.getElementById("runtime-install").disabled = !language.value;
       status.textContent = "";
     };
     fieldsChanged();
-    language.onchange = fieldsChanged;
+    // Looking at what is installed is read-only; typing a version and path by hand always still works.
+    const versionInput = document.getElementById("runtime-version");
+    const executableInput = document.getElementById("runtime-executable");
+    const found = document.getElementById("runtime-found");
+    const scanNote = document.getElementById("runtime-scan-note");
+    let scanned = [];
+    const syncFound = () => {
+      const index = scanned.findIndex((r) => r.executable === executableInput.value.trim());
+      found.value = index >= 0 ? String(index) : "";
+    };
+    const renderFound = () => {
+      found.innerHTML = `<option value="">${esc(UI.translate("Enter manually"))}</option>` +
+        scanned.map((r, i) => `<option value="${i}" title="${esc(r.executable)}" data-no-i18n>${esc(r.version)} · ${esc(r.label)}</option>`).join("");
+      syncFound();
+    };
+    const scan = async () => {
+      if (!language.value) {
+        scanned = [];
+        found.innerHTML = `<option value="">${esc(UI.translate("Pick a language first"))}</option>`;
+        found.disabled = true;
+        scanNote.textContent = "";
+        return;
+      }
+      scanNote.textContent = UI.translate("Scanning this computer…");
+      try {
+        const data = await api(`/runtimes/discover?language=${encodeURIComponent(language.value)}`);
+        if (stale(gen)) return;
+        scanned = data.runtimes || [];
+        renderFound();
+        found.disabled = false;
+        scanNote.textContent = scanned.length
+          ? `${UI.translate("Found on this computer")}: ${scanned.length}`
+          : UI.translate("Nothing found. Type the version and path yourself.");
+      } catch (err) { if (!stale(gen)) scanNote.textContent = UI.error(err.message, err.status); }
+    };
+    found.onchange = () => {
+      const picked = scanned[Number(found.value)];
+      if (found.value === "" || !picked) return;
+      versionInput.value = picked.short_version;
+      executableInput.value = picked.executable;
+      status.textContent = "";
+    };
+    executableInput.addEventListener("input", syncFound);
+    document.getElementById("rescan-runtime").onclick = scan;
+    language.onchange = () => { versionInput.value = ""; executableInput.value = ""; fieldsChanged(); scan(); };
+    scan();
     document.getElementById("save-runtime").onclick = async (event) => {
       const button = event.currentTarget;
       button.disabled = true;
@@ -1050,6 +1123,10 @@
       });
     });
     if (settings) bindProjectSettings(id, gen, settings);
+    if (focusRuntime) {
+      focusRuntime = false;
+      document.getElementById("project-runtime")?.scrollIntoView({ block: "start" });
+    }
     bindPendingRoles(id, pendingRoles, () => {
       const section = document.getElementById("pending-team-roles");
       if (!section?.querySelector("[data-review-role]")) section?.remove();
@@ -1134,9 +1211,29 @@
   }
 
   // Short, readable facts pulled from a host-test result; everything else stays in the raw data.
+  // The host could not install the project's packages, so no test ever ran.
+  function setupFailed(detail) {
+    const deps = detail && detail.dependencies;
+    return Boolean(deps && deps.detected && deps.installed === false);
+  }
+
+  function setupErrorTail(detail) {
+    const lines = String((detail.dependencies || {}).stderr || "").split("\n").map((line) => line.trim()).filter(Boolean);
+    return lines.slice(-6).join("\n").slice(-600);
+  }
+
   function hostTestFacts(detail) {
     if (!detail) return [];
     const facts = [];
+    if (setupFailed(detail)) {
+      facts.push(["Result", statusPill("negative", "Test environment setup failed"), "status"]);
+      const projectId = (location.hash.match(/#\/p\/([^/]+)\//) || [])[1];
+      if (projectId) facts.push(["Fix", `<a class="btn small primary" href="#/p/${projectId}/overview" data-focus-runtime>${esc(UI.translate("Open the language and version setting"))}</a>`, "status"]);
+      facts.push(["Reason", UI.translate("The host could not install this project's packages, so no test was run. This is usually a package that does not support the Python version in use. Set the project's runtime (Project settings, Runtime for tests) to the Python version the project needs, then run the tests again.")]);
+      const tail = setupErrorTail(detail);
+      if (tail) facts.push(["Last installer message", tail, "code"]);
+      return facts;
+    }
     if (!detail.executed_by_host) facts.push(["Result", statusPill("warning", "Not verified"), "status"]);
     else if (detail.no_tests_collected) facts.push(["Result", statusPill("warning", "No tests collected"), "status"]);
     else facts.push(["Result", detail.passed ? statusPill("positive", "Host tests passed") : statusPill("negative", "Host tests failed"), "status"]);
@@ -1191,6 +1288,7 @@
     UI.localize(overlay);
     overlay.addEventListener("click", (click) => { if (click.target === overlay) closeModal(); });
     overlay.querySelector("#task-detail-close").addEventListener("click", closeModal);
+    overlay.querySelector("[data-focus-runtime]")?.addEventListener("click", () => { focusRuntime = true; closeModal(); });
   }
 
   function bindChatDetailButtons(events) {
@@ -1203,11 +1301,12 @@
 
   function taskChatItem(event, latestCreate, typingIds) {
     const type = event.event_type;
-    const isUser = type === "task_created" || type === "user_message";
+    const closedByUserEvent = type === "task_completed" && /^Closed by the user/.test(event.summary || "");
+    const isUser = type === "task_created" || type === "user_message" || closedByUserEvent;
     const isAgent = ["agent_started", "agent_completed", "agent_failed", "role_returned"].includes(type);
-    const isPm = type === "task_completed";
+    const isPm = type === "task_completed" && !closedByUserEvent;
     const role = isUser ? "You" : isPm ? "PM" : event.role || "ccc-mcp";
-    const label = isUser ? (type === "task_created" ? "Your request" : "Your correction") :
+    const label = isUser ? (type === "task_created" ? "Your request" : closedByUserEvent ? "Your decision" : "Your correction") :
       isAgent || isPm ? TASK_ROLE_LABELS[role] || "Work complete" :
       type === "host_test_completed" ? "Host tests" :
       type === "pause_requested" ? "Pause requested" :
@@ -1217,7 +1316,9 @@
       type === "task_cancelled" ? "Task stopped" : "System update";
     let summary = event.summary || "";
     if (type === "agent_started") summary = "Execution dispatched; waiting for the result.";
-    if (type === "task_completed") summary = event.legacy ?
+    const closedNote = closedByUserEvent ? (event.summary || "").replace(/^Closed by the user:?\s*/, "") : "";
+    if (closedByUserEvent) summary = UI.translate("You closed this task. It was not verified by host tests.") + (closedNote ? `\n${UI.translate("Your note:")} ${closedNote}` : "");
+    else if (type === "task_completed") summary = event.legacy ?
       "This work round completed. Restart the UI server to view the saved test evidence." :
       (activeTouchesCode ? "This work round completed. Review the host test evidence below before accepting the result." : "This work round completed. Open the Results tab to read what each step produced.");
     if (type === "task_cancelled") summary = "No further work will be dispatched. Existing file changes were not rolled back.";
@@ -1230,10 +1331,13 @@
     if (type === "host_test_completed") {
       summary = event.detail?.executed_by_host ?
         (event.detail.no_tests_collected ? "The host ran the test command but collected no tests, so nothing was verified." :
-          event.detail.passed ? "The host ran the test command and it passed." : "The host ran the test command and it failed.") :
+          event.detail.passed ? "The host ran the test command and it passed." :
+            setupFailed(event.detail) ? "The test environment could not be set up, so no test was run." : "The host ran the test command and it failed.") :
         `${UI.translate("Host verification is not complete:")} ${event.detail?.reason || UI.translate("no test was run")}`;
     }
     if (type === "agent_failed" && !summary) summary = "This execution ended without a verified result.";
+    // Known failure reasons are explained in plain words instead of the raw English error.
+    if (summary && /possible secret detected|execution timed out|stopped by user|execution cancelled|executable unavailable/i.test(summary)) summary = UI.error(summary);
     const details = type !== "role_returned" && (event.detail || event.evidence_refs?.length || event.context_version) ? `<button class="chat-detail-trigger" type="button" data-chat-detail="${esc(event.event_id)}">${esc(UI.translate("View technical details"))} <span aria-hidden="true">↗</span></button>` : "";
     const date = event.timestamp ? new Date(event.timestamp).toLocaleString(UI.getLocale()) : "";
     if (type === "host_test_completed") {
@@ -1252,7 +1356,7 @@
     if (!isUser && !isPm) rememberEventRole(event);
     const speaker = isUser ? "USER" : (!isPm && event.role_ref) || role;
     const avatar = `<div class="chat-avatar av-${roleAvatarTone(speaker)}" aria-hidden="true">${roleAvatarIcon(speaker)}</div>`;
-    const speakerName = isUser ? UI.translate("You") : (!isPm && event.role_name && (event.role_ref ? event.role_name : UI.translate(event.role_name))) || roleName(speaker);
+    const speakerName = isUser ? UI.translate("You") : (!isPm && event.role_name && (event.role_ref ? event.role_name : UI.translate(event.role_name))) || roleTitle(speaker);
     if (type === "agent_started" && typingIds && typingIds.has(event.execution_id)) {
       return `<article class="chat-post is-typing" data-event-id="${esc(event.event_id)}">
         ${avatar}
@@ -1492,23 +1596,89 @@
     const brief = status.brief || {};
     const control = brief.control || { status: "ACTIVE" };
     const terminal = ["COMPLETED", "CANCELLED", "REJECTED"].includes(status.state);
-    const displayState = control.status !== "ACTIVE" ? control.status : status.state;
-    const stateTone = ["FAILED", "BLOCKED", "CANCELLED", "STOPPING"].includes(displayState) ? "negative" :
+    // BLOCKED because ccc-mcp could not confirm some changed files' comments is a request for a look,
+    // not a failure; say so instead of the alarming "Blocked".
+    const review = status.brief?.comment_review;
+    const commentReview = review && (review.violations?.length || review.needs_human_review?.length) ? review : null;
+    const closedByUser = status.state === "COMPLETED" && (timeline.events || []).some((e) => e.event_type === "task_completed" && /^Closed by the user/.test(e.summary || ""));
+    const displayState = control.status !== "ACTIVE" ? control.status : closedByUser ? "CLOSED_BY_USER" : commentReview && status.state === "BLOCKED" ? "NEEDS_CONFIRMATION" : status.state;
+    const stateTone = ["FAILED", "BLOCKED", "CANCELLED", "STOPPING"].includes(displayState) ? "negative" : displayState === "NEEDS_CONFIRMATION" ? "warning" :
       ["COMPLETED"].includes(displayState) ? "positive" : "warning";
     const events = timeline.events || [];
     const typingIds = new Set((status.executions || []).filter((e) => ["RUNNING", "QUEUED"].includes(e.status)).map((e) => e.id));
     const doneRoles = new Set(events.filter((e) => e.event_type === "agent_completed").map((e) => e.role));
     const workflow = brief.workflow || {};
     const flowSteps = Array.isArray(workflow.steps) ? workflow.steps : null;
-    const flowDone = (index) => status.state === "COMPLETED" || (workflow.current_step != null &&
-      (index < workflow.current_step || (index === workflow.current_step && workflow.current_step_done)));
-    const steps = flowSteps ? flowSteps.map((role, index) => [roleName(role), flowDone(index)]) : [
+    // Step rows exist for tasks on the step engine; older tasks only have their executions to go by.
+    const flowDone = (index) => status.state === "COMPLETED" || (workflow.current_step != null
+      ? (index < workflow.current_step || (index === workflow.current_step && workflow.current_step_done))
+      : Boolean(flowSteps) && doneRoles.has(flowSteps[index]));
+    const steps = flowSteps ? flowSteps.map((role, index) => [roleTitle(role), flowDone(index)]) : [
       ["Analysis", doneRoles.has("SA")],
       ["Development", ["SD", "RD", "SD/RD"].some((r) => doneRoles.has(r))],
       ["Host tests", events.some((e) => e.event_type === "host_test_completed" && e.detail?.executed_by_host)],
       ["Review", doneRoles.has("REVIEW")],
     ];
+    // Who has the ball. After a step finishes nothing runs until ChatGPT (the PM) says go on; saying that
+    // plainly is what keeps "SD has not started" from looking like a hang.
+    const runningExecution = (status.executions || []).find((e) => ["RUNNING", "QUEUED"].includes(e.status));
+    // A role that is running right now outranks an old "the next step was never started" record, so the
+    // typing indicator and the card below it can never disagree.
+    const waitingOn = handoff.waiting_on === "DISPATCH_RETRY_NEEDED" && runningExecution ? "AGENT_RUNNING" : handoff.waiting_on;
+    const runningIndex = flowSteps && runningExecution ? flowSteps.indexOf(runningExecution.role_ref || runningExecution.role) : -1;
+    const upcomingIndex = waitingOn === "AGENT_RUNNING" && runningIndex >= 0 ? runningIndex
+      : flowSteps ? flowSteps.findIndex((_, index) => !flowDone(index)) : -1;
+    const upcomingRole = upcomingIndex >= 0 ? roleTitle(flowSteps[upcomingIndex]) : "";
+    const finishedRole = upcomingIndex > 0 ? roleTitle(flowSteps[upcomingIndex - 1]) : "";
+    const waitingKind = terminal || control.paused ? "" : ({
+      PM_DECISION: "pm", PM_REFINEMENT: "pm", PM_CLARIFICATION_DECISION: "question",
+      CHATGPT_HANDOFF_PENDING: "handoff", DISPATCH_RETRY_NEEDED: "retry", AGENT_RUNNING: "running",
+    })[waitingOn] || "";
+    const fill = (text, values) => Object.entries(values).reduce((out, [key, value]) => out.replaceAll(`{${key}}`, value), UI.translate(text));
+    const waitingNote = !waitingKind ? null : {
+      pm: [finishedRole && upcomingRole ? fill("Waiting for ChatGPT (the PM) to start {next}", { next: upcomingRole }) : "Waiting for ChatGPT (the PM)",
+        `${finishedRole ? `${fill("{done} has finished.", { done: finishedRole })} ` : ""}${UI.translate("Nothing is running right now. ccc-mcp does not start the next step by itself: ChatGPT reviews the result and tells it to go on. Open your ChatGPT conversation and ask it to continue.")}`],
+      question: ["ChatGPT needs to answer a question first", "A role asked something only the PM can answer. Ask ChatGPT to answer it so the work can go on."],
+      handoff: [upcomingRole ? fill("ChatGPT has to do {role} itself", { role: upcomingRole }) : "ChatGPT has to do the next step itself", "Open your ChatGPT conversation: it writes the result and reports it back here."],
+      retry: [upcomingRole ? fill("{role} did not start", { role: upcomingRole }) : "The next step did not start", "The hand-over to the next step was interrupted, so nothing is running. You can start it again here."],
+      running: [upcomingRole ? fill("{role} is working now", { role: upcomingRole }) : "A role is working now", "It runs in the background. This page updates by itself."],
+    }[waitingKind];
     const driftSteps = (data.contract?.steps || []).filter((step) => step.status === "incompatible" && !step.accepted);
+    const removedFiles = commentReview?.violations || [];
+    const unverifiedFiles = commentReview?.needs_human_review || [];
+    const fileList = (files) => `<p class="mono" data-no-i18n>${files.map(esc).join("<br>")}</p>`;
+    const reviewCard = commentReview ? `<div class="task-next waiting handoff"><strong>${esc(UI.translate(removedFiles.length ? "Some existing comments were removed" : "Some changed files need your look"))}</strong>${removedFiles.length ? `<p>${esc(UI.translate("A Python comment that was there before is gone from:"))}</p>${fileList(removedFiles)}<p>${esc(UI.translate("Ask the developer to redo it and keep the original comments: pick Developer below and write which file."))}</p>` : ""}${unverifiedFiles.length ? `<p>${esc(UI.translate(removedFiles.length ? "ccc-mcp cannot check these changed files, so a person has to look:" : "ccc-mcp can only check that Python comments were kept. It cannot check these changed files, so it paused for a person to look:"))}</p>${fileList(unverifiedFiles)}` : ""}${removedFiles.length ? "" : `<p>${esc(UI.translate("Open the Results tab to see what changed. If it is fine, ask ChatGPT to carry on with the next step."))}</p>`}</div>` : "";
+    // Nothing else runs the host tests when the PM skipped that step, so the page can start them: no
+    // terminal, no copying a script. Offered once a developer step is done and until a run passes.
+    const hostTestEvents = events.filter((e) => e.event_type === "host_test_completed");
+    const lastHostTest = hostTestEvents[hostTestEvents.length - 1];
+    const testsPassed = Boolean(lastHostTest?.detail?.executed_by_host && lastHostTest.detail.passed && !lastHostTest.detail.no_tests_collected);
+    const finalState = ["COMPLETED", "CANCELLED", "FAILED", "REJECTED"].includes(status.state);
+    const developerDone = ["SD", "RD", "SD/RD"].some((role) => doneRoles.has(role));
+    const kickedAt = hostTestKickoff[`${id}/${taskId}`];
+    // The server says whether tests are running (so a reload or a second tab agrees); the click time only
+    // covers the moment before the server has recorded it.
+    const testsRunning = Boolean(control.host_test_running || (kickedAt && Date.now() - kickedAt < 20000 && (!lastHostTest || Date.parse(lastHostTest.timestamp || 0) < kickedAt)));
+    const testStage = control.host_test_stage ? { installing: "Installing the packages the project needs. The first run takes longer, often a few minutes.", testing: "Running the tests now.", starting: "Getting ready." }[control.host_test_stage] : "";
+    const testStarted = control.host_test_started ? new Date(control.host_test_started).toLocaleTimeString(UI.getLocale()) : "";
+    const canRunTests = !control.stop_requested && !control.paused;
+    // What still stands between this task and "done", in plain words. "PM" is ChatGPT, not the person
+    // reading this, so their own OK, or a test they ran by hand, is not something ccc-mcp can count.
+    const completions = events.filter((e) => e.event_type === "agent_completed");
+    const lastCompletion = (roles) => { for (let i = completions.length - 1; i >= 0; i--) if (roles.includes(completions[i].role)) return i; return -1; };
+    const lastDeveloper = lastCompletion(["SD", "RD", "SD/RD"]);
+    const lastReview = lastCompletion(["REVIEW"]);
+    const reviewedLatest = lastDeveloper >= 0 && lastReview > lastDeveloper;
+    const reviewWantsFix = reviewedLatest && Boolean(completions[lastReview].detail?.report?.needs_revision);
+    const reviewPassed = reviewedLatest && !reviewWantsFix;
+    const testCardState = developerDone && !finalState ? `${testsPassed ? 1 : 0}${reviewPassed ? 1 : 0}${reviewWantsFix ? "f" : ""}${testsRunning ? "r" : ""}${lastHostTest ? "t" : ""}` : "";
+    const showRunButton = !testsPassed && !testsRunning && canRunTests && !runningExecution;
+    const checkItems = [
+      [testsPassed, testsPassed ? "The host tests passed" : testsRunning ? "The host tests are running" : lastHostTest ? "The last host test run did not pass" : "The host tests have not been run yet. A test you ran yourself in a terminal does not count."],
+      [reviewPassed, reviewPassed ? "The reviewer passed the latest changes" : reviewWantsFix ? "The reviewer asked for more changes" : "The reviewer has not looked at the latest changes yet"],
+      [false, "ChatGPT (the PM) records the result in the project"],
+    ];
+    const testCard = testCardState ? `<div class="task-next waiting ${testsRunning ? "running" : "handoff"}"><strong>${esc(UI.translate("What is still missing before this task can finish"))}</strong><ul class="done-checks">${checkItems.map(([ok, text]) => `<li class="${ok ? "ok" : "todo"}"><span aria-hidden="true">${ok ? "✓" : "○"}</span><span>${esc(UI.translate(text))}</span></li>`).join("")}</ul>${testsRunning ? `<p>${esc(UI.translate(testStage || "Getting ready."))}${testStarted ? ` <small>${esc(UI.translate("Started at"))} ${esc(testStarted)}</small>` : ""}</p>` : ""}${showRunButton ? `<button class="btn small primary" type="button" id="task-run-tests">${esc(UI.translate("Run host tests"))}</button> ` : ""}<button class="btn small" type="button" data-close-task>${esc(UI.translate("Close the task anyway"))}</button><p class="note-muted">${esc(UI.translate("\"PM\" means ChatGPT, not you. Your own OK does not finish the task: ccc-mcp needs the test and review results above."))}</p></div>` : "";
     const driftCard = driftSteps.length && !terminal ? `<div class="task-next drift-card" role="alert"><strong>${esc(UI.translate("A fixed rule changed for this task"))}</strong>
       <p>${esc(UI.translate("Work stopped before the next step because ccc-mcp's own fixed rules changed in a way that may change what a custom role means. Nothing was run. Review the change, then accept it for this task or stop the task."))}</p>
       <ul class="drift-steps">${driftSteps.map((step) => `<li><span class="pill warning" data-no-i18n>${esc(step.name)}</span> <small class="mono">${esc(step.step_id)}</small> <button class="btn small primary" type="button" data-drift-review="${esc(step.step_id)}">${esc(UI.translate("Review the change"))}</button></li>`).join("")}</ul></div>` : "";
@@ -1521,11 +1691,17 @@
         <button class="btn small" type="button" data-gate-decision="retry">${esc(UI.translate("Send back once more"))}</button>
         <button class="btn small danger" type="button" data-gate-decision="stop">${esc(UI.translate("Stop task"))}</button>
       </div></div>` : "";
+    const selectionNote = {
+      fixed: "The project's chosen workflow", pm: "Picked by ChatGPT (the PM) for this task",
+      auto: "Picked by ccc-mcp from the task text", goal_plan: "Set by the goal's plan",
+    }[workflow.selected_by];
+    const workflowLine = workflow.name ? `<p class="task-workflow"${workflow.reason ? ` title="${esc(workflow.reason)}"` : ""}><strong>${esc(UI.translate("Workflow"))}</strong> <span data-no-i18n>${esc(UI.translate(workflow.name))}</span>${selectionNote ? ` <small>· ${esc(UI.translate(selectionNote))}</small>` : ""}</p>` : "";
     const canMessage = !terminal && !control.stop_requested;
     const pauseButton = canMessage ?
       `<button class="btn small" id="task-pause-resume">${esc(UI.translate(control.paused ? "Continue work" : "Pause work"))}</button>` : "";
     const canCompose = flowSteps ? !["CANCELLED", "REJECTED"].includes(status.state) && !control.stop_requested : canMessage;
     const restartDefault = workflow.current_step != null ? workflow.current_step : (flowSteps ? flowSteps.length - 1 : 0);
+    const closeButton = !["COMPLETED", "CANCELLED", "REJECTED"].includes(status.state) && !control.stop_requested ? `<button class="btn small" id="task-close" type="button" title="${esc(UI.translate("End this task as finished, by your own decision"))}">${esc(UI.translate("Close task"))}</button>` : "";
     const stopButton = canMessage ? `<button class="btn small danger" id="task-stop">${esc(UI.translate("Stop task"))}</button>` : "";
     const deleteButton = REMOVABLE_STATES.has(status.state) ? `<button class="btn small danger" id="task-delete">${esc(UI.translate("Delete task"))}</button>` : "";
     const diffRows = artifacts.filter((a) => a.path.endsWith("/CHANGES.diff"));
@@ -1543,17 +1719,18 @@
       events, control, canMessage: canCompose, restartable: Boolean(flowSteps), terminal, typing: typingIds.size > 0,
       signature: taskSignature(status, timeline),
       pill: { text: UI.translate(displayState), tone: stateTone },
-      actions: `${pauseButton}${stopButton}${deleteButton}`,
+      actions: `${pauseButton}${closeButton}${stopButton}${deleteButton}`,
       steps: steps.map(([, done]) => done),
-      nextText: handoff.next_action && !terminal ? handoff.next_action + (gateDecision ? `|${gateDecision.escalation_id}` : "") + (driftSteps.length ? `|drift:${driftSteps.map((step) => step.step_id).join(",")}` : "") : "",
-      hasGateDecision: Boolean(gateDecision) || driftSteps.length > 0,
+      nextText: (testCard ? `tests:${testCardState}:${control.host_test_stage || ""}|` : "") + (waitingNote ? `waiting:${waitingKind}:${upcomingIndex}|` : "") + (handoff.next_action && !terminal ? handoff.next_action + (gateDecision ? `|${gateDecision.escalation_id}` : "") + (driftSteps.length ? `|drift:${driftSteps.map((step) => step.step_id).join(",")}` : "") : ""),
+      hasGateDecision: Boolean(gateDecision) || driftSteps.length > 0 || Boolean(waitingNote) || Boolean(testCard) || Boolean(reviewCard),
       workflowRoles: flowSteps ? [...new Set(flowSteps)] : null,
-      head: `<div><a class="task-back" href="#/p/${encodeURIComponent(id)}/tasks">← ${esc(UI.translate("Back to tasks"))}</a><h1>${esc(UI.translate("Task discussion"))}</h1><div class="task-identifiers"><span>${esc(id)}</span><span class="mono">${esc(taskId)}</span><span class="pill ${stateTone}">${esc(UI.translate(displayState))}</span></div></div><div class="task-head-actions">${pauseButton}${stopButton}${deleteButton}</div>`,
-      progress: steps.map(([name, done]) => `<span class="conversation-step ${done ? "done" : ""}"><i aria-hidden="true"></i>${esc(UI.translate(name))}</span>`).join(""),
+      head: `<div><a class="task-back" href="#/p/${encodeURIComponent(id)}/tasks">← ${esc(UI.translate("Back to tasks"))}</a><h1>${esc(UI.translate("Task discussion"))}</h1><div class="task-identifiers"><span>${esc(id)}</span><span class="mono">${esc(taskId)}</span><span class="pill ${stateTone}">${esc(UI.translate(displayState))}</span></div>${workflowLine}</div><div class="task-head-actions">${pauseButton}${closeButton}${stopButton}${deleteButton}</div>`,
+      current: waitingKind && upcomingIndex >= 0 ? upcomingIndex : -1, currentKind: waitingKind === "running" ? "running" : "waiting",
+      progress: steps.map(([name, done], index) => `<span class="conversation-step ${done ? "done" : ""}${waitingKind && index === upcomingIndex ? (waitingKind === "running" ? " current running" : " current waiting") : ""}"${waitingKind && index === upcomingIndex && waitingNote ? ` title="${esc(UI.translate(waitingNote[0]))}"` : ""}><i aria-hidden="true"></i>${esc(UI.translate(name))}</span>`).join(""),
       feed: taskConversation(events, typingIds),
       paused: Boolean(control.paused && canMessage),
-      restartPicker: flowSteps ? `<fieldset class="restart-picker" ${canCompose ? "" : "disabled"}><legend>${esc(UI.translate("Who should redo it?"))}</legend><div class="restart-chips">${flowSteps.map((role, index) => `<label class="restart-chip"><input type="radio" name="restart-step" value="${index}" data-role="${esc(role)}" ${index === restartDefault ? "checked" : ""}><span class="restart-chip-body"><span class="chat-avatar av-${roleAvatarTone(role)}" aria-hidden="true">${roleAvatarIcon(role).replace('width="18" height="18"', 'width="16" height="16"')}</span><span class="restart-chip-name"><i>${index + 1}</i><span data-no-i18n>${esc(roleName(role))}</span></span></span></label>`).join("")}</div></fieldset>` : "",
-      next: driftCard + (gateCard || (handoff.next_action && !terminal ? `<div class="task-next ${control.paused ? "paused" : ""}"><strong>${esc(UI.translate(control.paused ? "Paused: waiting for you" : "Next step"))}</strong><p>${esc(UI.system(handoff.next_action, "Details are available in the technical record."))}</p>${control.paused && canMessage ? `<button class="btn small primary" type="button" id="task-resume-inline">${esc(UI.translate("Continue work"))}</button>` : ""}</div>` : "")),
+      restartPicker: flowSteps ? `<fieldset class="restart-picker" ${canCompose ? "" : "disabled"}><legend>${esc(UI.translate("Who should redo it?"))}</legend><div class="restart-chips">${flowSteps.map((role, index) => `<label class="restart-chip"><input type="radio" name="restart-step" value="${index}" data-role="${esc(role)}" ${index === restartDefault ? "checked" : ""}><span class="restart-chip-body"><span class="chat-avatar av-${roleAvatarTone(role)}" aria-hidden="true">${roleAvatarIcon(role).replace('width="18" height="18"', 'width="16" height="16"')}</span><span class="restart-chip-name"><i>${index + 1}</i><span data-no-i18n>${esc(roleTitle(role))}</span></span></span></label>`).join("")}</div></fieldset>` : "",
+      next: driftCard + reviewCard + testCard + (gateCard || (waitingNote ? `<div class="task-next waiting ${waitingKind}"><strong>${esc(UI.translate(waitingNote[0]))}</strong><p>${esc(UI.translate(waitingNote[1]))}</p>${waitingKind === "retry" && canMessage ? `<button class="btn small primary" type="button" id="task-resume-dispatch">${esc(UI.translate("Start it again"))}</button>` : ""}</div>` : handoff.next_action && !terminal ? `<div class="task-next ${control.paused ? "paused" : ""}"><strong>${esc(UI.translate(control.paused ? "Paused: waiting for you" : "Next step"))}</strong><p>${esc(UI.system(handoff.next_action, "Details are available in the technical record."))}</p>${control.paused && canMessage ? `<button class="btn small primary" type="button" id="task-resume-inline">${esc(UI.translate("Continue work"))}</button>` : ""}</div>` : "")),
       results: `${deliverableCard}${touchesCode ? `<section class="task-result-grid">
       <div class="task-result-card"><h2>${esc(UI.translate("Changed files and diff"))}</h2>${latestDiff ? `<pre class="mono task-diff">${esc(latestDiff.content || "")}</pre>` : `<p class="muted">${esc(UI.translate("No saved diff yet."))}</p>`}</div>
       <div class="task-result-card"><h2>${esc(UI.translate("Host test evidence"))}</h2><p class="muted">${esc(UI.translate("Run by the host on this machine — never taken from the agent's own word."))}</p>${verificationLine(brief.tests)}${latestTest ? `<details><summary>${esc(UI.translate("View saved test result"))}</summary><pre class="mono">${esc(latestTest.content)}</pre></details>` : `<p class="muted">${esc(UI.translate("No host test evidence yet."))}</p>`}</div>
@@ -1753,6 +1930,24 @@
         const button = document.getElementById(buttonId);
         if (button) button.onclick = pauseResumeClick;
       });
+      const resumeDispatch = document.getElementById("task-resume-dispatch");
+      if (resumeDispatch) resumeDispatch.onclick = () => showModal({
+        title: "Start the next step again?", body: "The hand-over to the next step was interrupted. This starts that step now, with the context already saved. Nothing else is re-sent.",
+        confirmLabel: "Start it again",
+        onSubmit: async () => { await api(`${taskBase}/resume-dispatch`, { method: "POST", body: {} }); toast("The next step is starting."); refresh(); },
+      });
+      const runTests = document.getElementById("task-run-tests");
+      if (runTests) runTests.onclick = () => showModal({
+        title: "Run the host tests now?", body: "ccc-mcp runs the project's tests on this computer, in this task's working copy, with the language and version set for the project. Tests run the project's own code, so this uses the project's write permission.",
+        confirmLabel: "Run host tests",
+        onSubmit: async () => { await api(`${taskBase}/run-tests`, { method: "POST", body: {} }); hostTestKickoff[`${id}/${taskId}`] = Date.now(); toast("The host tests are running."); await refresh(); setTimeout(refresh, 21000); },
+      });
+      document.querySelectorAll("#task-close, [data-close-task]").forEach((button) => { button.onclick = () => showModal({
+        title: "Close this task?", body: "This marks the task finished, by your decision, and no more roles will be started. ccc-mcp records that you closed it and keeps showing the real test result: it will not count as passed host tests. Changes already made to files stay as they are.",
+        fields: [{ label: "Note (optional)", placeholder: "For example: I ran the tests myself and they passed" }],
+        confirmLabel: "Close task",
+        onSubmit: async ([note]) => { await api(`${taskBase}/close`, { method: "POST", body: { note } }); toast("The task is closed."); await refresh(); },
+      }); });
       const stopTask = document.getElementById("task-stop");
       if (stopTask) stopTask.onclick = () => showModal({
         title: "Stop this task?", body: "Stopping prevents further agent work. Changes already made to files will not be rolled back.",
@@ -1797,7 +1992,12 @@
         const actions = root.querySelector(".task-head-actions");
         if (actions) { actions.innerHTML = next.actions; UI.localize(actions); }
       }
-      root.querySelectorAll(".conversation-step").forEach((el, index) => el.classList.toggle("done", Boolean(next.steps[index])));
+      root.querySelectorAll(".conversation-step").forEach((el, index) => {
+        el.classList.toggle("done", Boolean(next.steps[index]));
+        el.classList.toggle("current", index === next.current);
+        el.classList.toggle("running", index === next.current && next.currentKind === "running");
+        el.classList.toggle("waiting", index === next.current && next.currentKind === "waiting");
+      });
       const slot = root.querySelector(".task-next-slot");
       const nextBody = slot?.querySelector(".task-next p");
       if (slot && (parts.nextText !== next.nextText || parts.paused !== next.paused)) {
@@ -1834,7 +2034,7 @@
       const button = document.getElementById("task-message-send");
       const picked = document.querySelector('input[name="restart-step"]:checked');
       if (!button || !picked) return;
-      button.innerHTML = `<span>${esc(UI.translate("Ask"))}</span><strong data-no-i18n>${esc(roleName(picked.dataset.role))}</strong><span>${esc(UI.translate("to redo it"))}</span>`;
+      button.innerHTML = `<span>${esc(UI.translate("Ask"))}</span><strong data-no-i18n>${esc(roleTitle(picked.dataset.role))}</strong><span>${esc(UI.translate("to redo it"))}</span>`;
     };
     sendLabel();
     document.querySelectorAll('input[name="restart-step"]').forEach((radio) => radio.addEventListener("change", sendLabel));
@@ -2284,6 +2484,10 @@
     whenHtml, loadingView, errorView, rememberedProject, taskStateTone, confirmDeleteTask,
     removableStates: REMOVABLE_STATES,
   });
+  const skillsUi = window.cccSkills({
+    api, esc, UI, layout, toast, showModal, confirmTextModal, mountModal, closeModal, stale,
+    getGen: () => renderGen, loadingView, errorView, rememberedProject, pageCard,
+  });
   const goalsView = window.cccGoals({
     api, esc, UI, layout, navTo, toast, showModal, parseRoute, stale, getGen: () => renderGen, livePoll,
     morphContent, whenHtml, loadingView, errorView,
@@ -2296,6 +2500,7 @@
     refreshConnectDot();
     if (r.view === "settings") return renderConnect();
     if (r.view === "projects") return renderProjects();
+    if (r.view === "skills") return skillsUi.render();
     if (r.view === "tasks-home") return tasksUi.renderHome();
     if (r.view === "tasks") return tasksUi.renderList();
     if (r.view === "goal") return goalsView.renderGoalDetail();

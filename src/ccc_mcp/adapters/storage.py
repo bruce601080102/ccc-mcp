@@ -791,10 +791,10 @@ def event(conn, project, task, old, new, reason):
     )
 
 
-def artifact(conn, project, path, content):
-    from ..infra.security import digest, reject_secrets
+def artifact(conn, project, path, content, ai_output=False):
+    from ..infra.security import digest, reject_credentials, reject_secrets
 
-    reject_secrets(content)
+    (reject_credentials if ai_output else reject_secrets)(content)
     conn.execute(
         "INSERT INTO artifacts VALUES(?,?,?,?,?)",
         (project, path, content, digest(content.encode()), now()),

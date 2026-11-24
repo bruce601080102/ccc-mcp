@@ -22,6 +22,125 @@ window.cccTeam = function (ctx) {
   };
   const PROVIDER_LABEL = { chatgpt: "ChatGPT", codex: "Codex", claude: "Claude Code" };
   const SOFTWARE = new Set(["classic", "standard", "full"]);
+
+  // What each role does, in plain words, so nobody has to guess from an abbreviation.
+  const ROLE_HELP = {
+    SA: "Turns the request into clear requirements: what to build, the edge cases and how to tell it is done.",
+    SD: "Plans how to build it: structure, data and interfaces. Writes the design only, no code.",
+    RD: "Writes the code and changes the files in your project.",
+    "SD/RD": "Designs and builds in one step. Faster, but with no separate design check.",
+    REVIEW: "Reads the changes that were made and checks quality, bugs and maintainability.",
+    SR: "Checks the requirement and design documents for contradictions, gaps and things that cannot be built.",
+    AR: "Plays devil's advocate: hunts for flaws and weak assumptions, and must back each one with evidence.",
+    SEC: "Looks for security risks such as leaked secrets, weak permissions and unsafe input handling.",
+    QA: "Checks the finished work against the acceptance criteria and the test evidence.",
+    SW: "Turns the discussion's conclusions into a specification that can be built from.",
+    PA: "Understands the request, organises the work and hands over the final result.",
+    RS: "Looks things up and collects information on the topic.",
+    AN: "Compares options, works through the numbers and weighs pros and cons.",
+    PL: "Turns the findings into a plan with steps, order, time and cost.",
+    CS: "Gives expert advice and judges whether something is workable.",
+    WR: "Writes the article, proposal, report or copy.",
+    ED: "Polishes the wording and structure so it reads well.",
+    VC: "Checks claims, sources and figures against evidence.",
+    RV: "Checks the result and points out problems and gaps.",
+  };
+  const roleHelp = (role) => (ROLE_HELP[role] ? UI.translate(ROLE_HELP[role]) : "");
+
+  // Which team to pick: what each built-in workflow is for. Your own workflows have no text of their own.
+  const FLOW_HELP = {
+    classic: { tag: "Small, clear changes", text: "Analyst, then one step that designs and builds, then a code review. The shortest software team: quick and cheap, with the least checking." },
+    standard: { tag: "Most features and bug fixes", text: "Analyst, designer, developer, then a code review. Design and coding are separate steps. A good default for everyday software work." },
+    full: { tag: "Risky or security-sensitive work", text: "Adds an adversarial review, a specification review, two security checks and a tester around the build. The most thorough, and the slowest and most expensive." },
+    life: { tag: "Trips, shopping, daily plans", text: "Assistant, researcher, analyst, planner and fact checker. For everyday planning, not software." },
+    business: { tag: "Proposals and market research", text: "Assistant, researcher, analyst, consultant, writer and reviewer. For business plans, proposals and analysis, not software." },
+    content: { tag: "Articles, posts and reports", text: "Assistant, researcher, writer, editor and fact checker. For writing work, not software." },
+    decision: { tag: "Big choices and risk checks", text: "Assistant, researcher, analyst, consultant and a strict reviewer. For weighing a choice and its risks, not software." },
+  };
+  const flowTag = (flow) => (FLOW_HELP[flow.id] && flow.builtin ? UI.translate(FLOW_HELP[flow.id].tag) : "");
+  const flowHelp = (flow) => {
+    if (flow.builtin && FLOW_HELP[flow.id]) return UI.translate(FLOW_HELP[flow.id].text);
+    return UI.translate("Your own workflow. Its steps run in the order listed below.");
+  };
+
+  // Who picks the workflow for each new task.
+  const SELECTION = {
+    fixed: ["Always the selected workflow", "Every new task uses the workflow chosen above. Predictable, so this is the default."],
+    pm: ["ChatGPT chooses for each task", "ChatGPT reads each request and names the workflow it thinks fits. If it names none, the workflow chosen above is used. Flexible, but the team can differ from task to task."],
+    auto: ["ccc-mcp chooses from the task text", "ccc-mcp scans the request for keywords: security topics add a security review, large refactors add design and adversarial review, small edits use the shortest workflow, everyday topics use an everyday team. No AI is asked, so it can misjudge an unusual request."],
+  };
+
+  // ---- models and effort levels, read from the installed CLIs ------------------------------------------
+  // null: not asked yet; false: the console could not ask; otherwise {codex: {...}, claude: {...}}.
+  let catalog = null;
+  let catalogLoading = false;
+  const CUSTOM = "__custom__";
+  const providerInfo = (provider) => (catalog && catalog[provider]) || null;
+
+  // Effort levels this provider (and, when the CLI says so, this model) accepts.
+  function effortsFor(overview, provider, model) {
+    const accepted = overview.available_providers[provider] || [];
+    const info = providerInfo(provider);
+    if (!info) return accepted;
+    const found = (info.models || []).find((m) => m.id === model);
+    const listed = found && found.efforts.length ? found.efforts : info.efforts;
+    return listed.filter((e) => accepted.includes(e));
+  }
+
+  // "Provider default" plus what that actually is, so nobody has to guess: the value in the user's own CLI
+  // settings, else (effort only) the level the CLI lists for the model, else "decided by the CLI".
+  function defaultLabel(actual) {
+    return `${T("Default")} · ${actual ? esc(actual) : T("decided by the CLI")}`;
+  }
+  function defaultModel(provider) {
+    const info = providerInfo(provider);
+    return (info && info.defaults && info.defaults.model) || "";
+  }
+  function defaultEffort(provider, model) {
+    const info = providerInfo(provider);
+    if (!info) return "";
+    if (info.defaults && info.defaults.effort) return info.defaults.effort;
+    const found = (info.models || []).find((m) => m.id === (model || defaultModel(provider)));
+    return (found && found.default_effort) || "";
+  }
+
+  function effortOptions(overview, provider, model, selected) {
+    const info = providerInfo(provider);
+    const notes = ((info && (info.models || []).find((m) => m.id === model)) || {}).effort_notes || {};
+    const levels = effortsFor(overview, provider, model);
+    const extra = selected && !levels.includes(selected) ? [selected] : [];
+    return `<option value="" data-no-i18n>${defaultLabel(defaultEffort(provider, model))}</option>`
+      + [...levels, ...extra].map((e) => `<option value="${esc(e)}"${e === selected ? " selected" : ""}${notes[e] ? ` title="${esc(notes[e])}"` : ""}>${T(e)}</option>`).join("");
+  }
+
+  // The model field: a drop-down of what the CLI offers, with "Other" for anything it does not list.
+  // With no list to offer it is a plain text box, which is also what the field was before.
+  function modelField(overview, provider, value) {
+    if (provider === "chatgpt") {
+      return `<select data-field="model" disabled><option value="">${T("Chosen in ChatGPT")}</option></select>`;
+    }
+    const info = providerInfo(provider);
+    const models = (info && info.models) || [];
+    if (!models.length) {
+      return `<input type="text" data-field="model" value="${esc(value)}" placeholder="${defaultModel(provider) || T("Provider default")}" />`
+        + `<small class="team-model-note">${T(catalog === null ? "Reading the model list…" : "No model list available. Type a model name, or leave it on the default.")}</small>`;
+    }
+    const known = models.some((m) => m.id === value);
+    const custom = Boolean(value) && !known;
+    const option = (m) => `<option value="${esc(m.id)}"${m.id === value ? " selected" : ""}${m.description ? ` title="${esc(m.description)}"` : ""} data-no-i18n>${esc(m.label === m.id ? m.id : `${m.label} (${m.id})`)}</option>`;
+    const note = info.source === "cli" ? "Read from the installed CLI." : "The CLI could not be read, so this is a built-in list.";
+    return `<select data-field="model"><option value="" data-no-i18n>${defaultLabel(defaultModel(provider))}</option>${models.map(option).join("")}<option value="${CUSTOM}"${custom ? " selected" : ""}>${T("Other (type a name)")}</option></select>`
+      + `<input type="text" data-field="model_custom" value="${custom ? esc(value) : ""}" placeholder="${esc(UI.translate("Model name"))}" ${custom ? "" : "hidden"} />`
+      + `<small class="team-model-note">${T(note)}</small>`;
+  }
+
+  // The model a field group currently holds ("" for the provider default).
+  function modelValue(scope) {
+    const select = scope.querySelector("select[data-field=model], input[data-field=model]");
+    if (!select) return "";
+    if (select.value !== CUSTOM) return select.value.trim();
+    return (scope.querySelector("[data-field=model_custom]")?.value || "").trim();
+  }
   // Built-in workflow names come from the server in English.
   const flowName = (flow) => (flow.builtin ? UI.translate(flow.name) : flow.name);
   const roleLabel = (role) => UI.translate(ROLE_LABEL[role] || role);
@@ -67,24 +186,24 @@ window.cccTeam = function (ctx) {
       // A role that appears twice is one setting: it is edited on its first step only.
       return `<li class="team-step is-repeat" data-step="${index}" data-key="${esc(key)}:${index}">
         <span class="team-step-no" aria-hidden="true">${index + 1}</span>
-        <span class="team-step-name"><strong data-no-i18n>${esc(custom ? custom.name : roleLabel(step.role))}</strong></span>
+        <span class="team-step-name"><strong data-no-i18n>${esc(custom ? custom.name : roleLabel(step.role))}</strong><small class="team-step-desc">${esc(custom ? roleHelp(custom.base_role) : roleHelp(step.role))}</small></span>
         <span class="team-step-tool">${tool}</span>
         <span class="team-step-actions"><button type="button" class="btn small quiet" data-repeat="${firstSeen.get(key)}">${T("Advanced")}</button></span></li>`;
     }
     firstSeen.set(key, index);
-    const efforts = overview.available_providers[entry.provider] || [];
     const label = custom ? custom.name : roleLabel(step.role);
+    const desc = custom ? roleHelp(custom.base_role) : roleHelp(step.role);
     return `<li class="team-step" data-step="${index}" data-key="${esc(key)}:${index}">
       <span class="team-step-no" aria-hidden="true">${index + 1}</span>
-      <span class="team-step-name"><strong data-no-i18n>${esc(label)}</strong></span>
+      <span class="team-step-name"><strong data-no-i18n>${esc(label)}</strong><small class="team-step-desc">${esc(desc)}</small></span>
       <span class="team-step-tool">${custom ? tool : providerSelect(entry.provider, "provider", false)}</span>
       <span class="team-step-actions">
         ${custom ? `<button type="button" class="btn small quiet" data-edit-role="${esc(custom.id)}">${T("Advanced")}</button>`
           : `<button type="button" class="btn small quiet" data-more="${index}" aria-controls="team-role-options-${index}" aria-expanded="false">${T("Advanced")}</button>`}
       </span>
       ${custom ? "" : `<div class="team-step-more" id="team-role-options-${index}" data-more-panel="${index}" hidden>
-        <label>${T("Model (optional)")}<input type="text" data-field="model" value="${esc(entry.model)}" placeholder="${T("Provider default")}" ${entry.provider === "chatgpt" ? "disabled" : ""} /></label>
-        <label>${T("Effort")}<select data-field="effort"><option value="">${T("Provider default")}</option>${efforts.map((e) => `<option value="${esc(e)}"${e === entry.effort ? " selected" : ""}>${T(e)}</option>`).join("")}</select></label>
+        <label>${T("Model")}<span class="team-model-field">${modelField(overview, entry.provider, entry.model)}</span></label>
+        <label>${T("Thinking level")}<select data-field="effort"${entry.provider === "chatgpt" ? " disabled" : ""}>${effortOptions(overview, entry.provider, entry.model, entry.effort)}</select></label>
         <label>${T("If quota runs out")}<select data-field="quota_fallback"><option value="">${esc(UI.translate("No fallback"))}</option>${Object.entries(PROVIDER_LABEL).map(([id, l]) => `<option value="${id}"${id === entry.quota_fallback ? " selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
         <small><a href="#/settings">${T("CLI installation and sign-in")}</a></small>
       </div>`}
@@ -97,7 +216,7 @@ window.cccTeam = function (ctx) {
     const chosen = flows.find((f) => f.id === draft.workflow) || flows.find((f) => !f.legacy) || flows[0];
     if (!chosen) return "";
     const group = (label, list) => list.length
-      ? `<optgroup label="${esc(UI.translate(label))}">${list.map((f) => `<option value="${esc(f.id)}"${f.id === chosen.id ? " selected" : ""}>${esc(flowName(f))}</option>`).join("")}</optgroup>` : "";
+      ? `<optgroup label="${esc(UI.translate(label))}">${list.map((f) => `<option value="${esc(f.id)}"${f.id === chosen.id ? " selected" : ""}>${esc(flowName(f))}${flowTag(f) ? esc(` · ${flowTag(f)}`) : ""}</option>`).join("")}</optgroup>` : "";
     const flowSelect = group("Software teams", flows.filter((f) => SOFTWARE.has(f.id)))
       + group("Everyday teams", flows.filter((f) => f.builtin && !SOFTWARE.has(f.id)))
       + group("Your workflows", flows.filter((f) => !f.builtin));
@@ -119,6 +238,7 @@ window.cccTeam = function (ctx) {
             ${mine ? `<button type="button" class="btn small" id="team-edit-workflow">${T("Edit")}</button><button type="button" class="btn small danger" id="team-delete-workflow">${T("Delete")}</button>` : ""}
           </span>
         </div>
+        <p class="team-flow-help" id="team-flow-help">${esc(flowHelp(chosen))}</p>
         ${chosen.goal_ready === false ? `<p class="hint" id="team-goal-hint">${T("This team can run individual tasks. Automated goal phases require a developer step.")}</p>` : ""}
         <ol class="team-steps" aria-label="${esc(UI.translate("Steps, in the order they run"))}">${steps}</ol>
         <div class="team-roles-row">
@@ -132,15 +252,20 @@ window.cccTeam = function (ctx) {
         </div>
         <details class="settings-more team-more-options"><summary>${T("Advanced team settings")}</summary>
           <div class="team-presets">
-            <label for="team-selection">${T("Who chooses the workflow")}</label>
-            <select id="team-selection">${opt("fixed", "Use the selected workflow", draft.selection)}${opt("pm", "Let the task coordinator choose", draft.selection)}${opt("auto", "Choose by task description", draft.selection)}</select>
+            <label for="team-selection">${T("Who picks the workflow for each new task?")}</label>
+            <select id="team-selection" aria-describedby="team-selection-help">${Object.entries(SELECTION).map(([value, [label]]) => opt(value, label, draft.selection)).join("")}</select>
+          </div>
+          <p class="hint team-selection-help" id="team-selection-help">${T((SELECTION[draft.selection] || SELECTION.fixed)[1])}</p>
+          <div class="team-presets">
+            <span class="team-presets-label">${T("Set the AI tool for every built-in role at once")}</span>
             ${Object.entries(overview.profile_presets || {}).filter(([, value]) => value).map(([id]) => `<button type="button" class="btn small" data-team-preset="${id}">${T(id === "chatgpt-only" ? "Use ChatGPT for all built-in roles" : "Use installed CLI providers")}</button>`).join("")}
           </div>
+          <p class="hint">${T("ChatGPT needs no extra install. Installed CLI providers uses Codex and Claude Code where they are installed, so the work runs on this computer.")}</p>
           <h3>${T("Review gates")}</h3>
           <div class="settings-grid">
-            <div class="field"><label for="gate-ar">${T("Adversarial review strictness")}</label><select id="gate-ar">${opt("normal", "Normal: only clear faults", gate.ar_strictness)}${opt("strict", "Strict: minor issues too", gate.ar_strictness)}${opt("extreme", "Extreme: includes assumptions", gate.ar_strictness)}</select></div>
-            <div class="field"><label for="gate-rounds">${T("Max rounds per gate (1-5)")}</label><input type="text" inputmode="numeric" id="gate-rounds" value="${esc(gate.max_rounds)}" /></div>
-            <div class="field"><label for="gate-escalation">${T("When a gate gives up")}</label><select id="gate-escalation">${opt("ask_user", "Ask me", gate.escalation)}${opt("auto_pm", "ChatGPT decides", gate.escalation)}</select></div>
+            <div class="field"><label for="gate-ar">${T("Adversarial review strictness")}</label><select id="gate-ar" aria-describedby="gate-ar-help">${opt("normal", "Normal: only clear faults", gate.ar_strictness)}${opt("strict", "Strict: minor issues too", gate.ar_strictness)}${opt("extreme", "Extreme: includes assumptions", gate.ar_strictness)}</select><small class="hint" id="gate-ar-help">${T("How serious a problem must be before the adversarial reviewer sends the work back.")}</small></div>
+            <div class="field"><label for="gate-rounds">${T("Max rounds per gate (1-5)")}</label><input type="text" inputmode="numeric" id="gate-rounds" value="${esc(gate.max_rounds)}" aria-describedby="gate-rounds-help" /><small class="hint" id="gate-rounds-help">${T("How many times a reviewer may send work back to its author before the gate gives up.")}</small></div>
+            <div class="field"><label for="gate-escalation">${T("When a gate gives up")}</label><select id="gate-escalation" aria-describedby="gate-escalation-help">${opt("ask_user", "Ask me", gate.escalation)}${opt("auto_pm", "ChatGPT decides", gate.escalation)}</select><small class="hint" id="gate-escalation-help">${T("What happens when the rounds are used up and a problem is still open: you decide, or ChatGPT decides for you.")}</small></div>
           </div>
         </details>
       </div>
@@ -208,7 +333,11 @@ window.cccTeam = function (ctx) {
         const step = stepsOf(working.workflow)[Number(li.dataset.step)];
         if (!step) return;
         const entry = step.role_ref ? working.custom[step.role_ref] : working.roles[step.role];
-        li.querySelectorAll("[data-field]").forEach((el) => { entry[el.dataset.field] = el.value.trim(); });
+        li.querySelectorAll("[data-field]").forEach((el) => {
+          const field = el.dataset.field;
+          if (field === "model_custom") return;
+          entry[field] = field === "model" ? modelValue(li) : el.value.trim();
+        });
       });
       working.selection = card.querySelector("#team-selection").value;
       working.gate = {
@@ -238,6 +367,20 @@ window.cccTeam = function (ctx) {
         else toast("Finish editing before reloading the role list.");
       } catch (err) { report(err); }
     };
+    // Models and thinking levels come from the installed CLIs; ask once and redraw with the answer,
+    // keeping whatever has been typed so far.
+    card.refreshCatalog = () => {
+      if (!card.isConnected) return;
+      readFields();
+      repaint(overview, working);
+    };
+    if (catalog === null && !catalogLoading) {
+      catalogLoading = true;
+      api("/provider-models")
+        .then((answer) => { catalog = answer.providers; })
+        .catch(() => { catalog = false; })
+        .finally(() => { catalogLoading = false; document.getElementById("team-card")?.refreshCatalog?.(); });
+    }
     card.oninput = (event) => {
       if (event.target.matches("#team-workflow, [data-field=provider]")) return;
       readFields();
@@ -254,15 +397,33 @@ window.cccTeam = function (ctx) {
         const row = target.closest(".team-step");
         const step = stepsOf(working.workflow)[Number(row.dataset.step)];
         const role = working.roles[step.role];
-        const efforts = overview.available_providers[target.value] || [];
+        // A different tool has different models, so the model starts again from its default.
+        const model = target.value === role.provider ? role.model : "";
+        row.querySelector(".team-model-field").innerHTML = modelField(overview, target.value, model);
+        UI.localize(row.querySelector(".team-model-field"));
         const effort = row.querySelector("[data-field=effort]");
-        effort.replaceChildren(new Option(UI.translate("Provider default"), ""), ...efforts.map((e) => new Option(UI.translate(e), e)));
-        if (efforts.includes(role.effort)) effort.value = role.effort;
-        const model = row.querySelector("[data-field=model]");
-        if (target.value !== role.provider) model.value = "";
-        model.disabled = target.value === "chatgpt";
+        effort.innerHTML = effortOptions(overview, target.value, model, role.effort);
+        effort.disabled = target.value === "chatgpt";
+        UI.localize(effort);
         readFields();
         paintState();
+      } else if (target.matches("[data-field=model]")) {
+        const row = target.closest(".team-step");
+        const custom = row.querySelector("[data-field=model_custom]");
+        if (custom) {
+          custom.hidden = target.value !== CUSTOM;
+          if (!custom.hidden) custom.focus({ preventScroll: true });
+        }
+        // The levels a model accepts can differ from another model's.
+        const provider = row.querySelector("[data-field=provider]").value;
+        const effort = row.querySelector("[data-field=effort]");
+        effort.innerHTML = effortOptions(overview, provider, modelValue(row), effort.value);
+        UI.localize(effort);
+        readFields();
+        paintState();
+      } else if (target.id === "team-selection") {
+        const help = card.querySelector("#team-selection-help");
+        help.textContent = UI.translate((SELECTION[target.value] || SELECTION.fixed)[1]);
       }
     };
     card.onclick = (event) => {
@@ -408,9 +569,13 @@ window.cccTeam = function (ctx) {
     const add = overlay.querySelector("#wf-add");
     const paint = () => {
       add.disabled = steps.length >= 12;
+      const describe = (value) => {
+        const mine = own.find((r) => r.id === value);
+        return esc(roleHelp(mine ? mine.base_role : value));
+      };
       list.innerHTML = steps.map((value, i) => `<li data-i="${i}">
         <span class="team-step-no">${i + 1}</span>
-        <select data-pick aria-label="${T("Step role")}">${roleOptions(overview, value)}</select>
+        <span class="team-wf-pick"><select data-pick aria-label="${T("Step role")}">${roleOptions(overview, value)}</select><small class="team-step-desc" data-desc>${describe(value)}</small></span>
         <button type="button" class="btn small quiet" data-up ${i === 0 ? "disabled" : ""} aria-label="${esc(UI.translate("Move up"))}">↑</button>
         <button type="button" class="btn small quiet" data-down ${i === steps.length - 1 ? "disabled" : ""} aria-label="${esc(UI.translate("Move down"))}">↓</button>
         <button type="button" class="btn small quiet" data-remove ${steps.length === 1 ? "disabled" : ""} aria-label="${esc(UI.translate("Remove step"))}">✕</button></li>`).join("");
@@ -428,7 +593,13 @@ window.cccTeam = function (ctx) {
       const at = Math.min(i + (e.target.closest("[data-up]") ? -1 : e.target.closest("[data-down]") ? 1 : 0), steps.length - 1);
       list.querySelector(`[data-i="${at}"] [data-pick]`).focus({ preventScroll: true });
     };
-    list.onchange = (e) => { const li = e.target.closest("li"); if (li && e.target.matches("[data-pick]")) steps[Number(li.dataset.i)] = e.target.value; };
+    list.onchange = (e) => {
+      const li = e.target.closest("li");
+      if (!li || !e.target.matches("[data-pick]")) return;
+      steps[Number(li.dataset.i)] = e.target.value;
+      const mine = own.find((r) => r.id === e.target.value);
+      li.querySelector("[data-desc]").textContent = roleHelp(mine ? mine.base_role : e.target.value);
+    };
     add.onclick = () => {
       if (steps.length >= 12) return;
       steps.push("REVIEW");
@@ -459,13 +630,14 @@ window.cccTeam = function (ctx) {
     const initial = def.runtime || {};
     const overlay = dialog(existing ? "Edit role" : "New role", `
       <label class="field">${T("Name")}<input type="text" id="role-name" maxlength="24" value="${esc(def.name)}" placeholder="${esc(UI.translate("For example: Payments reviewer"))}" /></label>
-      <label class="field">${T("It works like")}<select id="role-base" ${existing ? "disabled" : ""}>${bases.map((b) => `<option value="${b}"${(existing ? existing.base_role : "REVIEW") === b ? " selected" : ""}>${esc(roleLabel(b))} (${b})</option>`).join("")}</select></label>
+      <label class="field">${T("It works like")}<select id="role-base" ${existing ? "disabled" : ""}>${bases.map((b) => `<option value="${b}"${(existing ? existing.base_role : "REVIEW") === b ? " selected" : ""}>${esc(roleLabel(b))} (${b})</option>`).join("")}</select>
+        <small class="team-step-desc" id="role-base-desc">${esc(roleHelp(existing ? existing.base_role : "REVIEW"))}</small></label>
       <p class="hint">${T("What a role may do (for example whether it can change files) comes from the role it works like, in ccc-mcp's own code. Nothing written below can widen it.")}</p>
       <label class="field">${T("Instructions")}<textarea id="role-text" rows="7" maxlength="16000" placeholder="${T("Tell this role what to focus on, what to avoid, and what its findings should contain.")}">${esc(text)}</textarea></label>
       <label class="field">${T("AI tool")}${providerSelect(initial.provider, "role-provider", true, "Same as its base role")}</label>
       <details class="settings-more"><summary>${T("Advanced")}</summary>
-        <label class="field">${T("Model (optional)")}<input id="custom-model" value="${esc(initial.model)}"></label>
-        <label class="field">${T("Effort")}<select id="custom-effort"></select></label>
+        <label class="field">${T("Model")}<span class="team-model-field" id="custom-model-field"></span></label>
+        <label class="field">${T("Thinking level")}<select id="custom-effort"></select></label>
         <label class="field">${T("If quota runs out")}<select id="custom-fallback"><option value="">${T("No fallback")}</option>
           ${Object.entries(PROVIDER_LABEL).map(([id, label]) => `<option value="${id}"${id === initial.quota_fallback ? " selected" : ""}>${label}</option>`).join("")}
         </select></label>
@@ -474,7 +646,7 @@ window.cccTeam = function (ctx) {
       const name = modal.querySelector("#role-name").value.trim();
       const instructions = modal.querySelector("#role-text").value;
       const values = runtime({ provider: modal.querySelector('[data-field="role-provider"]').value,
-        model: modal.querySelector("#custom-model").value.trim(),
+        model: modelValue(modal.querySelector("#custom-model-field")),
         effort: modal.querySelector("#custom-effort").value, quota_fallback: modal.querySelector("#custom-fallback").value });
       if (!name) throw new Error("Enter a role name.");
       if (existing) {
@@ -491,20 +663,41 @@ window.cccTeam = function (ctx) {
     });
     const provider = overlay.querySelector('[data-field="role-provider"]');
     const effort = overlay.querySelector("#custom-effort");
-    const model = overlay.querySelector("#custom-model");
+    const modelBox = overlay.querySelector("#custom-model-field");
     const fallback = overlay.querySelector("#custom-fallback");
-    function updateProvider(selected = "") {
-      const efforts = overview.available_providers[provider.value] || [];
-      effort.replaceChildren(new Option(UI.translate("Provider default"), ""), ...efforts.map((e) => new Option(UI.translate(e), e)));
-      effort.value = efforts.includes(selected) ? selected : "";
-      model.disabled = !provider.value || provider.value === "chatgpt";
-      if (provider.value === "chatgpt") model.value = "";
-      effort.disabled = !efforts.length;
+    // Redraw the model and thinking-level choices for the chosen AI tool (and model).
+    function updateProvider(model, selectedEffort) {
+      modelBox.innerHTML = modelField(overview, provider.value || "chatgpt", model);
+      UI.localize(modelBox);
+      if (!provider.value) modelBox.querySelectorAll("select, input").forEach((el) => { el.disabled = true; });
+      updateEffort(selectedEffort);
       fallback.disabled = !provider.value;
     }
-    provider.onchange = () => updateProvider(effort.value);
-    updateProvider(initial.effort);
-
+    function updateEffort(selected) {
+      effort.innerHTML = effortOptions(overview, provider.value, modelValue(modelBox), selected);
+      UI.localize(effort);
+      effort.disabled = !provider.value || provider.value === "chatgpt";
+    }
+    provider.onchange = () => updateProvider("", effort.value);
+    modelBox.onchange = (event) => {
+      if (!event.target.matches("[data-field=model]")) return;
+      const custom = modelBox.querySelector("[data-field=model_custom]");
+      if (custom) {
+        custom.hidden = event.target.value !== CUSTOM;
+        if (!custom.hidden) custom.focus({ preventScroll: true });
+      }
+      updateEffort(effort.value);
+    };
+    const baseSelect = overlay.querySelector("#role-base");
+    baseSelect.onchange = () => { overlay.querySelector("#role-base-desc").textContent = roleHelp(baseSelect.value); };
+    updateProvider(initial.model || "", initial.effort);
+    // The model list may arrive while the dialog is open.
+    if (catalog === null) {
+      const wait = setInterval(() => {
+        if (!overlay.isConnected) { clearInterval(wait); return; }
+        if (catalog !== null) { clearInterval(wait); updateProvider(modelValue(modelBox), effort.value); }
+      }, 400);
+    }
   }
 
   return { html, bind, refreshRoles: () => document.getElementById("team-card")?.refreshRoles() };

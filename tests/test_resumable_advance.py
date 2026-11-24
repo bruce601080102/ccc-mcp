@@ -290,3 +290,23 @@ def test_commit_context_patch_writes_pending_dispatch_atomically_with_the_commit
     assert pointer["context_version"] == committed["context_version"]
     assert pointer["source_execution_id"] == sa
     assert bridge.context_sync_status("demo")["pending_reports"] == []
+
+
+def test_a_leftover_pointer_is_ignored_once_a_role_was_run_by_hand(bridge, human, monkeypatch):
+    """Work the PM dispatched directly and that completed supersedes an old 'next role was never
+    started' pointer. Otherwise the task shows "retry needed" forever, advance_project is refused,
+    and a resume would start the same step twice."""
+    task_id, sa = advance_to_implementation(bridge)
+    fail_spawn_once(monkeypatch, bridge)
+    with pytest.raises(BridgeError, match="Unable to start worker"):
+        bridge.advance_project("demo", pending_patch(bridge, sa), "Implement", adapter="fake")
+    assert bridge.get_task_status("demo", task_id)["brief"]["waiting_on"] == "DISPATCH_RETRY_NEEDED"
+
+    by_hand = bridge.dispatch_agent(
+        "demo", task_id, "claude", "RD", bridge.latest("demo")["version"], "Implement by hand",
+        adapter="fake")
+    run_execution(bridge, by_hand["execution_id"])
+    brief = bridge.get_task_status("demo", task_id)["brief"]
+    assert brief["pending_dispatch"] is None
+    assert brief["waiting_on"] != "DISPATCH_RETRY_NEEDED"
+    assert bridge.resume_pending_dispatch("demo", task_id)["resumed"] is False

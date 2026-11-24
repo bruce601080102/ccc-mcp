@@ -1,5 +1,5 @@
 from ..adapters.git import git, tracked_snapshot, working_snapshot
-from ..infra.security import comment_check, redact, reject_secrets, same_text_content
+from ..infra.security import comment_check, redact, reject_credentials, same_text_content
 
 
 def implementation_evidence(bridge, row, cwd):
@@ -8,9 +8,9 @@ def implementation_evidence(bridge, row, cwd):
     diff = git(cwd, "diff", "HEAD", "--no-ext-diff", "--no-textconv").stdout.decode(
         "utf-8", "replace"
     )
-    reject_secrets(diff)
+    reject_credentials(diff)
     with bridge.store.transaction() as conn:
-        reference = bridge.save_artifact(
+        reference = bridge.save_artifact_ai(
             conn, row["project_id"], row["task_id"], "CHANGES.diff", row["id"], diff
         )
     new = [p for p in after if p not in before]

@@ -220,3 +220,44 @@ def test_worker_lease_not_marked_interrupted(bridge):
     thread.join(timeout=5)
     assert not thread.is_alive()
     assert bridge.get_task_result("demo", "TASK-0001")[-1]["status"] == "CANCELLED"
+
+
+def test_ai_output_blocks_real_credentials_but_not_ordinary_code():
+    from ccc_mcp.infra.security import reject_credentials
+
+    ordinary = [
+        {"summary": "Reads token = os.getenv('DISCORD_TOKEN') and password: ask the user"},
+        "+    token = settings.discord_token\n+    secret = None\n+    api_key: str = Field(...)",
+        'password = "<redacted>"  # filled in at deploy time',
+        {"findings": ["token: 缺少時不發送", "webhook_url = config.DISCORD_WEBHOOK_URL"]},
+    ]
+    for value in ordinary:
+        reject_credentials(value)
+    real = [
+        {"summary": "key sk-" + "a1" * 15},
+        "+API_KEY = 'a1b2c3d4e5f6g7h8i9j0k1'",
+        {"note": 'secret: "Zx9Qw8Er7Ty6Ui5Op4As3"'},
+        "https://discord.com/api/webhooks/123456789012/" + "AbCdEf-" * 5,
+        "-----BEGIN RSA PRIVATE KEY-----\nabc\n-----END RSA PRIVATE KEY-----",
+        "token=ghp_" + "a" * 36,
+    ]
+    for value in real:
+        with pytest.raises(BridgeError, match="secret"):
+            reject_credentials(value)
+
+
+def test_ai_report_mentioning_token_variables_is_saved_not_failed(bridge):
+    from conftest import dispatch
+
+    bridge.create_task("demo", "讓 Discord 發報在沒有名單時也通知")
+    execution = dispatch(bridge, "SA")["execution_id"]
+    report = {
+        "summary": "設定檔用 token = os.getenv('DISCORD_TOKEN')，password: 由部署環境提供",
+        "findings": ["webhook_token = settings.webhook_token"],
+        "risks": [],
+        "next_action": "讀取 secret: 不要寫進程式",
+        "context_updates": [],
+    }
+    bridge.finish_execution(execution, report=report)
+    row = bridge.store.one("SELECT status, error FROM agent_executions WHERE id=?", (execution,))
+    assert (row["status"], row["error"]) == ("SUCCEEDED", None)

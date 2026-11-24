@@ -28,8 +28,10 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
 from .. import __version__
+from ..adapters import mcp_servers as mcp_registry
 from ..adapters.agent_setup import LOGIN_ARGS, ensure_installed, uninstall_provider
 from ..adapters.agents.base import native_executable
+from ..adapters.model_catalog import provider_models
 from ..adapters.tunnel_client import (
     connection_profiles,
     forget_connection_profile,
@@ -451,6 +453,226 @@ async def clear_history(request: Request):
     return JSONResponse(result)
 
 
+# --- Skills and local MCP servers -------------------------------------------------
+
+
+@endpoint
+async def list_skills(request: Request):
+    from ..adapters.skills import list_skills as _list_skills
+
+    bridge = bridge_of(request)
+    result = await run(_list_skills, bridge.home)
+    return JSONResponse(result)
+
+
+@endpoint
+async def discover_skills(request: Request):
+    from ..adapters.skills import discover_skills as _discover_skills
+
+    bridge = bridge_of(request)
+    result = await run(_discover_skills, bridge.home)
+    return JSONResponse(result)
+
+
+def _discovered_skill(bridge: CCCMCP, body: dict) -> dict:
+    """Resolve an exact entry shown by discovery, never an arbitrary browser-supplied path."""
+    from ..adapters.skills import discover_skills as _discover_skills
+
+    matches = [
+        item
+        for item in _discover_skills(bridge.home)
+        if item["id"] == body.get("id") and item["path"] == body.get("path")
+    ]
+    if len(matches) != 1:
+        raise BridgeError("The selected skill is no longer available; refresh the list")
+    found = matches[0]
+    if not found["usable"]:
+        raise BridgeError(found["reason"] or "This skill cannot be installed")
+    return found
+
+
+@endpoint
+async def install_discovered_skill(request: Request):
+    from ..adapters.skills import install_skill as _install_skill
+
+    bridge = bridge_of(request)
+    body = await _body(request)
+    found = await run(_discovered_skill, bridge, body)
+    result = await run(_install_skill, bridge.home, found["path"])
+    return JSONResponse(result)
+
+
+@endpoint
+async def remove_global_skill(request: Request):
+    from ..adapters.skills import remove_skill as _remove_skill
+    from ..core.approval import confirm_web
+
+    bridge = bridge_of(request)
+    skill_id = request.path_params["skill_id"]
+    body = await _body(request)
+    await run(confirm_web, f"REMOVE SKILL {skill_id}", body.get("confirm"))
+    result = await run(_remove_skill, bridge.home, skill_id)
+    return JSONResponse(result)
+
+
+@endpoint
+async def list_mcp(request: Request):
+    bridge = bridge_of(request)
+    result = await run(bridge.list_mcp_servers, request.path_params["project_id"])
+    return JSONResponse(result)
+
+
+def _discovered_mcp(bridge: CCCMCP, project_id: str, body: dict) -> dict:
+    """Resolve an exact entry shown by discovery, never an arbitrary browser command."""
+    root = bridge.project(project_id)["root"]
+    matches = [
+        item
+        for item in mcp_registry.discover(root)
+        if item["name"] == body.get("name")
+        and item["client"] == body.get("client")
+        and item["source_file"] == body.get("source_file")
+    ]
+    if len(matches) != 1:
+        raise BridgeError("The selected MCP server is no longer available; refresh the list")
+    found = matches[0]
+    if found["transport"] != "stdio":
+        raise BridgeError("Only local stdio MCP servers can be installed")
+    return found
+
+
+@endpoint
+async def probe_mcp(request: Request):
+    bridge = bridge_of(request)
+    project_id = request.path_params["project_id"]
+    body = await _body(request)
+    found = await run(_discovered_mcp, bridge, project_id, body)
+    resolved = await run(
+        mcp_registry.resolve_server,
+        found["name"],
+        found["command"],
+        found["args"],
+        bridge.project(project_id)["root"],
+    )
+    tools = await run(mcp_registry.probe_tools, resolved["command"], resolved["args"])
+    return JSONResponse({"name": found["name"], "command": resolved["command"], "tools": tools})
+
+
+@endpoint
+async def install_mcp(request: Request):
+    bridge = bridge_of(request)
+    project_id = request.path_params["project_id"]
+    body = await _body(request)
+    found = await run(_discovered_mcp, bridge, project_id, body)
+    tools = body.get("tools")
+    if not isinstance(tools, list) or not tools or any(not isinstance(t, str) for t in tools):
+        raise BridgeError("Select at least one MCP tool to enable")
+    result = await run(
+        bridge.install_mcp_server,
+        project_id,
+        found["name"],
+        found["command"],
+        found["args"],
+        tools,
+    )
+    return JSONResponse(result)
+
+
+@endpoint
+async def probe_mcp_by_name(request: Request):
+    """Preview a server by name alone, the same way `skill install mcp <name>` resolves it:
+    an exact/close match from a client's config, or a PATH command named `<name>`,
+    `<name>-mcp` or `<name>-server`. Covers tools that run but were never registered in any
+    MCP client config (for example a bare pip/npm install), so they aren't missed just
+    because they don't appear in the discovered-servers table."""
+    bridge = bridge_of(request)
+    project_id = request.path_params["project_id"]
+    body = await _body(request)
+    name = (body.get("name") or "").strip()
+    if not name:
+        raise BridgeError("Enter an MCP server name")
+    resolved = await run(
+        mcp_registry.resolve_server,
+        name,
+        (body.get("command") or "").strip() or None,
+        None,
+        bridge.project(project_id)["root"],
+    )
+    tools = await run(mcp_registry.probe_tools, resolved["command"], resolved["args"])
+    return JSONResponse({**resolved, "tools": tools})
+
+
+@endpoint
+async def install_mcp_by_name(request: Request):
+    bridge = bridge_of(request)
+    project_id = request.path_params["project_id"]
+    body = await _body(request)
+    name = (body.get("name") or "").strip()
+    if not name:
+        raise BridgeError("Enter an MCP server name")
+    tools = body.get("tools")
+    if not isinstance(tools, list) or not tools or any(not isinstance(t, str) for t in tools):
+        raise BridgeError("Select at least one MCP tool to enable")
+    result = await run(
+        bridge.install_mcp_server,
+        project_id,
+        name,
+        (body.get("command") or "").strip() or None,
+        None,
+        tools,
+    )
+    return JSONResponse(result)
+
+
+@endpoint
+async def remove_mcp(request: Request):
+    bridge = bridge_of(request)
+    result = await run(
+        bridge.remove_mcp_server,
+        request.path_params["project_id"],
+        request.path_params["name"],
+    )
+    return JSONResponse(result)
+
+
+@endpoint
+async def installed_mcp_tools(request: Request):
+    bridge = bridge_of(request)
+    project_id = request.path_params["project_id"]
+    name = request.path_params["name"]
+
+    def describe():
+        spec = bridge._installed_mcp(project_id, name)
+        allowed = set(spec["allowed_tools"])
+        return [
+            tool
+            for tool in mcp_registry.describe_tools(project_id, spec["command"], spec["args"])
+            if tool["name"] in allowed
+        ]
+
+    return JSONResponse(await run(describe))
+
+
+@endpoint
+async def call_mcp_tool(request: Request):
+    bridge = bridge_of(request)
+    body = await _body(request)
+    result = await run(
+        bridge.call_installed_mcp_tool,
+        request.path_params["project_id"],
+        request.path_params["name"],
+        request.path_params["tool"],
+        body.get("arguments", {}),
+    )
+    return JSONResponse(result)
+
+
+@endpoint
+async def mcp_calls(request: Request):
+    bridge = bridge_of(request)
+    result = await run(bridge.mcp_call_log, 50)
+    return JSONResponse(result)
+
+
 # --- Settings -------------------------------------------------------------------
 
 
@@ -514,6 +736,14 @@ async def check_runtime(request: Request):
         request.path_params["project_id"], body.get("runtime"),
     )
     return JSONResponse(result)
+
+
+@endpoint
+async def discover_installed_runtimes(request: Request):
+    """Installed interpreters of one language, for the project's language and version picker."""
+    language = request.query_params.get("language", "")
+    return JSONResponse({"language": language,
+                         "runtimes": await run(bridge_of(request).discover_runtimes, language)})
 
 
 @endpoint
@@ -654,6 +884,37 @@ async def task_resume(request: Request):
     bridge = bridge_of(request)
     return JSONResponse(await run(
         bridge.resume_task, request.path_params["project_id"], request.path_params["task_id"]
+    ))
+
+
+@endpoint
+async def task_resume_dispatch(request: Request):
+    """Finish a hand-over that was committed but never started (waiting_on DISPATCH_RETRY_NEEDED)."""
+    bridge = bridge_of(request)
+    return JSONResponse(await run(
+        bridge.resume_pending_dispatch, request.path_params["project_id"],
+        request.path_params["task_id"],
+    ))
+
+
+@endpoint
+async def task_close(request: Request):
+    """The person closes the task as finished. Console only: no MCP tool does this, so an AI's "the user
+    agreed" never finishes a task."""
+    body = await _body(request)
+    return JSONResponse(await run(
+        bridge_of(request).close_task_by_user, request.path_params["project_id"],
+        request.path_params["task_id"], body.get("note") or "",
+    ))
+
+
+@endpoint
+async def task_run_tests(request: Request):
+    """Start the project's host tests for a task (they run in the background; the result lands in the
+    task's conversation like the automatic run's)."""
+    bridge = bridge_of(request)
+    return JSONResponse(await run(
+        bridge.start_host_tests, request.path_params["project_id"], request.path_params["task_id"],
     ))
 
 
@@ -880,6 +1141,14 @@ async def connect_status(request: Request):
 @endpoint
 async def connect_providers(request: Request):
     return JSONResponse({"providers": await run(provider_login_status)})
+
+
+@endpoint
+async def provider_model_catalog(request: Request):
+    """Models and effort levels the installed Codex / Claude Code CLIs offer (see
+    adapters/model_catalog.py); `?refresh=1` asks the CLIs again instead of using the cache."""
+    refresh = request.query_params.get("refresh") == "1"
+    return JSONResponse({"providers": await run(provider_models, refresh)})
 
 
 def _provider_login_manager(request: Request) -> ProviderLoginManager:
@@ -1288,6 +1557,25 @@ ROUTES = [
     Route("/api/session", session_info),
     Route("/api/connect/status", connect_status, methods=["GET"]),
     Route("/api/connect/providers", connect_providers, methods=["GET"]),
+    Route("/api/provider-models", provider_model_catalog, methods=["GET"]),
+    Route("/api/runtimes/discover", discover_installed_runtimes, methods=["GET"]),
+    Route("/api/projects/{project_id}/mcp", list_mcp, methods=["GET"]),
+    Route("/api/projects/{project_id}/mcp/probe", probe_mcp, methods=["POST"]),
+    Route("/api/projects/{project_id}/mcp/install", install_mcp, methods=["POST"]),
+    Route("/api/projects/{project_id}/mcp/probe-by-name", probe_mcp_by_name, methods=["POST"]),
+    Route("/api/projects/{project_id}/mcp/install-by-name", install_mcp_by_name, methods=["POST"]),
+    Route("/api/projects/{project_id}/mcp/{name}/remove", remove_mcp, methods=["POST"]),
+    Route("/api/projects/{project_id}/mcp/{name}/tools", installed_mcp_tools, methods=["GET"]),
+    Route(
+        "/api/projects/{project_id}/mcp/{name}/tools/{tool}/call",
+        call_mcp_tool,
+        methods=["POST"],
+    ),
+    Route("/api/skills", list_skills, methods=["GET"]),
+    Route("/api/skills/discover", discover_skills, methods=["GET"]),
+    Route("/api/skills/install-discovered", install_discovered_skill, methods=["POST"]),
+    Route("/api/skills/{skill_id}/remove", remove_global_skill, methods=["POST"]),
+    Route("/api/mcp/calls", mcp_calls, methods=["GET"]),
     Route("/api/connect/providers/{provider}/install", provider_install, methods=["POST"]),
     Route("/api/connect/providers/{provider}/uninstall", provider_uninstall, methods=["POST"]),
     Route("/api/connect/providers/{provider}/login", provider_login_start, methods=["POST"]),
@@ -1333,6 +1621,10 @@ ROUTES = [
     Route("/api/projects/{project_id}/tasks/{task_id}/artifacts", task_artifacts, methods=["GET"]),
     Route("/api/projects/{project_id}/tasks/{task_id}/pause", task_pause, methods=["POST"]),
     Route("/api/projects/{project_id}/tasks/{task_id}/resume", task_resume, methods=["POST"]),
+    Route("/api/projects/{project_id}/tasks/{task_id}/resume-dispatch", task_resume_dispatch,
+          methods=["POST"]),
+    Route("/api/projects/{project_id}/tasks/{task_id}/run-tests", task_run_tests, methods=["POST"]),
+    Route("/api/projects/{project_id}/tasks/{task_id}/close", task_close, methods=["POST"]),
     Route("/api/projects/{project_id}/tasks/{task_id}/stop", task_stop, methods=["POST"]),
     Route("/api/projects/{project_id}/tasks/{task_id}/messages", task_message, methods=["POST"]),
     Route("/api/projects/{project_id}/tasks/{task_id}/restart", task_restart, methods=["POST"]),

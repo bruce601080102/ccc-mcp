@@ -11,6 +11,7 @@ or Edge is installed these tests skip.
 import subprocess
 import threading
 import time
+from unittest.mock import patch
 
 import pytest
 import uvicorn
@@ -38,6 +39,12 @@ def env(tmp_path_factory):
     home = root / "home"
     service = CCCMCP(home)
     service.register_project(repo, "demo", "browser tests")
+    # The model list comes from whichever Codex / Claude CLIs this machine has; the browser tests must not
+    # depend on that. With no list the model field is the plain text box these tests type into.
+    no_lists = patch("ccc_mcp.interfaces.web.provider_models", lambda refresh=False: {
+        name: {"source": "builtin", "models": [], "efforts": [], "reason": "not_installed"}
+        for name in ("codex", "claude")})
+    no_lists.start()
     app = create_app(home, token=TOKEN)
     port = free_port()
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error"))
@@ -53,6 +60,7 @@ def env(tmp_path_factory):
     browser.close()
     server.should_exit = True
     thread.join(5)
+    no_lists.stop()
 
 
 def open_page(env, route):
@@ -288,7 +296,7 @@ def test_team_editor_in_traditional_chinese_keeps_drafts_and_saves_one_request(e
     click('#wf-steps [data-i="4"] [data-up]')
     click("#modal-confirm")
     page.wait_for("!document.querySelector('#modal-overlay') && document.querySelectorAll('.team-step').length === 5")
-    assert page.eval("return [...document.querySelectorAll('.team-step-name')].map(e => e.textContent.trim());") == [
+    assert page.eval("return [...document.querySelectorAll('.team-step-name strong')].map(e => e.textContent.trim());") == [
         "分析師", "設計師", "開發者", "規格審查員", "程式碼審查員",
     ]
     click("#team-edit-workflow")
@@ -330,7 +338,7 @@ def test_team_editor_in_traditional_chinese_keeps_drafts_and_saves_one_request(e
     stale = open_page(env, "#/p/demo/overview")
     stale.wait_for("document.querySelector('#team-workflow')")
     set_value("#team-workflow", "content")
-    assert page.eval("return [...document.querySelectorAll('.team-step-name')].map(e => e.textContent.trim());") == [
+    assert page.eval("return [...document.querySelectorAll('.team-step-name strong')].map(e => e.textContent.trim());") == [
         "個人助理", "研究員", "撰稿人", "編輯", "事實查核員",
     ]
     assert page.eval("return document.activeElement.id;") == "team-workflow"
@@ -428,7 +436,7 @@ def test_each_workflow_shows_its_own_roles_in_traditional_chinese_without_a_relo
 
     def team():
         return page.eval(
-            "return {names: [...document.querySelectorAll('.team-step-name')].map(e => e.textContent.trim()),"
+            "return {names: [...document.querySelectorAll('.team-step-name strong')].map(e => e.textContent.trim()),"
             " tools: [...document.querySelectorAll('.team-step-tool')].map(e => e.querySelector('select')?.value"
             " ?? e.textContent.trim()), hint: Boolean(document.querySelector('#team-goal-hint')),"
             " open: [...document.querySelectorAll('#team-card details')].some(e => e.open)"
@@ -445,19 +453,19 @@ def test_each_workflow_shows_its_own_roles_in_traditional_chinese_without_a_relo
     token = mark(page)
     choose("content")
     page.wait_for("document.querySelectorAll('.team-step').length === 5 && "
-                  "document.querySelector('.team-step-name').textContent.trim() === '個人助理'")
+                  "document.querySelector('.team-step-name strong').textContent.trim() === '個人助理'")
     content = team()
     assert content["names"] == ["個人助理", "研究員", "撰稿人", "編輯", "事實查核員"]
     assert set(content["tools"]) == {"chatgpt"}
     assert content["hint"] is True and content["open"] is False
     assert "SD" not in " ".join(content["names"]) and "開發者" not in content["names"]
     choose("standard")
-    page.wait_for("document.querySelector('.team-step-name').textContent.trim() === '分析師'")
+    page.wait_for("document.querySelector('.team-step-name strong').textContent.trim() === '分析師'")
     standard = team()
     assert standard["names"] == ["分析師", "設計師", "開發者", "程式碼審查員"]
     assert standard["hint"] is False and standard["open"] is False
     choose("life")
-    page.wait_for("document.querySelector('.team-step-name').textContent.trim() === '個人助理'")
+    page.wait_for("document.querySelector('.team-step-name strong').textContent.trim() === '個人助理'")
     assert team()["names"] == ["個人助理", "研究員", "資料分析師", "規劃師", "事實查核員"]
     assert not_reloaded(page, token)
     page.close()

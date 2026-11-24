@@ -207,6 +207,15 @@ def install_dependencies(cwd, home=None, project_id=None, timeout=600, runtime=N
     ensure_project_venv. Node manifests have no equivalent step: `npm install`/`npm ci`
     already install into the project's own `node_modules`.
     """
+    if runtime and runtime["language"] == "python" and runtime.get("install_packages") is False:
+        # The person chose to test in an environment they prepared themselves (a conda environment,
+        # say): use what it already has instead of building a new one and installing into it.
+        require_runtime(runtime)
+        return {
+            "detected": False, "manifest": None, "command": None, "installed": None,
+            "venv_scripts_dir": None,
+            "reason": "Using the selected environment as it is; the project's packages are not installed",
+        }
     python_executable = None
     venv_scripts_dir = None
     is_python_project = (Path(cwd) / "requirements.txt").is_file() or (
